@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cito</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="logo">c</div>
+        <div class="brand-name">cito</div>
+        <div class="brand-count" id="count"></div>
+      </div>
+      <div class="search">
+        <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="Search sessions" autocomplete="off" spellcheck="false">
+        <kbd class="search-kbd">/</kbd>
+      </div>
+      <div class="filters">
+        <button class="chip" id="f-agents" title="Show headless agent sessions (a)">agents</button>
+        <span class="filters-spacer"></span>
+        <button class="chip ghost" id="help-btn" title="Keyboard shortcuts (?)">? keys</button>
+      </div>
+      <nav class="list" id="list" tabindex="-1"></nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar" id="topbar">
+        <div class="topbar-title">
+          <div class="title" id="title">Select a session</div>
+          <div class="subtitle" id="subtitle"></div>
+        </div>
+        <div class="actions" id="actions" hidden>
+          <button class="btn" id="b-tools" title="Show or hide tool calls (t)"><span>Tools</span><kbd>t</kbd></button>
+          <button class="btn" id="b-info" title="Session details (i)"><span>Details</span><kbd>i</kbd></button>
+          <button class="btn" id="b-link" title="Copy permalink (y)"><span>Link</span><kbd>y</kbd></button>
+          <button class="btn" id="b-copy" title="Copy resume command (c)"><span>Copy cmd</span><kbd>c</kbd></button>
+          <button class="btn primary" id="b-open" title="Reopen in terminal (o)"><span>Open in terminal</span><kbd>o</kbd></button>
+        </div>
+      </header>
+      <div class="info" id="info" hidden></div>
+      <section class="convo" id="convo" tabindex="-1">
+        <div class="empty" id="empty">
+          <div class="empty-mark">c</div>
+          <h1>cito</h1>
+          <p>Your local Claude Code sessions.</p>
+          <p class="muted"><kbd>/</kbd> search · <kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> open · <kbd>?</kbd> all keys</p>
+        </div>
+        <div class="thread" id="thread"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal" id="help" hidden>
+    <div class="modal-card">
+      <h2>Keyboard</h2>
+      <div class="keys">
+        <div><kbd>/</kbd> or <kbd>⌘K</kbd></div><div>Search</div>
+        <div><kbd>j</kbd> <kbd>k</kbd> / <kbd>↓</kbd> <kbd>↑</kbd></div><div>Next / previous session</div>
+        <div><kbd>↵</kbd></div><div>Open highlighted session</div>
+        <div><kbd>Esc</kbd></div><div>Leave search / close panel</div>
+        <div><kbd>o</kbd></div><div>Reopen in terminal</div>
+        <div><kbd>c</kbd></div><div>Copy resume command</div>
+        <div><kbd>y</kbd></div><div>Copy permalink</div>
+        <div><kbd>i</kbd></div><div>Session details</div>
+        <div><kbd>t</kbd></div><div>Show / hide tool calls</div>
+        <div><kbd>n</kbd> <kbd>p</kbd></div><div>Next / previous prompt</div>
+        <div><kbd>g</kbd> <kbd>G</kbd></div><div>Top / bottom of conversation</div>
+        <div><kbd>space</kbd> <kbd>⇧space</kbd></div><div>Page down / up</div>
+        <div><kbd>a</kbd></div><div>Show / hide agent sessions</div>
+        <div><kbd>[</kbd></div><div>Collapse sidebar</div>
+      </div>
+      <p class="muted">Search matches title first, then project and first prompt. Use <code>p:name</code> to filter by project.</p>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
