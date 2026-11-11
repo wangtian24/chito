@@ -48,9 +48,9 @@ function fmtRel(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(d.getFullYear() !== new Date().getFullYear() ? { year: '2-digit' } : {}) });
 }
 function fmtDur(a, b) {
-  const s = Math.max(0, (new Date(b) - new Date(a)) / 1000);
+  const s = Math.max(0, Math.round((new Date(b) - new Date(a)) / 1000));
   if (s < 60) return `${Math.round(s)}s`;
-  if (s < 3600) { const m = Math.floor(s / 60), r = Math.round(s % 60); return r ? `${m}m ${r}s` : `${m}m`; }
+  if (s < 3600) { const m = Math.floor(s / 60), r = s % 60; return r ? `${m}m ${r}s` : `${m}m`; }
   if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`;
   return `${Math.floor(s / 86400)}d ${Math.round((s % 86400) / 3600)}h`;
 }
@@ -272,7 +272,7 @@ async function openSession(id, { push = true, hash = '' } = {}) {
   if (document.activeElement?.closest?.('#list') || document.activeElement === document.body) $('#convo').focus({ preventScroll: true });
   setHeader(data.meta);
   if (state.infoOpen) renderInfo();
-  renderThread(data.items, token, (location.hash || '').slice(1));
+  renderThread(data.items, token, (location.hash || '').slice(1), { land: landingTarget(data.items) });
 }
 
 function setHeader(meta) {
@@ -285,7 +285,7 @@ function setHeader(meta) {
   const sub = $('#subtitle');
   sub.textContent = '';
   sub.append(el('span', 'path', tildify(meta.cwd) || meta.project));
-  if (meta.gitBranch) sub.append(el('span', 'branch', meta.gitBranch));
+  if (meta.gitBranch && meta.gitBranch !== 'HEAD') sub.append(el('span', 'branch', meta.gitBranch));
   const span = el('span', 'span');
   span.append(el('span', 'num', fmtShort(meta.startTime)), ' to ', el('span', 'num', fmtRel(meta.lastTime) === 'now' ? 'now' : fmtShort(meta.lastTime)));
   span.title = `${fmtDateTime(meta.startTime)} to ${fmtDateTime(meta.lastTime)}`;
@@ -407,11 +407,14 @@ function renderItem(it, idx = -1, total = 0) {
     if (it.images?.length) m.append(images(it.images));
     if (it.text) {
       const b = el('div', 'bubble', it.text);
-      if (it.text.length > 1400 || it.text.split('\n').length > 18) {
-        b.classList.add('long');
-        b.addEventListener('click', () => b.classList.remove('long'), { once: true });
-      }
       m.append(b);
+      if (it.text.length > 500 || it.text.split('\n').length > 9) {
+        // Long prompts scroll inside a capped bubble; the hint stays until the end is reached.
+        const hint = el('div', 'bubble-hint', 'Long message. Scroll inside it to read the rest.');
+        m.append(hint);
+        requestAnimationFrame(() => { if (b.scrollHeight <= b.clientHeight + 2) hint.remove(); });
+        b.addEventListener('scroll', () => hint.classList.toggle('done', b.scrollTop + b.clientHeight >= b.scrollHeight - 4), { passive: true });
+      }
     }
     return m;
   }
@@ -475,7 +478,21 @@ function renderItem(it, idx = -1, total = 0) {
   return document.createComment(it.kind);
 }
 
-function renderThread(items, token, targetId, { stickBottom = false, keepScroll = false } = {}) {
+// Opening a session lands on the last user message, a third of the way down the view.
+function landingTarget(items) {
+  for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === 'user') return { mode: 'item', idx: i };
+  return { mode: 'end' };
+}
+
+function scrollToThird(convo, node) {
+  // Skip items hidden by the current work/tool mode.
+  while (node && !node.offsetParent) node = node.nextElementSibling;
+  if (!node) { convo.scrollTop = convo.scrollHeight; return; }
+  const c = convo.getBoundingClientRect();
+  convo.scrollTop += node.getBoundingClientRect().top - c.top - convo.clientHeight / 3;
+}
+
+function renderThread(items, token, targetId, { stickBottom = false, keepScroll = false, land = null } = {}) {
   const thread = $('#thread');
   const convo = $('#convo');
   const prevTop = convo.scrollTop;
@@ -498,7 +515,13 @@ function renderThread(items, token, targetId, { stickBottom = false, keepScroll 
       const t = document.getElementById(targetId);
       if (t) { scrollWithin(convo, t); t.classList.add('flash'); }
     }
+    if (land && !targetId && !step.landed && (land.mode === 'item' ? i > land.idx : i >= items.length)) {
+      step.landed = true;
+      if (land.mode === 'item') scrollToThird(convo, thread.children[land.idx]);
+      else convo.scrollTop = convo.scrollHeight;
+    }
     if (i < items.length) requestAnimationFrame(step);
+    else if (land?.mode === 'end' && !targetId) convo.scrollTop = convo.scrollHeight;
     else if (stickBottom) convo.scrollTop = convo.scrollHeight;
     else if (keepScroll) convo.scrollTop = prevTop;
   };

@@ -213,12 +213,6 @@ code { font-size: .86em; }
   background: var(--color-well); padding: var(--space-sm) var(--space-lg);
   max-width: min(80%, 62ch); border-radius: var(--radius-bubble); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-ink);
 }
-.msg.user .bubble.long { max-height: 300px; overflow: hidden; position: relative; cursor: pointer; }
-.msg.user .bubble.long::after {
-  content: "Show the rest"; position: absolute; left: 0; right: 0; bottom: 0; padding: 32px 16px 8px; text-align: center;
-  font: 500 13px var(--font-display); color: var(--color-ink); text-decoration: underline; text-decoration-color: var(--color-accent);
-  background: linear-gradient(transparent, var(--color-well) 60%);
-}
 .msg.user .imgs { display: flex; gap: var(--space-sm); flex-wrap: wrap; justify-content: flex-end; margin-bottom: var(--space-sm); max-width: 80%; }
 .imgs img { max-height: 180px; max-width: 280px; outline: var(--rule-hair) solid var(--color-rule-2); outline-offset: -1px; cursor: zoom-in; display: block; }
 .msg.flash .bubble, .msg.flash .body { animation: flash 1.6s ease-out; }
@@ -638,3 +632,7 @@ code { font-size: .86em; }
 .item.unread .item-title::after { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent); margin-left: 6px; vertical-align: middle; }
 .actions[hidden] { display: none; }
 body:not(.has-session) .topbar { display: none; }
+
+.msg.user .bubble { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.bubble-hint { margin-top: 4px; font: 400 12px/1.4 var(--font-body); color: var(--color-sys); transition: opacity .15s ease-out; }
+.bubble-hint.done { opacity: 0; }
