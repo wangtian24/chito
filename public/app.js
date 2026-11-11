@@ -937,6 +937,12 @@ $('#f-agents').classList.toggle('on', state.showAgents);
 $('#f-agents').addEventListener('click', toggleAgents);
 $('#help-btn').addEventListener('click', () => openSettings('keyboard'));
 $('#b-settings').addEventListener('click', () => openSettings());
+$('#home').addEventListener('click', e => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+  e.preventDefault();
+  if (location.pathname !== '/') history.pushState({}, '', '/' + location.search);
+  route();
+});
 $('#settings-close').addEventListener('click', closeSettings);
 $('#settings').addEventListener('click', e => { if (e.target.id === 'settings') closeSettings(); });
 document.querySelectorAll('#settings .tab').forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
@@ -971,6 +977,7 @@ function route() {
     else if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) scrollWithin($('#convo'), t); }
   } else {
     state.activeId = null; state.active = null;
+    document.querySelectorAll('#list .item.active').forEach(n => n.classList.remove('active'));
     document.body.classList.remove('has-session');
     $('#thread').textContent = '';
     setHeader(null);

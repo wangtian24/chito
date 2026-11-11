@@ -636,3 +636,6 @@ body:not(.has-session) .topbar { display: none; }
 .msg.user .bubble { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .bubble-hint { margin-top: 4px; font: 400 12px/1.4 var(--font-body); color: var(--color-sys); transition: opacity .15s ease-out; }
 .bubble-hint.done { opacity: 0; }
+
+.brand-link { display: flex; align-items: center; gap: 9px; text-decoration: none; color: inherit; border-radius: var(--radius-ctl); }
+.brand-link:hover .brand-name { color: var(--color-accent-text); }
