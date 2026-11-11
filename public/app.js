@@ -196,9 +196,19 @@ function renderList(searching) {
   scrollCursorIntoView();
 }
 
+
+// Scroll only the given container (native scrollIntoView also scrolls ancestors).
+function scrollWithin(container, node, mode = 'start') {
+  const c = container.getBoundingClientRect();
+  const r = node.getBoundingClientRect();
+  if (mode === 'start') container.scrollTop += r.top - c.top - 16;
+  else if (r.top < c.top) container.scrollTop += r.top - c.top - 8;
+  else if (r.bottom > c.bottom) container.scrollTop += r.bottom - c.bottom + 8;
+}
+
 function scrollCursorIntoView() {
   const c = $('#list .item.cursor');
-  if (c) c.scrollIntoView({ block: 'nearest' });
+  if (c) scrollWithin($('#list'), c, 'nearest');
 }
 
 function moveCursor(delta) {
@@ -420,7 +430,7 @@ function renderThread(items, token, targetId) {
     if (targetIdx >= 0 && i > targetIdx && !step.jumped) {
       step.jumped = true;
       const t = document.getElementById(targetId);
-      if (t) { t.scrollIntoView({ block: 'start' }); t.classList.add('flash'); }
+      if (t) { scrollWithin(convo, t); t.classList.add('flash'); }
     }
     if (i < items.length) requestAnimationFrame(step);
   };
@@ -512,7 +522,7 @@ function jumpPrompt(dir) {
   let target;
   if (dir > 0) target = prompts.find(p => y(p) > 24);
   else target = [...prompts].reverse().find(p => y(p) < -4);
-  if (target) target.scrollIntoView({ block: 'start' });
+  if (target) scrollWithin(convo, target);
 }
 
 // ---------- keyboard ----------
@@ -583,7 +593,7 @@ function route() {
   const m = location.pathname.match(/^\/s\/([0-9a-f-]{36})/i);
   if (m) {
     if (m[1] !== state.activeId) openSession(m[1], { push: false });
-    else if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: 'start' });
+    else if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) scrollWithin($('#convo'), t); }
   } else {
     state.activeId = null; state.active = null;
     document.body.classList.remove('has-session');

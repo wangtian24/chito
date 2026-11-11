@@ -41,7 +41,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; overflow: hidden; }
+html, body { height: 100%; margin: 0; overflow: clip; }
 body { background: var(--bg); color: var(--text); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
 button { font: inherit; color: inherit; }
 kbd {
@@ -51,7 +51,7 @@ kbd {
 code { font-family: var(--mono); font-size: .88em; }
 .muted { color: var(--text-3); }
 
-.app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+.app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; overflow: hidden; }
 .app.collapsed { grid-template-columns: 0 1fr; }
 .app.collapsed .sidebar { visibility: hidden; }
 
