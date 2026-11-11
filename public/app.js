@@ -20,6 +20,7 @@ const state = {
   toolMode: ['none', 'count', 'full'].includes(store.get('toolMode')) ? store.get('toolMode') : 'none',
   workMode: store.get('workMode', 'hide') === 'show' ? 'show' : 'hide',
   infoOpen: false,
+  infoTab: 'general',
   renderToken: 0,
 };
 
@@ -200,7 +201,20 @@ function renderList(searching, follow = true) {
     const m = el('div', 'item-meta');
     m.append(el('span', 'proj', s.project));
     if (s.gitBranch && !['main', 'master', 'HEAD'].includes(s.gitBranch)) m.append(el('span', 'branch', s.gitBranch));
-    if (s.prCount) m.append(el('span', 'badge', s.prCount > 1 ? `${s.prCount} PRs` : 'PR'));
+    if (s.prCount) {
+      const badge = el('button', 'badge', s.prCount > 1 ? `${s.prCount} PRs` : 'PR');
+      badge.type = 'button';
+      badge.title = 'Show pull requests from this session';
+      badge.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        state.cursor = i;
+        state.infoTab = 'artifacts';
+        if (s.id === state.activeId) toggleInfo(true);
+        else { state.openInfoAfterLoad = true; openSession(s.id); }
+      });
+      m.append(badge);
+    }
     const turns = el('span', 'num turns', String(s.userTurns));
     turns.title = `${s.userTurns} prompts`;
     const when = el('span', 'num when', fmtRel(s.lastTime));
@@ -271,7 +285,8 @@ async function openSession(id, { push = true, hash = '' } = {}) {
   document.title = `${data.meta.title} · chito`;
   if (document.activeElement?.closest?.('#list') || document.activeElement === document.body) $('#convo').focus({ preventScroll: true });
   setHeader(data.meta);
-  if (state.infoOpen) renderInfo();
+  if (state.openInfoAfterLoad) { state.openInfoAfterLoad = false; toggleInfo(true); }
+  else if (state.infoOpen) renderInfo();
   renderThread(data.items, token, (location.hash || '').slice(1), { land: landingTarget(data.items) });
 }
 
@@ -472,6 +487,7 @@ function renderItem(it, idx = -1, total = 0) {
   }
   if (it.kind === 'pr') {
     const a = el('a', 'pr-card', `Opened PR #${it.number} in ${it.repo || 'GitHub'}`);
+    a.id = prAnchor(it);
     a.href = it.url; a.target = '_blank'; a.rel = 'noopener';
     return a;
   }
@@ -617,6 +633,19 @@ function renderInfo() {
   const m = data.meta;
   box.textContent = '';
   box.append(el('h3', null, m.title));
+  const prs = m.prLinks || [];
+  const tabs = el('div', 'info-tabs');
+  tabs.setAttribute('role', 'tablist');
+  for (const [key, label] of [['general', 'General'], ['artifacts', prs.length ? `Artifacts ${prs.length}` : 'Artifacts']]) {
+    const t = el('button', 'tab', label);
+    t.type = 'button';
+    t.setAttribute('role', 'tab');
+    t.setAttribute('aria-selected', String(state.infoTab === key));
+    t.addEventListener('click', () => { state.infoTab = key; renderInfo(); });
+    tabs.append(t);
+  }
+  box.append(tabs);
+  if (state.infoTab === 'artifacts') { box.append(renderArtifacts(prs)); return; }
   const dl = el('dl');
   const row = (k, v) => { dl.append(el('dt', null, k)); const dd = el('dd'); if (v instanceof Node) dd.append(v); else dd.textContent = v ?? '—'; dl.append(dd); };
   const code = t => el('code', null, t);
@@ -640,17 +669,43 @@ function renderInfo() {
     for (const [n, c] of tools) { const t = el('span'); t.append(n + ' ', el('b', 'num', String(c))); bar.append(t); }
     row('Top tools', bar);
   }
-  if (m.prLinks?.length) {
-    const wrap = el('div');
-    for (const p of m.prLinks) { const a = el('a', null, `#${p.number} ${p.repo || ''}`); a.href = p.url; a.target = '_blank'; wrap.append(a, el('br')); }
-    row('Pull requests', wrap);
-  }
   row('CLI version', m.version);
   row('Entrypoint', m.entrypoint);
   row('Transcript', code(`${tildify(m.file)} (${fmtBytes(m.size)})`));
   box.append(dl);
   box.append(el('div', 'cmd', m.resumeCommand));
   if (!m.cwdExists) box.append(el('div', 'warn', 'Original directory no longer exists here; it will open in your home directory.'));
+}
+
+const prAnchor = p => `pr-${String(p.repo || '').replace(/[^a-z0-9]+/gi, '-')}-${p.number}`;
+
+function renderArtifacts(prs) {
+  const wrap = el('div', 'artifacts');
+  if (!prs.length) { wrap.append(el('p', 'artifacts-empty', 'No pull requests were opened in this session.')); return wrap; }
+  wrap.append(el('div', 'artifacts-label', prs.length === 1 ? '1 pull request' : `${prs.length} pull requests`));
+  for (const p of prs) {
+    const row = el('div', 'artifact');
+    const a = el('a', 'artifact-main');
+    a.href = p.url; a.target = '_blank'; a.rel = 'noopener';
+    a.append(el('span', 'num artifact-num', `#${p.number}`), el('span', 'artifact-repo', p.repo || 'GitHub'));
+    row.append(a);
+    const sub = el('div', 'artifact-sub');
+    if (p.at) sub.append(el('span', null, `Opened ${fmtDateTime(p.at)}`));
+    const jump = el('button', 'artifact-jump', 'Show in chat');
+    jump.type = 'button';
+    jump.addEventListener('click', () => {
+      const t = document.getElementById(prAnchor(p));
+      if (!t) return;
+      toggleInfo(false);
+      scrollToThird($('#convo'), t);
+      t.classList.add('flash');
+      setTimeout(() => t.classList.remove('flash'), 1600);
+    });
+    sub.append(jump);
+    row.append(sub);
+    wrap.append(row);
+  }
+  return wrap;
 }
 
 function toggleInfo(force) {
@@ -910,7 +965,7 @@ document.addEventListener('keydown', e => {
     r: () => { if (state.activeId) $('#compose').focus(); },
     c: () => state.active && copy(state.active.meta.resumeCommand, 'resume command'),
     y: () => state.activeId && copy(`${location.origin}/s/${state.activeId}`, 'permalink'),
-    i: () => state.active && toggleInfo(),
+    i: () => { if (!state.active) return; if (!state.infoOpen) state.infoTab = 'general'; toggleInfo(); },
     t: toggleTools,
     w: toggleWork,
     a: toggleAgents,
@@ -956,7 +1011,7 @@ document.querySelectorAll('#settings .seg').forEach(seg => seg.addEventListener(
   if (opt === 'agents' && state.showAgents !== (v === 'show')) toggleAgents();
   syncSettings();
 }));
-$('#b-info').addEventListener('click', () => toggleInfo());
+$('#b-info').addEventListener('click', () => { if (!state.infoOpen) state.infoTab = 'general'; toggleInfo(); });
 $('#b-tools').addEventListener('click', toggleTools);
 updateToolsButton();
 $('#b-work').addEventListener('click', toggleWork);
