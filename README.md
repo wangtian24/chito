@@ -29,21 +29,7 @@ scripts/install-launchagent.sh     # CITO_NODE=/path/to/node CITO_PORT=8791 to o
 
 ## Look
 
-Nine themes, picked at the bottom of the sidebar and remembered per browser (`?theme=<name>` overrides). Each re-derives its tokens for dark mode. All but Almanac are sans-serif throughout.
-
-| Theme | Feel |
-| --- | --- |
-| Slate (default) | slate and magenta, Hanken Grotesk |
-| Console | graphite and amber, Host Grotesk |
-| Ink | white paper and teal, Epilogue, pill controls |
-| Mint | warm paper and green, Schibsted Grotesk and Instrument Sans |
-| Cobalt | cool white and electric blue, Familjen Grotesk and Plex Sans |
-| Midnight | deep blue and ice, Mona Sans |
-| Violet | lavender and violet, Outfit and Onest |
-| Rim | warm black and burnt orange, Geist |
-| Almanac | serif reading pane, ruled index |
-
-Palettes and type pairings start from [Hallmark](https://github.com/nutlope/hallmark) themes. System lines (work summaries, tool counts, notes) get their own cool tone in every theme.
+Settings (`,` or the gear) has four tabs: Appearance, Conversation, Keyboard and About. Appearance offers six sans-serif presets, three light (Slate, the default; Ink; Sage) and three dark (Console, Midnight, Plum). Your choice is remembered per browser, and `?theme=<name>` overrides it. Palettes and type pairings start from [Hallmark](https://github.com/nutlope/hallmark) themes.
 
 ## Work and answers
 
@@ -66,7 +52,8 @@ Each turn's final run of text is the answer; everything before it (interim notes
 | `g` `G`, `space` | top / bottom, page |
 | `a` | show / hide agent sessions |
 | `[` | collapse sidebar |
-| `?` | help |
+| `,` | settings |
+| `?` | keyboard shortcuts |
 
 ## Config (env)
 
@@ -81,3 +68,7 @@ Each turn's final run of text is the answer; everything before it (interim notes
 ## Security
 
 cito binds to 127.0.0.1 and rejects requests whose `Host` is not localhost, which blocks DNS rebinding. The open-in-terminal endpoint requires a POST with a custom header, so other sites can't trigger it, and it accepts only a session ID; the command is built on the server from the transcript's own cwd.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

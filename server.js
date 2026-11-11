@@ -158,6 +158,15 @@ const server = http.createServer(async (req, res) => {
         projectsDir: PROJECTS_DIR, terminal: TERMINAL,
       });
     }
+    if (p === '/api/outcomes' && req.method === 'GET') {
+      const ids = (url.searchParams.get('ids') || '').split(',').filter(x => UUID_RE.test(x)).slice(0, 50);
+      const out = {};
+      for (const id of ids) {
+        const meta = getMeta(id);
+        if (meta) out[id] = { lastPrompt: meta.lastPrompt, lastAnswer: meta.lastAnswer };
+      }
+      return send(res, 200, out);
+    }
     let m = p.match(/^\/api\/sessions\/([^/]+)(\/open|\/send)?$/);
     if (m) {
       const id = m[1];

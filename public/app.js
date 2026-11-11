@@ -87,8 +87,10 @@ async function loadList() {
     state.terminal = j.terminal;
     const listEl = $('#list');
     const top = listEl.scrollTop;
+    if (state.activeId && state.active) { const cur = j.sessions.find(x => x.id === state.activeId); if (cur) markRead(cur.id, cur.lastTime); }
     applyFilter(false, false);
     listEl.scrollTop = top;
+    renderLanding();
   } catch (e) { console.error(e); }
 }
 
@@ -185,6 +187,7 @@ function renderList(searching, follow = true) {
     a.href = `/s/${s.id}`;
     a.dataset.idx = i;
     if (s.id === state.activeId) a.classList.add('active');
+    else if (isUnread(s)) a.classList.add('unread');
     if (i === state.cursor) a.classList.add('cursor');
     const t = el('div', 'item-title');
     if (s.live) {
@@ -264,6 +267,7 @@ async function openSession(id, { push = true, hash = '' } = {}) {
   }
   if (token !== state.renderToken) return;
   state.active = data;
+  markRead(id, data.meta.lastTime);
   document.title = `${data.meta.title} · cito`;
   if (document.activeElement?.closest?.('#list') || document.activeElement === document.body) $('#convo').focus({ preventScroll: true });
   setHeader(data.meta);
@@ -519,6 +523,7 @@ async function refreshActive() {
   const thread = $('#thread');
   const atBottom = convo.scrollHeight - convo.scrollTop - convo.clientHeight < 120;
   state.active = data;
+  markRead(id, data.meta.lastTime);
   setHeader(data.meta);
   // Items are append-only except the last one, which grows while Claude works.
   // Replace only the tail so the user's scroll position is never disturbed.
@@ -693,16 +698,168 @@ function jumpPrompt(dir) {
   if (target) scrollWithin(convo, target);
 }
 
+// ---------- read state & landing ----------
+// seen[id] = lastTime of the session when it was last opened here; newer activity makes it unread.
+const seen = store.get('seen', {});
+const isUnread = s => !seen[s.id] || (s.lastTime || '') > seen[s.id];
+function markRead(id, lastTime) {
+  if (!id || !lastTime || seen[id] === lastTime) return;
+  seen[id] = lastTime;
+  store.set('seen', seen);
+}
+const outcomeCache = new Map(); // id -> { lastTime, data }
+
+async function renderLanding() {
+  if (state.activeId) return;
+  const pool = state.sessions.filter(s => (state.showAgents || !s.agent) && isUnread(s)).slice(0, 10);
+  const sub = $('#landing-sub');
+  const box = $('#recent');
+  $('#mark-all').hidden = !pool.length;
+  $('#landing-title').textContent = pool.length ? 'Catch up' : "You're caught up";
+  sub.textContent = pool.length ? `The latest outcome from ${pool.length === 10 ? '10 recent sessions' : pool.length === 1 ? '1 session' : pool.length + ' sessions'} you haven't opened since it changed.` : 'Nothing new since you last looked. Pick a session on the left or search with /.';
+  const need = pool.filter(s => outcomeCache.get(s.id)?.lastTime !== s.lastTime).map(s => s.id);
+  if (need.length) {
+    try {
+      const r = await fetch(`/api/outcomes?ids=${need.join(',')}`);
+      const j = await r.json();
+      for (const s of pool) if (j[s.id]) outcomeCache.set(s.id, { lastTime: s.lastTime, data: j[s.id] });
+    } catch { }
+  }
+  if (state.activeId) return;
+  box.textContent = '';
+  for (const s of pool) {
+    const o = outcomeCache.get(s.id)?.data || {};
+    const a = el('a', 'rcard');
+    a.href = `/s/${s.id}`;
+    const top = el('div', 'rcard-top');
+    top.append(el('span', 'rcard-title', s.title));
+    const when = el('span', 'rcard-when', fmtRel(s.lastTime));
+    when.title = fmtDateTime(s.lastTime);
+    top.append(when);
+    const meta = el('div', 'rcard-meta');
+    meta.append(el('span', null, s.project));
+    if (s.gitBranch && !['main', 'master', 'HEAD'].includes(s.gitBranch)) meta.append(el('span', null, s.gitBranch));
+    if (s.live) meta.append(el('span', 'rcard-status', s.live.status === 'busy' ? 'Working now' : 'Open in a terminal'));
+    a.append(top, meta);
+    if (o.lastPrompt) {
+      const pr = el('div', 'rcard-prompt');
+      pr.append(el('b', null, 'You: '), o.lastPrompt.replace(/\s+/g, ' '));
+      a.append(pr);
+    }
+    if (o.lastAnswer) {
+      const ans = md(o.lastAnswer);
+      ans.classList.add('rcard-answer');
+      ans.querySelectorAll('a').forEach(x => x.replaceWith(...x.childNodes));
+      a.append(ans);
+    } else if (s.live?.status === 'busy') {
+      a.append(el('div', 'rcard-prompt', 'Claude is still working on this turn.'));
+    }
+    a.addEventListener('click', e => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      openSession(s.id);
+    });
+    box.append(a);
+  }
+  if (!pool.length) box.append(el('div', 'recent-empty'));
+}
+
+$('#mark-all').addEventListener('click', () => {
+  for (const s of state.sessions) seen[s.id] = s.lastTime;
+  store.set('seen', seen);
+  renderList(!!$('#q').value.trim(), false);
+  renderLanding();
+});
+
+// ---------- settings ----------
+const PRESETS = [
+  { id: 'slate', name: 'Slate', note: 'Light, magenta, Hanken Grotesk' },
+  { id: 'ink', name: 'Ink', note: 'Light, teal, Epilogue' },
+  { id: 'sage', name: 'Sage', note: 'Light, green, Schibsted Grotesk' },
+  { id: 'console', name: 'Console', note: 'Dark, amber, Host Grotesk' },
+  { id: 'midnight', name: 'Midnight', note: 'Dark, ice blue, Mona Sans' },
+  { id: 'plum', name: 'Plum', note: 'Dark, coral, Geist' },
+];
+
+function renderPresets() {
+  const box = $('#presets');
+  box.textContent = '';
+  for (const p of PRESETS) {
+    // Each card carries its own data-theme, so the preview renders in that preset's tokens and fonts.
+    const b = el('button', 'preset');
+    b.type = 'button';
+    b.setAttribute('role', 'radio');
+    b.dataset.theme = p.id;
+    b.dataset.preset = p.id;
+    const pv = el('div', 'pv');
+    const side = el('div', 'pv-side');
+    for (let i = 0; i < 4; i++) side.append(el('i'));
+    const main = el('div', 'pv-main');
+    const foot = el('div', 'pv-foot');
+    foot.append(el('div', 'pv-chip'), el('div', 'pv-dot'));
+    main.append(el('div', 'pv-bubble'), el('div', 'pv-aa', 'Aa'), el('div', 'pv-line'), el('div', 'pv-line short'), foot);
+    pv.append(side, main);
+    const meta = el('div', 'meta');
+    meta.append(el('b', null, p.name), el('span', null, p.note));
+    b.append(pv, meta);
+    b.addEventListener('click', () => setPreset(p.id));
+    box.append(b);
+  }
+}
+
+function setPreset(id) {
+  document.documentElement.dataset.theme = id;
+  store.set('theme', id);
+  syncSettings();
+}
+
+function setToolMode(m) {
+  state.toolMode = m;
+  store.set('toolMode', m);
+  $('#thread').dataset.tools = m;
+  updateToolsButton();
+}
+
+function syncSettings() {
+  const cur = document.documentElement.dataset.theme;
+  document.querySelectorAll('#presets .preset').forEach(b => b.setAttribute('aria-checked', String(b.dataset.preset === cur)));
+  const val = { work: state.workMode, tools: state.toolMode, agents: state.showAgents ? 'show' : 'hide' };
+  document.querySelectorAll('#settings .seg').forEach(seg => seg.querySelectorAll('button').forEach(b => {
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(b.dataset.v === val[seg.dataset.opt]));
+  }));
+}
+
+function showTab(name) {
+  document.querySelectorAll('#settings .tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
+  document.querySelectorAll('#settings .tabpanel').forEach(p => { p.hidden = p.dataset.panel !== name; });
+  store.set('settingsTab', name);
+}
+
+function openSettings(tab) {
+  $('#settings').hidden = false;
+  syncSettings();
+  showTab(tab || store.get('settingsTab', 'appearance'));
+  $('#settings .tab[aria-selected="true"]')?.focus();
+}
+
+function closeSettings() { $('#settings').hidden = true; }
+
 // ---------- keyboard ----------
 document.addEventListener('keydown', e => {
   const inSearch = document.activeElement === $('#q');
-  const helpOpen = !$('#help').hidden;
+  const settingsOpen = !$('#settings').hidden;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#q').focus(); $('#q').select(); return; }
   if (e.key === 'Escape') {
     if (document.querySelector('.lightbox')) { document.querySelector('.lightbox').remove(); return; }
-    if (helpOpen) { $('#help').hidden = true; return; }
+    if (settingsOpen) { closeSettings(); return; }
     if (state.infoOpen) { toggleInfo(false); return; }
     if (inSearch) { if ($('#q').value) { $('#q').value = ''; applyFilter(); } else $('#q').blur(); return; }
+    return;
+  }
+  if (settingsOpen) {
+    const tabs = ['appearance', 'conversation', 'keyboard', 'about'];
+    if (['1', '2', '3', '4'].includes(e.key)) { e.preventDefault(); showTab(tabs[Number(e.key) - 1]); }
     return;
   }
   if (inSearch) {
@@ -715,7 +872,8 @@ document.addEventListener('keydown', e => {
   const convo = $('#convo');
   const keys = {
     '/': () => { $('#q').focus(); $('#q').select(); },
-    '?': () => { $('#help').hidden = !$('#help').hidden; },
+    '?': () => openSettings('keyboard'),
+    ',': () => openSettings(),
     j: () => moveCursor(1),
     k: () => moveCursor(-1),
     ArrowDown: () => convo.scrollBy({ top: 80 }),
@@ -754,20 +912,27 @@ $('#q').addEventListener('input', () => {
 });
 $('#f-agents').classList.toggle('on', state.showAgents);
 $('#f-agents').addEventListener('click', toggleAgents);
-$('#help-btn').addEventListener('click', () => { $('#help').hidden = false; });
-$('#help').addEventListener('click', e => { if (e.target.id === 'help') $('#help').hidden = true; });
+$('#help-btn').addEventListener('click', () => openSettings('keyboard'));
+$('#b-settings').addEventListener('click', () => openSettings());
+$('#settings-close').addEventListener('click', closeSettings);
+$('#settings').addEventListener('click', e => { if (e.target.id === 'settings') closeSettings(); });
+document.querySelectorAll('#settings .tab').forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
+renderPresets();
+document.querySelectorAll('#settings .seg').forEach(seg => seg.addEventListener('click', e => {
+  const v = e.target.closest('button')?.dataset.v;
+  if (!v) return;
+  const opt = seg.dataset.opt;
+  if (opt === 'work' && state.workMode !== v) toggleWork();
+  if (opt === 'tools') setToolMode(v);
+  if (opt === 'agents' && state.showAgents !== (v === 'show')) toggleAgents();
+  syncSettings();
+}));
 $('#b-info').addEventListener('click', () => toggleInfo());
 $('#b-tools').addEventListener('click', toggleTools);
 updateToolsButton();
 $('#b-work').addEventListener('click', toggleWork);
-const themeSel = $('#theme');
-themeSel.value = document.documentElement.dataset.theme || 'slate';
-themeSel.addEventListener('change', () => {
-  document.documentElement.dataset.theme = themeSel.value;
-  store.set('theme', themeSel.value);
-});
 const qTheme = new URL(location.href).searchParams.get('theme');
-if (qTheme && [...themeSel.options].some(o => o.value === qTheme)) { document.documentElement.dataset.theme = qTheme; themeSel.value = qTheme; }
+if (qTheme && PRESETS.some(p => p.id === qTheme)) document.documentElement.dataset.theme = qTheme;
 updateWorkButton();
 $('#b-open').addEventListener('click', reopen);
 $('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, 'resume command'));
@@ -787,6 +952,7 @@ function route() {
     $('#thread').textContent = '';
     setHeader(null);
     document.title = 'cito';
+    renderLanding();
   }
 }
 window.addEventListener('popstate', route);

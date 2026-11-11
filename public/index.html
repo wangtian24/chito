@@ -7,16 +7,29 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&family=Host+Grotesk:wght@400;500;600&family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Epilogue:wght@400;500;600;700&family=Schibsted+Grotesk:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&family=Familjen+Grotesk:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Mona+Sans:wght@400;500;600&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Outfit:wght@400;500;600&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
-  <script>try { document.documentElement.dataset.theme = JSON.parse(localStorage.getItem("cito.theme")) || "slate"; } catch { document.documentElement.dataset.theme = "slate"; }</script>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Host+Grotesk:wght@400;500;600;700;800&family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Epilogue:wght@400;500;600;700;800&family=Schibsted+Grotesk:wght@500;600;700;800&family=Instrument+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&family=Mona+Sans:wght@400;500;600;700;800&family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    (function () {
+      var ok = ["slate", "ink", "sage", "console", "midnight", "plum"], t = "slate";
+      try { var v = JSON.parse(localStorage.getItem("cito.theme")); if (ok.indexOf(v) >= 0) t = v; } catch (e) {}
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <div class="app">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="8" fill="var(--color-accent)"/>
+          <path d="M9 8.5h14A3.5 3.5 0 0 1 26.5 12v6.5A3.5 3.5 0 0 1 23 22h-7.5l-5 4v-4H9a3.5 3.5 0 0 1-3.5-3.5V12A3.5 3.5 0 0 1 9 8.5z" fill="var(--color-accent-ink)"/>
+          <path d="M10.5 12.5l3 2.75-3 2.75" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M16 18h5.5" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
         <div class="brand-name">cito</div>
         <div class="brand-count" id="count"></div>
+        <button class="btn icon" id="b-settings" title="Settings (,)" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
       <div class="search">
         <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -29,20 +42,6 @@
         <button class="chip ghost" id="help-btn" title="Keyboard shortcuts (?)">Keys</button>
       </div>
       <nav class="list" id="list" tabindex="-1"></nav>
-      <div class="sidebar-foot">
-        <label for="theme">Theme</label>
-        <select id="theme">
-          <option value="slate">Slate: sans, slate and magenta</option>
-          <option value="console">Console: graphite and amber</option>
-          <option value="ink">Ink: white paper and teal</option>
-          <option value="mint">Mint: warm paper and green</option>
-          <option value="cobalt">Cobalt: cool white and electric blue</option>
-          <option value="midnight">Midnight: deep blue and ice</option>
-          <option value="violet">Violet: lavender and violet</option>
-          <option value="rim">Rim: warm black and burnt orange</option>
-          <option value="almanac">Almanac: serif and ruled</option>
-        </select>
-      </div>
     </aside>
 
     <main class="main">
@@ -64,8 +63,17 @@
       <div class="info" id="info" hidden></div>
       <section class="convo" id="convo" tabindex="-1">
         <div class="empty" id="empty">
-          <h1>Every Claude Code session on this machine.</h1>
-          <p>Pick one on the left, or press <kbd>/</kbd> to search by title. <kbd>j</kbd> and <kbd>k</kbd> move, <kbd>↵</kbd> opens, <kbd>?</kbd> lists the rest.</p>
+          <div class="landing">
+            <div class="landing-head">
+              <div>
+                <h1 id="landing-title">Catch up</h1>
+                <p id="landing-sub"></p>
+              </div>
+              <button class="btn" id="mark-all" hidden>Mark all read</button>
+            </div>
+            <div class="recent" id="recent"></div>
+            <p class="landing-keys">Press <kbd>/</kbd> to search or <kbd>?</kbd> for shortcuts.</p>
+          </div>
         </div>
         <div class="thread" id="thread"></div>
       </section>
@@ -81,10 +89,38 @@
     </main>
   </div>
 
-  <div class="modal" id="help" hidden>
-    <div class="modal-card">
-      <h2>Keyboard</h2>
-      <div class="keys">
+  <div class="modal" id="settings" hidden>
+    <div class="modal-card settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="settings-head">
+        <h2 id="settings-title">Settings</h2>
+        <button class="btn icon" id="settings-close" title="Close (Esc)" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-tab="appearance">Appearance</button>
+        <button class="tab" role="tab" data-tab="conversation">Conversation</button>
+        <button class="tab" role="tab" data-tab="keyboard">Keyboard</button>
+        <button class="tab" role="tab" data-tab="about">About</button>
+      </div>
+      <section class="tabpanel" data-panel="appearance" role="tabpanel">
+        <p class="panel-note">Pick a preset: three light, three dark.</p>
+        <div class="presets" id="presets" role="radiogroup" aria-label="Appearance preset"></div>
+      </section>
+      <section class="tabpanel" data-panel="conversation" role="tabpanel" hidden>
+        <div class="opt-row">
+          <div class="opt-label"><b>Work before answers</b><span>Notes, thinking and tools before each turn's final text</span></div>
+          <div class="seg" role="radiogroup" data-opt="work"><button data-v="hide">Hidden</button><button data-v="show">Shown</button></div>
+        </div>
+        <div class="opt-row">
+          <div class="opt-label"><b>Tool calls</b><span>When work is shown</span></div>
+          <div class="seg" role="radiogroup" data-opt="tools"><button data-v="none">Off</button><button data-v="count">Counts</button><button data-v="full">Details</button></div>
+        </div>
+        <div class="opt-row">
+          <div class="opt-label"><b>Agent runs</b><span>Headless sessions started outside your home folder</span></div>
+          <div class="seg" role="radiogroup" data-opt="agents"><button data-v="hide">Hidden</button><button data-v="show">Shown</button></div>
+        </div>
+      </section>
+      <section class="tabpanel" data-panel="keyboard" role="tabpanel" hidden>
+  <div class="keys">
         <div><kbd>/</kbd> or <kbd>⌘K</kbd></div><div>Search</div>
         <div><kbd>j</kbd> <kbd>k</kbd></div><div>Next / previous session</div>
         <div><kbd>↓</kbd> <kbd>↑</kbd> <kbd>PgDn</kbd> <kbd>PgUp</kbd></div><div>Scroll conversation</div>
@@ -102,8 +138,24 @@
         <div><kbd>space</kbd> <kbd>⇧space</kbd></div><div>Page down / up</div>
         <div><kbd>a</kbd></div><div>Show / hide agent sessions</div>
         <div><kbd>[</kbd></div><div>Collapse sidebar</div>
+        <div><kbd>,</kbd></div><div>Settings</div>
       </div>
-      <p class="muted">Search matches title first, then project and first prompt. Use <code>p:name</code> to filter by project.</p>
+      <p class="panel-note" style="margin-top: var(--space-md)">Search matches title first, then project and first prompt. Use <code>p:name</code> to filter by project.</p>
+      </section>
+      <section class="tabpanel about" data-panel="about" role="tabpanel" hidden>
+        <div class="about-head">
+          <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="8" fill="var(--color-accent)"/>
+            <path d="M9 8.5h14A3.5 3.5 0 0 1 26.5 12v6.5A3.5 3.5 0 0 1 23 22h-7.5l-5 4v-4H9a3.5 3.5 0 0 1-3.5-3.5V12A3.5 3.5 0 0 1 9 8.5z" fill="var(--color-accent-ink)"/>
+            <path d="M10.5 12.5l3 2.75-3 2.75" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 18h5.5" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+          <div><b>cito</b><span>Version 0.1.0</span></div>
+        </div>
+        <p>A simple web UI for Claude Code. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.</p>
+        <p>It runs locally and reads the transcripts in <code>~/.claude/projects</code>. Nothing is sent anywhere.</p>
+        <p>cito is open source and public under the MIT license. Code, issues and changes live at <a href="https://github.com/wangtian24/cito" target="_blank" rel="noopener">github.com/wangtian24/cito</a>.</p>
+      </section>
     </div>
   </div>
   <div class="toast" id="toast"></div>
