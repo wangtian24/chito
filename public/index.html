@@ -5,13 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>cito</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <div class="app">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <div class="logo">c</div>
         <div class="brand-name">cito</div>
         <div class="brand-count" id="count"></div>
       </div>
@@ -21,9 +23,9 @@
         <kbd class="search-kbd">/</kbd>
       </div>
       <div class="filters">
-        <button class="chip" id="f-agents" title="Show headless agent sessions (a)">agents</button>
+        <button class="chip" id="f-agents" title="Show headless agent sessions (a)">Agent runs</button>
         <span class="filters-spacer"></span>
-        <button class="chip ghost" id="help-btn" title="Keyboard shortcuts (?)">? keys</button>
+        <button class="chip ghost" id="help-btn" title="Keyboard shortcuts (?)">Keys</button>
       </div>
       <nav class="list" id="list" tabindex="-1"></nav>
     </aside>
@@ -35,6 +37,7 @@
           <div class="subtitle" id="subtitle"></div>
         </div>
         <div class="actions" id="actions" hidden>
+          <button class="btn" id="b-work" title="Hide or show the work before each answer (w)"><span>Work: hidden</span><kbd>w</kbd></button>
           <button class="btn" id="b-tools" title="Cycle tool calls: hidden / counts / detailed (t)"><span>Tools: hidden</span><kbd>t</kbd></button>
           <button class="btn" id="b-info" title="Session details (i)"><span>Details</span><kbd>i</kbd></button>
           <button class="btn" id="b-link" title="Copy permalink (y)"><span>Link</span><kbd>y</kbd></button>
@@ -45,10 +48,8 @@
       <div class="info" id="info" hidden></div>
       <section class="convo" id="convo" tabindex="-1">
         <div class="empty" id="empty">
-          <div class="empty-mark">c</div>
-          <h1>cito</h1>
-          <p>Your local Claude Code sessions.</p>
-          <p class="muted"><kbd>/</kbd> search · <kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> open · <kbd>?</kbd> all keys</p>
+          <h1>Every Claude Code session on this machine.</h1>
+          <p>Pick one on the left, or press <kbd>/</kbd> to search by title. <kbd>j</kbd> and <kbd>k</kbd> move, <kbd>↵</kbd> opens, <kbd>?</kbd> lists the rest.</p>
         </div>
         <div class="thread" id="thread"></div>
       </section>
@@ -78,6 +79,7 @@
         <div><kbd>c</kbd></div><div>Copy resume command</div>
         <div><kbd>y</kbd></div><div>Copy permalink</div>
         <div><kbd>i</kbd></div><div>Session details</div>
+        <div><kbd>w</kbd></div><div>Hide or show the work before each answer</div>
         <div><kbd>t</kbd></div><div>Cycle tool calls: hidden → counts → detailed</div>
         <div><kbd>n</kbd> <kbd>p</kbd></div><div>Next / previous prompt</div>
         <div><kbd>g</kbd> <kbd>G</kbd></div><div>Top / bottom of conversation</div>

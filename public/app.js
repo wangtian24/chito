@@ -18,6 +18,7 @@ const state = {
   active: null, // { meta, items }
   showAgents: store.get('showAgents', false),
   toolMode: ['none', 'count', 'full'].includes(store.get('toolMode')) ? store.get('toolMode') : 'none',
+  workMode: store.get('workMode', 'hide') === 'show' ? 'show' : 'hide',
   infoOpen: false,
   renderToken: 0,
 };
@@ -28,6 +29,12 @@ function fmtDateTime(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   return `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+function fmtShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
 }
 function fmtTime(iso) { return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : ''; }
 function fmtRel(iso) {
@@ -188,11 +195,14 @@ function renderList(searching, follow = true) {
     t.append(highlight(s.title, terms));
     t.title = s.title;
     const m = el('div', 'item-meta');
-    m.append(el('span', 'proj', s.project + (s.gitBranch && !['main', 'master', 'HEAD'].includes(s.gitBranch) ? ` · ${s.gitBranch}` : '')));
-    if (s.prCount) m.append(el('span', 'badge', `PR${s.prCount > 1 ? '×' + s.prCount : ''}`));
-    const right = el('span', 'right', `${s.userTurns}↵ · ${fmtRel(s.lastTime)}`);
-    right.title = `${s.userTurns} prompts · last turn ${fmtDateTime(s.lastTime)}`;
-    m.append(right);
+    m.append(el('span', 'proj', s.project));
+    if (s.gitBranch && !['main', 'master', 'HEAD'].includes(s.gitBranch)) m.append(el('span', 'branch', s.gitBranch));
+    if (s.prCount) m.append(el('span', 'badge', s.prCount > 1 ? `${s.prCount} PRs` : 'PR'));
+    const turns = el('span', 'num turns', String(s.userTurns));
+    turns.title = `${s.userTurns} prompts`;
+    const when = el('span', 'num when', fmtRel(s.lastTime));
+    when.title = `Last turn ${fmtDateTime(s.lastTime)}`;
+    m.append(turns, when);
     a.append(t, m);
     a.addEventListener('click', e => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
@@ -270,11 +280,15 @@ function setHeader(meta) {
   $('#title').title = meta.title;
   const sub = $('#subtitle');
   sub.textContent = '';
-  const parts = [tildify(meta.cwd) || meta.project];
-  if (meta.gitBranch) parts.push(meta.gitBranch);
-  parts.push(`${fmtDateTime(meta.startTime)} → ${fmtRel(meta.lastTime) === 'now' ? 'now' : fmtDateTime(meta.lastTime)}`);
-  parts.push(`${meta.userTurns} prompts`);
-  parts.forEach((p, i) => { if (i) sub.append(el('span', 'sep', '·')); sub.append(p); });
+  sub.append(el('span', 'path', tildify(meta.cwd) || meta.project));
+  if (meta.gitBranch) sub.append(el('span', 'branch', meta.gitBranch));
+  const span = el('span', 'span');
+  span.append(el('span', 'num', fmtShort(meta.startTime)), ' to ', el('span', 'num', fmtRel(meta.lastTime) === 'now' ? 'now' : fmtShort(meta.lastTime)));
+  span.title = `${fmtDateTime(meta.startTime)} to ${fmtDateTime(meta.lastTime)}`;
+  sub.append(span);
+  const n = el('span', 'count');
+  n.append(el('span', 'num', String(meta.userTurns)), ' prompts');
+  sub.append(n);
   updateToolsButton();
   const live = meta.live ?? state.sessions.find(s => s.id === meta.id)?.live;
   $('#b-open span').textContent = live ? 'Focus in terminal' : 'Open in terminal';
@@ -301,8 +315,8 @@ function toolInputText(input) {
 function renderTool(b) {
   const d = el('details', 'tool');
   const s = el('summary');
-  const stat = el('span', 'tstat' + (b.isError ? ' err' : b.result == null ? ' none' : ''));
-  s.append(stat, el('span', 'tname', b.name), el('span', 'targ', toolArg(b.name, b.input)));
+  s.append(el('span', 'tname', b.name), el('span', 'targ', toolArg(b.name, b.input)));
+  if (b.isError) { s.append(el('span', 'terr', 'failed')); d.classList.add('is-err'); }
   d.append(s);
   d.addEventListener('toggle', () => {
     if (!d.open || d.dataset.filled) return;
@@ -349,13 +363,42 @@ function anchor(uuid) {
   return a;
 }
 
-function renderItem(it) {
+function renderBlocks(blocks, body) {
+  let group = null;
+  let count = 0;
+  const flushCollapsed = () => {
+    if (!group) return;
+    if (count) body.insertBefore(el('div', 'tools-collapsed', `${count} tool call${count > 1 ? 's' : ''}`), group);
+    group = null; count = 0;
+  };
+  for (const b of blocks) {
+    if (b.type === 'tool') {
+      if (!group) { group = el('div', 'tools-group'); body.append(group); }
+      group.append(renderTool(b));
+      count++;
+      continue;
+    }
+    if (b.type === 'thinking') {
+      const d = el('details', 'thinking');
+      d.append(el('summary', null, 'Thinking'));
+      d.addEventListener('toggle', () => { if (d.open && !d.dataset.filled) { d.dataset.filled = '1'; d.append(md(b.text)); } });
+      // Thinking lives inside the tool group so hiding tools yields one collapsed label.
+      if (group) group.append(d); else body.append(d);
+      continue;
+    }
+    flushCollapsed();
+    if (b.type === 'text') body.append(md(b.text));
+  }
+  flushCollapsed();
+}
+
+function renderItem(it, idx = -1, total = 0) {
   if (it.kind === 'user') {
     const m = el('div', 'msg user');
     m.id = it.uuid;
     m.dataset.prompt = '1';
     const head = el('div', 'msg-head');
-    head.append(el('span', null, fmtTime(it.ts)), anchor(it.uuid));
+    head.append(el('span', 'num', fmtTime(it.ts)), anchor(it.uuid));
     m.append(head);
     if (it.images?.length) m.append(images(it.images));
     if (it.text) {
@@ -372,41 +415,42 @@ function renderItem(it) {
     const m = el('div', 'msg ai');
     m.id = it.uuid;
     const head = el('div', 'msg-head');
-    const av = el('div', 'avatar ai', '✳');
-    head.append(av, el('span', 'who', 'Claude'));
-    if (it.model) head.append(el('span', null, it.model.replace(/^claude-/, '')));
-    head.append(el('span', null, fmtTime(it.ts)));
-    if (it.endTs && it.endTs !== it.ts) head.append(el('span', null, `· ${fmtDur(it.ts, it.endTs)}`));
+    head.append(el('span', 'who', 'Claude'));
+    if (it.model) head.append(el('span', 'model', it.model.replace(/^claude-/, '')));
+    head.append(el('span', 'num', fmtTime(it.ts)));
+    if (it.endTs && it.endTs !== it.ts) { const d = el('span', 'num dur', fmtDur(it.ts, it.endTs)); d.title = 'Time spent on this reply'; head.append(d); }
     head.append(anchor(it.uuid));
-    const body = el('div', 'body blocks');
-    let group = null;
-    let hiddenCount = 0;
-    const flushCollapsed = () => {
-      if (!group) return;
-      if (!hiddenCount) { group = null; return; }
-      const c = el('div', 'tools-collapsed', `⚙ ${hiddenCount} tool call${hiddenCount > 1 ? 's' : ''}`);
-      body.insertBefore(c, group);
-      group = null; hiddenCount = 0;
-    };
-    for (const b of it.blocks) {
-      if (b.type === 'tool') {
-        if (!group) { group = el('div', 'tools-group'); body.append(group); }
-        group.append(renderTool(b));
-        hiddenCount++;
-        continue;
-      }
-      if (b.type === 'thinking') {
-        const d = el('details', 'thinking');
-        d.append(el('summary', null, 'Thinking'));
-        d.addEventListener('toggle', () => { if (d.open && !d.dataset.filled) { d.dataset.filled = '1'; d.append(md(b.text)); } });
-        // Thinking lives inside the tool group so hiding tools yields one collapsed label.
-        if (group) group.append(d); else body.append(d);
-        continue;
-      }
-      flushCollapsed();
-      if (b.type === 'text') body.append(md(b.text));
+    // The answer is the trailing run of text blocks; everything before it is work.
+    let finalStart = it.blocks.length;
+    while (finalStart > 0 && it.blocks[finalStart - 1].type === 'text') finalStart--;
+    const workBlocks = it.blocks.slice(0, finalStart);
+    const finalBlocks = it.blocks.slice(finalStart);
+    const live = state.active?.meta?.live;
+    if (idx === total - 1 && live?.status === 'busy') m.classList.add('in-flight');
+    const body = el('div', 'body');
+    if (workBlocks.length) {
+      const notes = workBlocks.filter(b => b.type === 'text').length;
+      const tools = workBlocks.filter(b => b.type === 'tool').length;
+      const parts = [];
+      if (notes) parts.push(`${notes} note${notes > 1 ? 's' : ''}`);
+      if (tools) parts.push(`${tools} tool call${tools > 1 ? 's' : ''}`);
+      if (!parts.length) parts.push('thinking');
+      const dur = it.endTs && it.endTs !== it.ts ? `Worked ${fmtDur(it.ts, it.endTs)}` : 'Worked';
+      const btn = el('button', 'work-summary');
+      btn.type = 'button';
+      btn.append(el('span', 'ws-label', `${dur}: ${parts.join(', ')}`), el('span', 'ws-act'));
+      btn.addEventListener('click', () => m.classList.toggle('show-work'));
+      const work = el('div', 'work blocks');
+      renderBlocks(workBlocks, work);
+      body.append(btn, work);
     }
-    flushCollapsed();
+    if (finalBlocks.length) {
+      const fin = el('div', 'final blocks');
+      renderBlocks(finalBlocks, fin);
+      body.append(fin);
+    } else {
+      m.classList.add('no-final');
+    }
     if (!it.blocks.some(b => b.type === 'text')) m.classList.add('tool-only');
     m.append(head, body);
     return m;
@@ -420,7 +464,7 @@ function renderItem(it) {
     return d;
   }
   if (it.kind === 'pr') {
-    const a = el('a', 'pr-card', `↗ PR #${it.number} · ${it.repo || ''}`);
+    const a = el('a', 'pr-card', `Opened PR #${it.number} in ${it.repo || 'GitHub'}`);
     a.href = it.url; a.target = '_blank'; a.rel = 'noopener';
     return a;
   }
@@ -433,6 +477,7 @@ function renderThread(items, token, targetId, { stickBottom = false, keepScroll 
   const prevTop = convo.scrollTop;
   thread.textContent = '';
   thread.dataset.tools = state.toolMode;
+  thread.dataset.work = state.workMode;
   if (!keepScroll && !stickBottom) convo.scrollTop = 0;
   if (!items.length) { thread.append(el('div', 'loading', 'No messages in this session.')); return; }
   // Render in chunks so huge sessions stay responsive; jump to target once rendered.
@@ -442,7 +487,7 @@ function renderThread(items, token, targetId, { stickBottom = false, keepScroll 
     if (token !== state.renderToken) return;
     const frag = document.createDocumentFragment();
     const until = Math.max(i + 120, targetIdx + 1);
-    for (; i < items.length && i < until; i++) frag.append(renderItem(items[i]));
+    for (; i < items.length && i < until; i++) frag.append(renderItem(items[i], i, items.length));
     thread.append(frag);
     if (targetIdx >= 0 && i > targetIdx && !step.jumped) {
       step.jumped = true;
@@ -468,7 +513,8 @@ async function refreshActive() {
   if (id !== state.activeId) return;
   const old = state.active.items;
   const last = x => x.length ? JSON.stringify(x[x.length - 1]).length + ':' + x.length : '0';
-  if (last(old) === last(data.items)) { state.active.meta = data.meta; return; }
+  const busy = x => x?.meta?.live?.status === 'busy';
+  if (last(old) === last(data.items) && busy(state.active) === busy(data)) { state.active.meta = data.meta; return; }
   const convo = $('#convo');
   const thread = $('#thread');
   const atBottom = convo.scrollHeight - convo.scrollTop - convo.clientHeight < 120;
@@ -482,7 +528,7 @@ async function refreshActive() {
   } else {
     while (thread.children.length > from) thread.lastChild.remove();
     const frag = document.createDocumentFragment();
-    for (let i = from; i < data.items.length; i++) frag.append(renderItem(data.items[i]));
+    for (let i = from; i < data.items.length; i++) frag.append(renderItem(data.items[i], i, data.items.length));
     thread.append(frag);
   }
   if (atBottom) convo.scrollTop = convo.scrollHeight;
@@ -502,8 +548,8 @@ function updateComposerHint() {
   const live = meta && (state.sessions.find(s => s.id === meta.id)?.live ?? meta.live);
   const app = state.terminal === 'terminal' ? 'Terminal' : 'iTerm';
   $('#compose-hint').textContent = !meta ? '' : live
-    ? `Typed into the running session in ${app} · ↵ send · ⇧↵ newline (newlines become spaces)`
-    : `Resumes this session in a new ${app} window with your message · ↵ send · ⇧↵ newline`;
+    ? `Typed into the running session in ${app}. Enter sends, Shift+Enter adds a line (sent as spaces).`
+    : `Resumes this session in a new ${app} window with your message. Enter sends, Shift+Enter adds a line.`;
 }
 
 async function sendMessage() {
@@ -554,16 +600,16 @@ function renderInfo() {
   row('Session ID', code(m.id));
   row('Directory', code(tildify(m.cwd) || '—'));
   if (m.gitBranch) row('Branch', code(m.gitBranch));
-  row('Prompts', `${m.userTurns} prompts · ${m.assistantMsgs} replies · ${m.toolCalls} tool calls`);
+  row('Prompts', `${m.userTurns} prompts, ${m.assistantMsgs} replies, ${m.toolCalls} tool calls`);
   if (m.compactions) row('Compactions', String(m.compactions));
   if (m.subagents) row('Subagents', String(m.subagents));
   row('Models', m.models.join(', ') || '—');
   const t = m.tokens;
-  row('Tokens', `${fmtNum(t.input + t.cacheRead + t.cacheWrite)} in (${fmtNum(t.cacheRead)} cached) · ${fmtNum(t.output)} out`);
+  row('Tokens', `${fmtNum(t.input + t.cacheRead + t.cacheWrite)} in, ${fmtNum(t.cacheRead)} of it cached; ${fmtNum(t.output)} out`);
   const tools = Object.entries(m.tools || {}).sort((a, b) => b[1] - a[1]).slice(0, 12);
   if (tools.length) {
     const bar = el('div', 'tools-bar');
-    for (const [n, c] of tools) bar.append(el('span', null, `${n} ${c}`));
+    for (const [n, c] of tools) { const t = el('span'); t.append(n + ' ', el('b', 'num', String(c))); bar.append(t); }
     row('Top tools', bar);
   }
   if (m.prLinks?.length) {
@@ -590,6 +636,20 @@ const TOOL_MODES = { none: 'Tools: hidden', count: 'Tools: counts', full: 'Tools
 function updateToolsButton() {
   $('#b-tools span').textContent = TOOL_MODES[state.toolMode];
   $('#b-tools').classList.toggle('on', state.toolMode !== 'none');
+}
+
+function updateWorkButton() {
+  $('#b-work span').textContent = state.workMode === 'hide' ? 'Work: hidden' : 'Work: shown';
+  $('#b-work').classList.toggle('on', state.workMode === 'show');
+}
+
+function toggleWork() {
+  state.workMode = state.workMode === 'hide' ? 'show' : 'hide';
+  store.set('workMode', state.workMode);
+  $('#thread').dataset.work = state.workMode;
+  document.querySelectorAll('#thread .msg.show-work').forEach(m => m.classList.remove('show-work'));
+  updateWorkButton();
+  toast(state.workMode === 'hide' ? 'Showing answers only' : 'Showing all work');
 }
 
 // Cycles none -> count -> full.
@@ -671,6 +731,7 @@ document.addEventListener('keydown', e => {
     y: () => state.activeId && copy(`${location.origin}/s/${state.activeId}`, 'permalink'),
     i: () => state.active && toggleInfo(),
     t: toggleTools,
+    w: toggleWork,
     a: toggleAgents,
     n: () => jumpPrompt(1),
     p: () => jumpPrompt(-1),
@@ -698,6 +759,8 @@ $('#help').addEventListener('click', e => { if (e.target.id === 'help') $('#help
 $('#b-info').addEventListener('click', () => toggleInfo());
 $('#b-tools').addEventListener('click', toggleTools);
 updateToolsButton();
+$('#b-work').addEventListener('click', toggleWork);
+updateWorkButton();
 $('#b-open').addEventListener('click', reopen);
 $('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, 'resume command'));
 $('#b-link').addEventListener('click', () => copy(`${location.origin}/s/${state.activeId}`, 'permalink'));

@@ -29,6 +29,14 @@ scripts/install-launchagent.sh     # CITO_NODE=/path/to/node CITO_PORT=8791 to o
 - Permalinks: `http://localhost:8791/s/<session-id>`, plus `#<message-uuid>` for a single message (hover a message and click `#`).
 - Headless agent sessions (cwd outside `$HOME`) are hidden by default; toggle them with `a`.
 
+## Look
+
+The Almanac theme from [Hallmark](https://github.com/nutlope/hallmark): slate stock for the index, a pale sheet for reading, Hanken Grotesk for UI, Newsreader for the conversation, IBM Plex Mono for figures and code, ruled lines instead of cards and shadows, and one chart magenta. Dark mode re-derives the same tokens.
+
+## Work and answers
+
+Each turn's final run of text is the answer; everything before it (interim notes, thinking, tool calls) is work. With work hidden (`w`, on by default), a turn shows one line, such as *Worked 6m: 5 notes, 15 tool calls*, followed by the answer. Click the line to open one turn. A turn still in flight keeps its work visible until the answer lands.
+
 ## Keys
 
 | Key | Action |
@@ -40,6 +48,7 @@ scripts/install-launchagent.sh     # CITO_NODE=/path/to/node CITO_PORT=8791 to o
 | `↑` `↓` `PgUp` `PgDn` | scroll conversation |
 | `c` / `y` | copy resume command / permalink |
 | `i` | details panel |
+| `w` | hide or show the work (notes, thinking, tools) before each turn's answer |
 | `t` | cycle tool calls: hidden → counts → detailed |
 | `n` `p` | next / previous prompt |
 | `g` `G`, `space` | top / bottom, page |
