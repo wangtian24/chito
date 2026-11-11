@@ -6,8 +6,8 @@ marked.setOptions({ gfm: true, breaks: false });
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const store = {
-  get(k, d) { try { const v = localStorage.getItem('cito.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('cito.' + k, JSON.stringify(v)); } catch { } },
+  get(k, d) { try { const v = localStorage.getItem('chito.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('chito.' + k, JSON.stringify(v)); } catch { } },
 };
 
 const state = {
@@ -268,7 +268,7 @@ async function openSession(id, { push = true, hash = '' } = {}) {
   if (token !== state.renderToken) return;
   state.active = data;
   markRead(id, data.meta.lastTime);
-  document.title = `${data.meta.title} · cito`;
+  document.title = `${data.meta.title} · chito`;
   if (document.activeElement?.closest?.('#list') || document.activeElement === document.body) $('#convo').focus({ preventScroll: true });
   setHeader(data.meta);
   if (state.infoOpen) renderInfo();
@@ -587,7 +587,7 @@ async function sendMessage() {
   $('#send').disabled = true;
   try {
     const r = await fetch(`/api/sessions/${state.activeId}/send`, {
-      method: 'POST', headers: { 'x-cito': '1', 'content-type': 'application/json' }, body: JSON.stringify({ text }),
+      method: 'POST', headers: { 'x-chito': '1', 'content-type': 'application/json' }, body: JSON.stringify({ text }),
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error);
@@ -701,7 +701,7 @@ async function reopen() {
   if (!state.activeId) return;
   toast('Finding terminal…');
   try {
-    const r = await fetch(`/api/sessions/${state.activeId}/open`, { method: 'POST', headers: { 'x-cito': '1' } });
+    const r = await fetch(`/api/sessions/${state.activeId}/open`, { method: 'POST', headers: { 'x-chito': '1' } });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error);
     const app = j.terminal === 'iterm' ? 'iTerm' : 'Terminal';
@@ -974,7 +974,7 @@ function route() {
     document.body.classList.remove('has-session');
     $('#thread').textContent = '';
     setHeader(null);
-    document.title = 'cito';
+    document.title = 'chito';
     renderLanding();
   }
 }

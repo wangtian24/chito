@@ -3,15 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>cito</title>
+  <title>chito</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Host+Grotesk:wght@400;500;600;700;800&family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Epilogue:wght@400;500;600;700;800&family=Schibsted+Grotesk:wght@500;600;700;800&family=Instrument+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&family=Mona+Sans:wght@400;500;600;700;800&family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script>
     (function () {
+      // One-time move of settings saved under the old name (cito.*).
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && k.indexOf("cito.") === 0 && localStorage.getItem("ch" + k) === null) localStorage.setItem("ch" + k, localStorage.getItem(k));
+        }
+      } catch (e) {}
       var ok = ["slate", "ink", "sage", "console", "midnight", "plum"], t = "slate";
-      try { var v = JSON.parse(localStorage.getItem("cito.theme")); if (ok.indexOf(v) >= 0) t = v; } catch (e) {}
+      try { var v = JSON.parse(localStorage.getItem("chito.theme")); if (ok.indexOf(v) >= 0) t = v; } catch (e) {}
       document.documentElement.dataset.theme = t;
     })();
   </script>
@@ -27,7 +34,7 @@
           <path d="M10.5 12.5l3 2.75-3 2.75" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
           <path d="M16 18h5.5" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round"/>
         </svg>
-        <div class="brand-name">cito</div>
+        <div class="brand-name">chito</div>
         <div class="brand-count" id="count"></div>
         <button class="btn icon" id="b-settings" title="Settings (,)" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
@@ -150,11 +157,11 @@
             <path d="M10.5 12.5l3 2.75-3 2.75" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M16 18h5.5" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round"/>
           </svg>
-          <div><b>cito</b><span>Version 0.1.0</span></div>
+          <div><b>chito</b><span>Version 0.1.0</span></div>
         </div>
         <p>A simple web UI for Claude Code. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.</p>
         <p>It runs locally and reads the transcripts in <code>~/.claude/projects</code>. Nothing is sent anywhere.</p>
-        <p>cito is open source and public under the MIT license. Code, issues and changes live at <a href="https://github.com/wangtian24/cito" target="_blank" rel="noopener">github.com/wangtian24/cito</a>.</p>
+        <p>chito is open source and public under the MIT license. Code, issues and changes live at <a href="https://github.com/wangtian24/chito" target="_blank" rel="noopener">github.com/wangtian24/chito</a>.</p>
       </section>
     </div>
   </div>

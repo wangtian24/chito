@@ -1,4 +1,4 @@
-// cito — local web UI for Claude Code sessions.
+// chito — local web UI for Claude Code sessions.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,10 +8,10 @@ import { scan, getMeta, HOME, PROJECTS_DIR } from './lib/index.js';
 import { loadTranscript } from './lib/transcript.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.CITO_PORT || 8791);
-const HOST = process.env.CITO_HOST || '127.0.0.1';
-const TERMINAL = process.env.CITO_TERMINAL || (fs.existsSync('/Applications/iTerm.app') ? 'iterm' : 'terminal');
-const CLAUDE_FLAGS = process.env.CITO_CLAUDE_FLAGS ?? '--allow-dangerously-skip-permissions';
+const PORT = Number(process.env.CHITO_PORT || 8791);
+const HOST = process.env.CHITO_HOST || '127.0.0.1';
+const TERMINAL = process.env.CHITO_TERMINAL || (fs.existsSync('/Applications/iTerm.app') ? 'iterm' : 'terminal');
+const CLAUDE_FLAGS = process.env.CHITO_CLAUDE_FLAGS ?? '--allow-dangerously-skip-permissions';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const STATIC = {
@@ -174,7 +174,7 @@ const server = http.createServer(async (req, res) => {
       const meta = getMeta(id);
       if (!meta) return send(res, 404, { error: 'not found' });
       if (m[2] === '/send') {
-        if (req.method !== 'POST' || req.headers['x-cito'] !== '1') return send(res, 405, { error: 'POST with x-cito header required' });
+        if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
         let text = '';
         try { text = String(JSON.parse(await readBody(req)).text || '').trim(); } catch { return send(res, 400, { error: 'bad body' }); }
         if (!text) return send(res, 400, { error: 'empty message' });
@@ -187,7 +187,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (m[2]) {
         // Custom header forces a CORS preflight, so other sites can't trigger this.
-        if (req.method !== 'POST' || req.headers['x-cito'] !== '1') return send(res, 405, { error: 'POST with x-cito header required' });
+        if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
         const cmd = resumeCommand(meta);
         const existing = await focusExisting(id);
         if (existing?.state === 'focused') return send(res, 200, { ok: true, action: 'focused', terminal: TERMINAL, ...existing });
@@ -202,12 +202,12 @@ const server = http.createServer(async (req, res) => {
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {
-    console.error('[cito]', e);
+    console.error('[chito]', e);
     send(res, 500, { error: e.message });
   }
 });
 
 const t0 = Date.now();
 const n = scan(true).length;
-console.log(`[cito] indexed ${n} sessions in ${Date.now() - t0}ms from ${PROJECTS_DIR}`);
-server.listen(PORT, HOST, () => console.log(`[cito] http://localhost:${PORT}`));
+console.log(`[chito] indexed ${n} sessions in ${Date.now() - t0}ms from ${PROJECTS_DIR}`);
+server.listen(PORT, HOST, () => console.log(`[chito] http://localhost:${PORT}`));
