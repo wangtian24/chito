@@ -41,7 +41,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
+html, body { height: 100%; margin: 0; overflow: hidden; }
 body { background: var(--bg); color: var(--text); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
 button { font: inherit; color: inherit; }
 kbd {
@@ -104,7 +104,7 @@ code { font-family: var(--mono); font-size: .88em; }
 .list-empty { color: var(--text-3); padding: 24px 12px; text-align: center; font-size: 13px; }
 
 /* Main */
-.main { display: flex; flex-direction: column; min-width: 0; position: relative; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
 .topbar {
   display: flex; align-items: center; gap: 16px; padding: 10px 20px; border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); min-height: 58px; z-index: 5;
@@ -141,7 +141,7 @@ code { font-family: var(--mono); font-size: .88em; }
 .info .cmd { margin-top: 14px; background: var(--code-bg); border-radius: 8px; padding: 10px; font: 11.5px/1.5 var(--mono); word-break: break-all; color: var(--text-2); }
 .info .warn { color: var(--err); font-size: 12px; margin-top: 8px; }
 
-.convo { flex: 1; overflow-y: auto; outline: none; scroll-behavior: auto; }
+.convo { flex: 1; min-height: 0; overflow-y: auto; outline: none; scroll-behavior: auto; }
 .thread { max-width: 860px; margin: 0 auto; padding: 28px 28px 120px; }
 .empty { height: 100%; display: grid; place-content: center; text-align: center; color: var(--text-2); gap: 4px; }
 .empty .empty-mark { margin: 0 auto 6px; width: 44px; height: 44px; font-size: 24px; border-radius: 12px; }
