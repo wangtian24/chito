@@ -17,7 +17,7 @@ const state = {
   activeId: null,
   active: null, // { meta, items }
   showAgents: store.get('showAgents', false),
-  showTools: store.get('showTools', true),
+  toolMode: ['none', 'count', 'full'].includes(store.get('toolMode')) ? store.get('toolMode') : 'none',
   infoOpen: false,
   renderToken: 0,
 };
@@ -77,7 +77,11 @@ async function loadList() {
     const r = await fetch('/api/sessions');
     const j = await r.json();
     state.sessions = j.sessions;
-    applyFilter(false);
+    state.terminal = j.terminal;
+    const listEl = $('#list');
+    const top = listEl.scrollTop;
+    applyFilter(false, false);
+    listEl.scrollTop = top;
   } catch (e) { console.error(e); }
 }
 
@@ -91,7 +95,7 @@ function parseQuery(q) {
   return { terms, proj };
 }
 
-function applyFilter(resetCursor = true) {
+function applyFilter(resetCursor = true, follow = true) {
   const q = $('#q').value;
   const { terms, proj } = parseQuery(q);
   let list = state.sessions.filter(s => state.showAgents || !s.agent || s.id === state.activeId);
@@ -121,7 +125,7 @@ function applyFilter(resetCursor = true) {
     const i = list.findIndex(s => s.id === (state.cursorId || state.activeId));
     state.cursor = i >= 0 ? i : Math.min(state.cursor, list.length - 1);
   }
-  renderList(terms.length > 0);
+  renderList(terms.length > 0, follow);
 }
 
 function groupLabel(iso) {
@@ -157,7 +161,7 @@ function highlight(text, terms) {
   return frag;
 }
 
-function renderList(searching) {
+function renderList(searching, follow = true) {
   const list = $('#list');
   const { terms } = parseQuery($('#q').value);
   list.textContent = '';
@@ -176,6 +180,11 @@ function renderList(searching) {
     if (s.id === state.activeId) a.classList.add('active');
     if (i === state.cursor) a.classList.add('cursor');
     const t = el('div', 'item-title');
+    if (s.live) {
+      const dot = el('span', 'live-dot' + (s.live.status === 'busy' ? ' busy' : ''));
+      dot.title = `Running now (${s.live.status || 'live'}, pid ${s.live.pid})`;
+      t.append(dot);
+    }
     t.append(highlight(s.title, terms));
     t.title = s.title;
     const m = el('div', 'item-meta');
@@ -193,7 +202,7 @@ function renderList(searching) {
     });
     list.append(a);
   });
-  scrollCursorIntoView();
+  if (follow) scrollCursorIntoView();
 }
 
 
@@ -246,6 +255,7 @@ async function openSession(id, { push = true, hash = '' } = {}) {
   if (token !== state.renderToken) return;
   state.active = data;
   document.title = `${data.meta.title} · cito`;
+  if (document.activeElement?.closest?.('#list') || document.activeElement === document.body) $('#convo').focus({ preventScroll: true });
   setHeader(data.meta);
   if (state.infoOpen) renderInfo();
   renderThread(data.items, token, (location.hash || '').slice(1));
@@ -253,6 +263,8 @@ async function openSession(id, { push = true, hash = '' } = {}) {
 
 function setHeader(meta) {
   $('#actions').hidden = !meta;
+  $('#composer').hidden = !meta;
+  if (meta) updateComposerHint();
   if (!meta) { $('#title').textContent = 'Select a session'; $('#subtitle').textContent = ''; return; }
   $('#title').textContent = meta.title;
   $('#title').title = meta.title;
@@ -263,7 +275,10 @@ function setHeader(meta) {
   parts.push(`${fmtDateTime(meta.startTime)} → ${fmtRel(meta.lastTime) === 'now' ? 'now' : fmtDateTime(meta.lastTime)}`);
   parts.push(`${meta.userTurns} prompts`);
   parts.forEach((p, i) => { if (i) sub.append(el('span', 'sep', '·')); sub.append(p); });
-  $('#b-tools').classList.toggle('on', !state.showTools);
+  updateToolsButton();
+  const live = meta.live ?? state.sessions.find(s => s.id === meta.id)?.live;
+  $('#b-open span').textContent = live ? 'Focus in terminal' : 'Open in terminal';
+  $('#b-open').title = live ? `Running now (pid ${live.pid}): focus its terminal (o)` : 'Reopen in terminal (o)';
 }
 
 function toolArg(name, input) {
@@ -392,6 +407,7 @@ function renderItem(it) {
       if (b.type === 'text') body.append(md(b.text));
     }
     flushCollapsed();
+    if (!it.blocks.some(b => b.type === 'text')) m.classList.add('tool-only');
     m.append(head, body);
     return m;
   }
@@ -411,12 +427,13 @@ function renderItem(it) {
   return document.createComment(it.kind);
 }
 
-function renderThread(items, token, targetId) {
+function renderThread(items, token, targetId, { stickBottom = false, keepScroll = false } = {}) {
   const thread = $('#thread');
-  thread.textContent = '';
-  thread.classList.toggle('hide-tools', !state.showTools);
   const convo = $('#convo');
-  convo.scrollTop = 0;
+  const prevTop = convo.scrollTop;
+  thread.textContent = '';
+  thread.dataset.tools = state.toolMode;
+  if (!keepScroll && !stickBottom) convo.scrollTop = 0;
   if (!items.length) { thread.append(el('div', 'loading', 'No messages in this session.')); return; }
   // Render in chunks so huge sessions stay responsive; jump to target once rendered.
   let i = 0;
@@ -433,9 +450,91 @@ function renderThread(items, token, targetId) {
       if (t) { scrollWithin(convo, t); t.classList.add('flash'); }
     }
     if (i < items.length) requestAnimationFrame(step);
+    else if (stickBottom) convo.scrollTop = convo.scrollHeight;
+    else if (keepScroll) convo.scrollTop = prevTop;
   };
   step();
 }
+
+// ---------- live refresh ----------
+// Poll the open session while it is running (or shortly after we sent a message).
+async function refreshActive() {
+  const id = state.activeId;
+  if (!id || !state.active || document.hidden) return;
+  const live = state.sessions.find(s => s.id === id)?.live;
+  if (!live && Date.now() > (state.watchUntil || 0)) return;
+  let data;
+  try { const r = await fetch(`/api/sessions/${id}`); if (!r.ok) return; data = await r.json(); } catch { return; }
+  if (id !== state.activeId) return;
+  const old = state.active.items;
+  const last = x => x.length ? JSON.stringify(x[x.length - 1]).length + ':' + x.length : '0';
+  if (last(old) === last(data.items)) { state.active.meta = data.meta; return; }
+  const convo = $('#convo');
+  const thread = $('#thread');
+  const atBottom = convo.scrollHeight - convo.scrollTop - convo.clientHeight < 120;
+  state.active = data;
+  setHeader(data.meta);
+  // Items are append-only except the last one, which grows while Claude works.
+  // Replace only the tail so the user's scroll position is never disturbed.
+  const from = Math.max(0, old.length - 1);
+  if (thread.children.length !== old.length) {
+    renderThread(data.items, ++state.renderToken, null, { keepScroll: true });
+  } else {
+    while (thread.children.length > from) thread.lastChild.remove();
+    const frag = document.createDocumentFragment();
+    for (let i = from; i < data.items.length; i++) frag.append(renderItem(data.items[i]));
+    thread.append(frag);
+  }
+  if (atBottom) convo.scrollTop = convo.scrollHeight;
+}
+setInterval(refreshActive, 3000);
+
+// ---------- composer ----------
+function autosize() {
+  const t = $('#compose');
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, 240) + 'px';
+  $('#send').disabled = !t.value.trim();
+}
+
+function updateComposerHint() {
+  const meta = state.active?.meta;
+  const live = meta && (state.sessions.find(s => s.id === meta.id)?.live ?? meta.live);
+  const app = state.terminal === 'terminal' ? 'Terminal' : 'iTerm';
+  $('#compose-hint').textContent = !meta ? '' : live
+    ? `Typed into the running session in ${app} · ↵ send · ⇧↵ newline (newlines become spaces)`
+    : `Resumes this session in a new ${app} window with your message · ↵ send · ⇧↵ newline`;
+}
+
+async function sendMessage() {
+  const t = $('#compose');
+  const text = t.value.trim();
+  if (!text || !state.activeId) return;
+  $('#send').disabled = true;
+  try {
+    const r = await fetch(`/api/sessions/${state.activeId}/send`, {
+      method: 'POST', headers: { 'x-cito': '1', 'content-type': 'application/json' }, body: JSON.stringify({ text }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error);
+    t.value = '';
+    autosize();
+    state.watchUntil = Date.now() + 10 * 60 * 1000;
+    toast(j.action === 'typed' ? `Sent to running session (${j.tty})` : 'Resumed in a new terminal window');
+    setTimeout(() => loadList(), 2500);
+  } catch (e) {
+    toast(`Send failed: ${e.message}`);
+    $('#send').disabled = false;
+  }
+}
+
+$('#compose').addEventListener('input', autosize);
+$('#compose').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
+  else if (e.key === 'Escape') { e.preventDefault(); $('#compose').blur(); }
+});
+$('#composer').addEventListener('submit', e => { e.preventDefault(); sendMessage(); });
+autosize();
 
 function renderInfo() {
   const box = $('#info');
@@ -487,12 +586,20 @@ function toggleInfo(force) {
   if (state.infoOpen) renderInfo();
 }
 
+const TOOL_MODES = { none: 'Tools: hidden', count: 'Tools: counts', full: 'Tools: detailed' };
+function updateToolsButton() {
+  $('#b-tools span').textContent = TOOL_MODES[state.toolMode];
+  $('#b-tools').classList.toggle('on', state.toolMode !== 'none');
+}
+
+// Cycles none -> count -> full.
 function toggleTools() {
-  state.showTools = !state.showTools;
-  store.set('showTools', state.showTools);
-  $('#thread').classList.toggle('hide-tools', !state.showTools);
-  $('#b-tools').classList.toggle('on', !state.showTools);
-  toast(state.showTools ? 'Showing tool calls' : 'Hiding tool calls');
+  const order = ['none', 'count', 'full'];
+  state.toolMode = order[(order.indexOf(state.toolMode) + 1) % order.length];
+  store.set('toolMode', state.toolMode);
+  $('#thread').dataset.tools = state.toolMode;
+  updateToolsButton();
+  toast(TOOL_MODES[state.toolMode]);
 }
 
 function toggleAgents() {
@@ -504,12 +611,13 @@ function toggleAgents() {
 
 async function reopen() {
   if (!state.activeId) return;
-  toast('Opening terminal…');
+  toast('Finding terminal…');
   try {
     const r = await fetch(`/api/sessions/${state.activeId}/open`, { method: 'POST', headers: { 'x-cito': '1' } });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error);
-    toast(`Opened in ${j.terminal === 'iterm' ? 'iTerm' : 'Terminal'}`);
+    const app = j.terminal === 'iterm' ? 'iTerm' : 'Terminal';
+    toast(j.action === 'focused' ? `Focused running session in ${app} (${j.tty})` : `Opened in ${app}`);
   } catch (e) { toast(`Failed: ${e.message}`); }
 }
 
@@ -548,10 +656,17 @@ document.addEventListener('keydown', e => {
   const keys = {
     '/': () => { $('#q').focus(); $('#q').select(); },
     '?': () => { $('#help').hidden = !$('#help').hidden; },
-    j: () => moveCursor(1), ArrowDown: () => moveCursor(1),
-    k: () => moveCursor(-1), ArrowUp: () => moveCursor(-1),
+    j: () => moveCursor(1),
+    k: () => moveCursor(-1),
+    ArrowDown: () => convo.scrollBy({ top: 80 }),
+    ArrowUp: () => convo.scrollBy({ top: -80 }),
+    PageDown: () => convo.scrollBy({ top: convo.clientHeight * 0.85 }),
+    PageUp: () => convo.scrollBy({ top: -convo.clientHeight * 0.85 }),
+    Home: () => convo.scrollTo({ top: 0 }),
+    End: () => convo.scrollTo({ top: convo.scrollHeight }),
     Enter: () => { const s = state.filtered[state.cursor]; if (s) openSession(s.id); },
     o: reopen,
+    r: () => { if (state.activeId) $('#compose').focus(); },
     c: () => state.active && copy(state.active.meta.resumeCommand, 'resume command'),
     y: () => state.activeId && copy(`${location.origin}/s/${state.activeId}`, 'permalink'),
     i: () => state.active && toggleInfo(),
@@ -582,6 +697,7 @@ $('#help-btn').addEventListener('click', () => { $('#help').hidden = false; });
 $('#help').addEventListener('click', e => { if (e.target.id === 'help') $('#help').hidden = true; });
 $('#b-info').addEventListener('click', () => toggleInfo());
 $('#b-tools').addEventListener('click', toggleTools);
+updateToolsButton();
 $('#b-open').addEventListener('click', reopen);
 $('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, 'resume command'));
 $('#b-link').addEventListener('click', () => copy(`${location.origin}/s/${state.activeId}`, 'permalink'));

@@ -24,9 +24,76 @@ const STATIC = {
 
 const shq = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
-function resumeCommand(meta) {
+function resumeCommand(meta, prompt) {
   const dir = meta.cwd && fs.existsSync(meta.cwd) ? meta.cwd : HOME;
-  return `cd ${shq(dir)} && claude --resume ${meta.id}${CLAUDE_FLAGS ? ' ' + CLAUDE_FLAGS : ''}`;
+  return `cd ${shq(dir)} && claude --resume ${meta.id}${CLAUDE_FLAGS ? ' ' + CLAUDE_FLAGS : ''}${prompt ? ' ' + shq(prompt) : ''}`;
+}
+
+function readBody(req, limit = 200_000) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', c => { data += c; if (data.length > limit) { reject(new Error('body too large')); req.destroy(); } });
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+// Live sessions: Claude Code writes ~/.claude/sessions/<pid>.json for each running CLI.
+const LIVE_DIR = path.join(HOME, '.claude', 'sessions');
+function liveSessions() {
+  const out = new Map();
+  let files = [];
+  try { files = fs.readdirSync(LIVE_DIR).filter(f => f.endsWith('.json')); } catch { return out; }
+  for (const f of files) {
+    try {
+      const d = JSON.parse(fs.readFileSync(path.join(LIVE_DIR, f), 'utf8'));
+      if (!d.sessionId || !d.pid) continue;
+      try { process.kill(d.pid, 0); } catch (e) { if (e.code === 'ESRCH') continue; }
+      const prev = out.get(d.sessionId);
+      if (!prev || (d.updatedAt || 0) > (prev.updatedAt || 0)) out.set(d.sessionId, { pid: d.pid, status: d.status || null, updatedAt: d.updatedAt || 0 });
+    } catch { }
+  }
+  return out;
+}
+
+const run = (cmd, args) => new Promise((resolve, reject) =>
+  execFile(cmd, args, (err, stdout, stderr) => err ? reject(new Error((stderr || err.message).trim())) : resolve(stdout.trim())));
+
+const FOCUS_ITERM = [
+  'on run argv',
+  'set target to item 1 of argv',
+  'tell application "iTerm"',
+  'repeat with w in windows',
+  'repeat with t in tabs of w',
+  'repeat with s in sessions of t',
+  'if tty of s is target then',
+  'select w',
+  'tell t to select',
+  'tell s to select',
+  'if (count of argv) > 1 then tell s to write text (item 2 of argv)',
+  'activate',
+  'return "found"',
+  'end if',
+  'end repeat',
+  'end repeat',
+  'end repeat',
+  'end tell',
+  'return "missing"',
+  'end run',
+];
+
+// If the session is already running, focus its iTerm window/tab/pane (and optionally type a message).
+async function focusExisting(id, text) {
+  const live = liveSessions().get(id);
+  if (!live) return null;
+  const tty = await run('ps', ['-o', 'tty=', '-p', String(live.pid)]).catch(() => '');
+  if (!tty || tty === '??') return { state: 'running-elsewhere', pid: live.pid };
+  if (TERMINAL === 'iterm') {
+    const argv = ['--', `/dev/${tty}`].concat(text != null ? [text] : []);
+    const r = await run('osascript', FOCUS_ITERM.flatMap(l => ['-e', l]).concat(argv)).catch(() => 'missing');
+    if (r === 'found') return { state: 'focused', pid: live.pid, tty };
+  }
+  return { state: 'running-elsewhere', pid: live.pid, tty };
 }
 
 function openInTerminal(cmd) {
@@ -85,23 +152,44 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/sessions' && req.method === 'GET') {
       const list = scan();
-      return send(res, 200, { sessions: list.map(listItem), projectsDir: PROJECTS_DIR, terminal: TERMINAL });
+      const live = liveSessions();
+      return send(res, 200, {
+        sessions: list.map(m => ({ ...listItem(m), live: live.get(m.id) || null })),
+        projectsDir: PROJECTS_DIR, terminal: TERMINAL,
+      });
     }
-    let m = p.match(/^\/api\/sessions\/([^/]+)(\/open)?$/);
+    let m = p.match(/^\/api\/sessions\/([^/]+)(\/open|\/send)?$/);
     if (m) {
       const id = m[1];
       if (!UUID_RE.test(id)) return send(res, 400, { error: 'bad id' });
       const meta = getMeta(id);
       if (!meta) return send(res, 404, { error: 'not found' });
+      if (m[2] === '/send') {
+        if (req.method !== 'POST' || req.headers['x-cito'] !== '1') return send(res, 405, { error: 'POST with x-cito header required' });
+        let text = '';
+        try { text = String(JSON.parse(await readBody(req)).text || '').trim(); } catch { return send(res, 400, { error: 'bad body' }); }
+        if (!text) return send(res, 400, { error: 'empty message' });
+        // A typed newline would submit early in the live TUI, so flatten for that path.
+        const existing = await focusExisting(id, text.replace(/\s*\n\s*/g, ' '));
+        if (existing?.state === 'focused') return send(res, 200, { ok: true, action: 'typed', terminal: TERMINAL, ...existing });
+        if (existing?.state === 'running-elsewhere') return send(res, 409, { error: `already running (pid ${existing.pid}${existing.tty ? ', ' + existing.tty : ''}) outside ${TERMINAL}` });
+        await openInTerminal(resumeCommand(meta, text));
+        return send(res, 200, { ok: true, action: 'resumed', terminal: TERMINAL });
+      }
       if (m[2]) {
         // Custom header forces a CORS preflight, so other sites can't trigger this.
         if (req.method !== 'POST' || req.headers['x-cito'] !== '1') return send(res, 405, { error: 'POST with x-cito header required' });
         const cmd = resumeCommand(meta);
+        const existing = await focusExisting(id);
+        if (existing?.state === 'focused') return send(res, 200, { ok: true, action: 'focused', terminal: TERMINAL, ...existing });
+        // Resuming a session that is live in another process would fork it; refuse instead.
+        if (existing?.state === 'running-elsewhere') return send(res, 409, { error: `already running (pid ${existing.pid}${existing.tty ? ', ' + existing.tty : ''}) outside ${TERMINAL}` });
         await openInTerminal(cmd);
-        return send(res, 200, { ok: true, command: cmd, terminal: TERMINAL });
+        return send(res, 200, { ok: true, action: 'opened', command: cmd, terminal: TERMINAL });
       }
       const items = loadTranscript(meta.file);
-      return send(res, 200, { meta: { ...meta, resumeCommand: resumeCommand(meta), cwdExists: !!meta.cwd && fs.existsSync(meta.cwd) }, items });
+      const live = liveSessions().get(id) || null;
+      return send(res, 200, { meta: { ...meta, live, resumeCommand: resumeCommand(meta), cwdExists: !!meta.cwd && fs.existsSync(meta.cwd) }, items });
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {

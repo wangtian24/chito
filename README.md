@@ -34,11 +34,13 @@ scripts/install-launchagent.sh     # CITO_NODE=/path/to/node CITO_PORT=8791 to o
 | Key | Action |
 | --- | --- |
 | `/`, `⌘K` | search (`↑↓` + `↵` inside the search box) |
-| `j` `k` / `↓` `↑`, `↵` | move through the list, open |
-| `o` | reopen in terminal |
+| `j` `k`, `↵` | move through the list, open |
+| `o` | reopen in terminal, or focus its iTerm window/tab/pane if already running |
+| `r` | write a message (typed into the live session, or resumes it in a new window) |
+| `↑` `↓` `PgUp` `PgDn` | scroll conversation |
 | `c` / `y` | copy resume command / permalink |
 | `i` | details panel |
-| `t` | show / hide tool calls |
+| `t` | cycle tool calls: hidden → counts → detailed |
 | `n` `p` | next / previous prompt |
 | `g` `G`, `space` | top / bottom, page |
 | `a` | show / hide agent sessions |

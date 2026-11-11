@@ -35,7 +35,7 @@
           <div class="subtitle" id="subtitle"></div>
         </div>
         <div class="actions" id="actions" hidden>
-          <button class="btn" id="b-tools" title="Show or hide tool calls (t)"><span>Tools</span><kbd>t</kbd></button>
+          <button class="btn" id="b-tools" title="Cycle tool calls: hidden / counts / detailed (t)"><span>Tools: hidden</span><kbd>t</kbd></button>
           <button class="btn" id="b-info" title="Session details (i)"><span>Details</span><kbd>i</kbd></button>
           <button class="btn" id="b-link" title="Copy permalink (y)"><span>Link</span><kbd>y</kbd></button>
           <button class="btn" id="b-copy" title="Copy resume command (c)"><span>Copy cmd</span><kbd>c</kbd></button>
@@ -52,6 +52,15 @@
         </div>
         <div class="thread" id="thread"></div>
       </section>
+      <form class="composer" id="composer" hidden>
+        <div class="composer-box">
+          <textarea id="compose" rows="1" placeholder="Message this session…" spellcheck="true"></textarea>
+          <button type="submit" class="send" id="send" title="Send (↵)" aria-label="Send">
+            <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
+        <div class="composer-hint" id="compose-hint"></div>
+      </form>
     </main>
   </div>
 
@@ -60,14 +69,16 @@
       <h2>Keyboard</h2>
       <div class="keys">
         <div><kbd>/</kbd> or <kbd>⌘K</kbd></div><div>Search</div>
-        <div><kbd>j</kbd> <kbd>k</kbd> / <kbd>↓</kbd> <kbd>↑</kbd></div><div>Next / previous session</div>
+        <div><kbd>j</kbd> <kbd>k</kbd></div><div>Next / previous session</div>
+        <div><kbd>↓</kbd> <kbd>↑</kbd> <kbd>PgDn</kbd> <kbd>PgUp</kbd></div><div>Scroll conversation</div>
         <div><kbd>↵</kbd></div><div>Open highlighted session</div>
         <div><kbd>Esc</kbd></div><div>Leave search / close panel</div>
-        <div><kbd>o</kbd></div><div>Reopen in terminal</div>
+        <div><kbd>o</kbd></div><div>Reopen / focus in terminal</div>
+        <div><kbd>r</kbd></div><div>Write a message (↵ send, ⇧↵ newline)</div>
         <div><kbd>c</kbd></div><div>Copy resume command</div>
         <div><kbd>y</kbd></div><div>Copy permalink</div>
         <div><kbd>i</kbd></div><div>Session details</div>
-        <div><kbd>t</kbd></div><div>Show / hide tool calls</div>
+        <div><kbd>t</kbd></div><div>Cycle tool calls: hidden → counts → detailed</div>
         <div><kbd>n</kbd> <kbd>p</kbd></div><div>Next / previous prompt</div>
         <div><kbd>g</kbd> <kbd>G</kbd></div><div>Top / bottom of conversation</div>
         <div><kbd>space</kbd> <kbd>⇧space</kbd></div><div>Page down / up</div>
