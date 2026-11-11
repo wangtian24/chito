@@ -258,6 +258,7 @@ function moveCursor(delta) {
 // ---------- session ----------
 async function openSession(id, { push = true, hash = '' } = {}) {
   if (push) history.pushState({}, '', `/s/${id}${hash}`);
+  if (state.view === 'artifacts') setView('sessions');
   state.activeId = id;
   state.cursorId = id;
   document.querySelectorAll('#list .item').forEach(n => n.classList.toggle('active', state.filtered[n.dataset.idx]?.id === id));
@@ -687,7 +688,9 @@ function renderArtifacts(prs) {
     const row = el('div', 'artifact');
     const a = el('a', 'artifact-main');
     a.href = p.url; a.target = '_blank'; a.rel = 'noopener';
-    a.append(el('span', 'num artifact-num', `#${p.number}`), el('span', 'artifact-repo', p.repo || 'GitHub'));
+    const live = state.prMap.get(p.url);
+    a.append(el('span', 'num artifact-num', `#${p.number}`), el('span', 'artifact-repo', live?.gh?.title || p.repo || 'GitHub'));
+    if (live) { a.classList.add(`st-${prState(live)}`); a.append(prPill(prState(live))); a.title = p.repo; }
     row.append(a);
     const sub = el('div', 'artifact-sub');
     if (p.at) sub.append(el('span', null, `Opened ${fmtDateTime(p.at)}`));
@@ -849,6 +852,200 @@ $('#mark-all').addEventListener('click', () => {
   renderLanding();
 });
 
+// ---------- artifacts: pull requests across sessions ----------
+const DAY = 24 * 3600e3;
+const PAGE = 15;
+const dismissedPrs = store.get('dismissedPrs', {});
+state.prs = [];
+state.prMap = new Map();
+state.github = { ok: true };
+state.board = { tab: 'active', page: 0 };
+
+const PR_LABEL = { OPEN: 'Open', DRAFT: 'Draft', MERGED: 'Merged', CLOSED: 'Closed', UNKNOWN: 'Unknown' };
+const PR_ICON = {
+  OPEN: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-3"/>',
+  DRAFT: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 9v.01M18 12.5v.01"/>',
+  MERGED: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8 7.5c2 3 5 4.5 7.5 4.5"/>',
+  CLOSED: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7M15 6l6 6M21 6l-6 6"/>',
+  UNKNOWN: '<circle cx="12" cy="12" r="8"/><path d="M12 8v5M12 16v.01"/>',
+};
+const prState = pr => pr.gh?.state || 'UNKNOWN';
+function prPill(st) {
+  const span = el('span', `pr-pill st-${st}`);
+  span.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${PR_ICON[st]}</svg>`;
+  span.append(PR_LABEL[st]);
+  return span;
+}
+
+async function loadPrs(force = false) {
+  try {
+    const r = await fetch(`/api/prs${force ? '?refresh=1' : ''}`);
+    const j = await r.json();
+    state.prs = j.prs;
+    state.github = j.github;
+    state.prMap = new Map(j.prs.map(p => [p.url, p]));
+  } catch (e) { state.github = { ok: false, error: e.message }; }
+  updateArtCount();
+  if (state.view === 'artifacts') renderBoard();
+  if (state.infoOpen && state.infoTab === 'artifacts') renderInfo();
+}
+
+// Merged PRs stay on the board for a day; anything not merged stays until dismissed.
+function isActivePr(pr) {
+  if (dismissedPrs[pr.url]) return false;
+  if (prState(pr) !== 'MERGED') return true;
+  return Date.now() - new Date(pr.gh.mergedAt).getTime() < DAY;
+}
+
+function updateArtCount() {
+  const n = state.prs.filter(isActivePr).length;
+  $('#art-count').textContent = n ? String(n) : '';
+}
+
+function matchesPr(pr, q) {
+  if (!q) return true;
+  const hay = `${pr.repo} #${pr.number} ${pr.number} ${pr.gh?.title || ''} ${pr.gh?.head || ''}`.toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(t => hay.includes(t.replace(/^#/, '#')) || hay.includes(t.replace(/^#/, '')));
+}
+
+function prTimeline(pr) {
+  const g = pr.gh;
+  if (!g) return pr.firstAt ? `Seen ${fmtRel(pr.firstAt)} ago` : '';
+  if (g.state === 'MERGED') return `Merged ${fmtRel(g.mergedAt)} ago`;
+  if (g.state === 'CLOSED') return `Closed ${fmtRel(g.closedAt)} ago`;
+  return `Updated ${fmtRel(g.updatedAt)} ago`;
+}
+
+function renderPrRow(pr, tab) {
+  const st = prState(pr);
+  const g = pr.gh;
+  const row = el('div', `pr st-${st}`);
+  const top = el('div', 'pr-top');
+  top.append(prPill(st));
+  const link = el('a', 'pr-link');
+  link.href = pr.url; link.target = '_blank'; link.rel = 'noopener';
+  link.title = pr.repo;
+  link.append(el('span', 'pr-repo', (pr.repo || '').split('/').pop()), el('span', 'pr-num', `#${pr.number}`), el('span', 'pr-title', g?.title || pr.ghError || 'Title unavailable'));
+  top.append(link);
+  row.append(top);
+
+  const meta = el('div', 'pr-meta');
+  const add = (text, cls, title) => { const x = el('span', cls || null, text); if (title) x.title = title; meta.append(x); };
+  const when = prTimeline(pr);
+  if (when) add(when, null, g ? `Opened ${fmtDateTime(g.createdAt)}` : null);
+  if (g) {
+    if (g.author) add(g.author);
+    if (g.head) add(`${g.head} into ${g.base}`, 'num');
+    const diff = el('span');
+    diff.append(el('span', 'num add', `+${g.additions}`), ' ', el('span', 'num del', `−${g.deletions}`), ` in ${g.changedFiles} file${g.changedFiles === 1 ? '' : 's'}`);
+    meta.append(diff);
+    const checks = { SUCCESS: ['Checks passing', 'ok'], FAILURE: ['Checks failing', 'bad'], ERROR: ['Checks errored', 'bad'], PENDING: ['Checks running', 'wait'], EXPECTED: ['Checks expected', 'wait'] }[g.checks];
+    if (checks && st !== 'MERGED') add(checks[0], checks[1]);
+    const review = { APPROVED: ['Approved', 'ok'], CHANGES_REQUESTED: ['Changes requested', 'bad'], REVIEW_REQUIRED: ['Review required', 'wait'] }[g.review];
+    if (review && (st === 'OPEN' || st === 'DRAFT')) add(review[0], review[1]);
+    if (g.comments) add(`${g.comments} comment${g.comments === 1 ? '' : 's'}`);
+  }
+  row.append(meta);
+
+  const from = el('div', 'pr-from');
+  from.append(el('span', null, pr.sessions.length > 1 ? 'From sessions' : 'From session'));
+  for (const sess of pr.sessions.slice(0, 3)) {
+    const a = el('a', null, sess.title);
+    a.href = `/s/${sess.id}`;
+    a.addEventListener('click', e => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      openSession(sess.id);
+    });
+    from.append(a);
+  }
+  if (pr.sessions.length > 3) from.append(el('span', null, `and ${pr.sessions.length - 3} more`));
+  row.append(from);
+
+  const actions = el('div', 'pr-actions');
+  const btn = el('button', 'btn icon');
+  btn.type = 'button';
+  const dismissing = tab === 'active';
+  btn.title = dismissing ? 'Dismiss' : 'Restore to Active';
+  btn.setAttribute('aria-label', btn.title);
+  btn.innerHTML = dismissing
+    ? '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+    : '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>';
+  btn.addEventListener('click', () => {
+    if (dismissing) dismissedPrs[pr.url] = new Date().toISOString(); else delete dismissedPrs[pr.url];
+    store.set('dismissedPrs', dismissedPrs);
+    updateArtCount();
+    renderBoard();
+    toast(dismissing ? `Dismissed #${pr.number}` : `Restored #${pr.number}`);
+  });
+  actions.append(btn);
+  row.append(actions);
+  return row;
+}
+
+function renderBoard() {
+  const q = $('#bq').value.trim();
+  const active = state.prs.filter(isActivePr);
+  const dismissed = state.prs.filter(p => dismissedPrs[p.url]);
+  $('#n-active').textContent = active.length;
+  $('#n-dismissed').textContent = dismissed.length;
+  document.querySelectorAll('#board-tabs button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.tab === state.board.tab)));
+  const status = $('#board-status');
+  if (state.github && !state.github.ok) {
+    status.hidden = false;
+    status.innerHTML = '';
+    status.append('GitHub state is unavailable, so PRs show without titles or status. Run ', el('code', null, 'gh auth login'), ' in a terminal, then refresh.');
+  } else status.hidden = true;
+
+  // Open and draft first (they need you), then everything else; newest activity first within each.
+  const rank = { OPEN: 0, DRAFT: 1, UNKNOWN: 2, CLOSED: 3, MERGED: 3 };
+  const recency = p => p.gh?.mergedAt || p.gh?.closedAt || p.gh?.updatedAt || p.firstAt || '';
+  const pool = (state.board.tab === 'active' ? active : dismissed).filter(p => matchesPr(p, q))
+    .sort((x, y) => rank[prState(x)] - rank[prState(y)] || (recency(y) > recency(x) ? 1 : -1));
+  const pages = Math.max(1, Math.ceil(pool.length / PAGE));
+  state.board.page = Math.min(state.board.page, pages - 1);
+  const slice = pool.slice(state.board.page * PAGE, (state.board.page + 1) * PAGE);
+  const box = $('#prs');
+  box.textContent = '';
+  for (const pr of slice) box.append(renderPrRow(pr, state.board.tab));
+  if (!slice.length) {
+    box.append(el('div', 'prs-empty', q ? 'No pull requests match that search.'
+      : state.board.tab === 'active' ? 'Nothing active. Open PRs appear here, and merged ones stay for 24 hours.'
+      : 'Nothing dismissed.'));
+  }
+  const pager = $('#pager');
+  pager.textContent = '';
+  if (pages > 1) {
+    const prev = el('button', 'btn', 'Previous'); prev.disabled = state.board.page === 0;
+    const next = el('button', 'btn', 'Next'); next.disabled = state.board.page >= pages - 1;
+    prev.addEventListener('click', () => { state.board.page--; renderBoard(); $('#board').scrollTop = 0; });
+    next.addEventListener('click', () => { state.board.page++; renderBoard(); $('#board').scrollTop = 0; });
+    pager.append(prev, el('span', 'num', `Page ${state.board.page + 1} of ${pages}`), next);
+  }
+}
+
+function setView(view) {
+  state.view = view;
+  document.body.classList.toggle('view-artifacts', view === 'artifacts');
+  $('#board').hidden = view !== 'artifacts';
+  document.querySelectorAll('.views .view-tab').forEach(t => {
+    if (t.dataset.view === view) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
+  });
+  if (view === 'artifacts') { document.title = 'Artifacts · chito'; renderBoard(); }
+}
+
+$('#bq').addEventListener('input', () => { state.board.page = 0; renderBoard(); });
+$('#bq').addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); if ($('#bq').value) { $('#bq').value = ''; renderBoard(); } else $('#bq').blur(); } });
+document.querySelectorAll('#board-tabs button').forEach(b => b.addEventListener('click', () => { state.board.tab = b.dataset.tab; state.board.page = 0; renderBoard(); }));
+$('#board-refresh').addEventListener('click', async () => { toast('Refreshing from GitHub…'); await loadPrs(true); toast('Up to date'); });
+document.querySelectorAll('.views .view-tab').forEach(t => t.addEventListener('click', e => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+  e.preventDefault();
+  const path = t.dataset.view === 'artifacts' ? '/artifacts' : '/';
+  if (location.pathname !== path) history.pushState({}, '', path);
+  route();
+}));
+
 // ---------- settings ----------
 const PRESETS = [
   { id: 'slate', name: 'Slate', note: 'Light, magenta, Hanken Grotesk' },
@@ -949,9 +1146,10 @@ document.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input, textarea')) return;
   const convo = $('#convo');
   const keys = {
-    '/': () => { $('#q').focus(); $('#q').select(); },
+    '/': () => { const box = state.view === 'artifacts' ? $('#bq') : $('#q'); box.focus(); box.select(); },
     '?': () => openSettings('keyboard'),
     ',': () => openSettings(),
+    P: () => { const path = state.view === 'artifacts' ? '/' : '/artifacts'; history.pushState({}, '', path); route(); },
     j: () => moveCursor(1),
     k: () => moveCursor(-1),
     ArrowDown: () => convo.scrollBy({ top: 80 }),
@@ -1027,6 +1225,8 @@ document.addEventListener('click', e => {
 
 function route() {
   const m = location.pathname.match(/^\/s\/([0-9a-f-]{36})/i);
+  const artifacts = location.pathname === '/artifacts';
+  setView(artifacts ? 'artifacts' : 'sessions');
   if (m) {
     if (m[1] !== state.activeId) openSession(m[1], { push: false });
     else if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) scrollWithin($('#convo'), t); }
@@ -1036,8 +1236,7 @@ function route() {
     document.body.classList.remove('has-session');
     $('#thread').textContent = '';
     setHeader(null);
-    document.title = 'chito';
-    renderLanding();
+    if (!artifacts) { document.title = 'chito'; renderLanding(); }
   }
 }
 window.addEventListener('popstate', route);
@@ -1051,3 +1250,5 @@ if (state.activeId) {
   if (i >= 0) { state.cursor = i; renderList(!!$('#q').value.trim()); }
 }
 setInterval(() => { if (!document.hidden) loadList(); }, 15000);
+loadPrs();
+setInterval(() => { if (!document.hidden) loadPrs(); }, 60000);

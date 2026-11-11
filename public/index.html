@@ -40,6 +40,10 @@
         <div class="brand-count" id="count"></div>
         <button class="btn icon" id="b-settings" title="Settings (,)" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
+      <nav class="views" aria-label="Views">
+        <a class="view-tab" href="/" data-view="sessions">Sessions</a>
+        <a class="view-tab" href="/artifacts" data-view="artifacts">Artifacts <span class="num view-count" id="art-count"></span></a>
+      </nav>
       <div class="search">
         <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input id="q" type="search" placeholder="Search sessions" autocomplete="off" spellcheck="false">
@@ -95,6 +99,30 @@
         </div>
         <div class="composer-hint" id="compose-hint"></div>
       </form>
+      <section class="board" id="board" hidden>
+        <div class="board-inner">
+          <div class="board-head">
+            <div>
+              <h1>Pull requests</h1>
+              <p id="board-sub">Every PR opened in your sessions. Merged ones stay here for 24 hours.</p>
+            </div>
+            <button class="btn" id="board-refresh" title="Refresh from GitHub"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 5v4h4M4 13a8 8 0 0 0 14.9 3.9M20 19v-4h-4"/></svg><span>Refresh</span></button>
+          </div>
+          <div class="board-controls">
+            <div class="search board-search">
+              <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+              <input id="bq" type="search" placeholder="Search title, number or repo" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="seg" id="board-tabs" role="tablist">
+              <button data-tab="active" role="tab">Active <span class="num" id="n-active"></span></button>
+              <button data-tab="dismissed" role="tab">Dismissed <span class="num" id="n-dismissed"></span></button>
+            </div>
+          </div>
+          <div class="board-status" id="board-status" hidden></div>
+          <div class="prs" id="prs"></div>
+          <div class="pager" id="pager"></div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -147,6 +175,7 @@
         <div><kbd>space</kbd> <kbd>⇧space</kbd></div><div>Page down / up</div>
         <div><kbd>a</kbd></div><div>Show / hide agent sessions</div>
         <div><kbd>[</kbd></div><div>Collapse sidebar</div>
+        <div><kbd>P</kbd></div><div>Artifacts (pull requests) or back to sessions</div>
         <div><kbd>,</kbd></div><div>Settings</div>
       </div>
       <p class="panel-note" style="margin-top: var(--space-md)">Search matches title first, then project and first prompt. Use <code>p:name</code> to filter by project.</p>

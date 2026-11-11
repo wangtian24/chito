@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { scan, getMeta, HOME, PROJECTS_DIR } from './lib/index.js';
 import { loadTranscript } from './lib/transcript.js';
+import { prStates } from './lib/github.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CHITO_PORT || 8791);
@@ -143,7 +144,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   try {
-    if (p === '/' || p.startsWith('/s/')) {
+    if (p === '/' || p.startsWith('/s/') || p === '/artifacts') {
       return send(res, 200, fs.readFileSync(path.join(ROOT, 'public/index.html')), 'text/html; charset=utf-8');
     }
     if (STATIC[p]) {
@@ -157,6 +158,23 @@ const server = http.createServer(async (req, res) => {
         sessions: list.map(m => ({ ...listItem(m), live: live.get(m.id) || null })),
         projectsDir: PROJECTS_DIR, terminal: TERMINAL,
       });
+    }
+    if (p === '/api/prs' && req.method === 'GET') {
+      // Every PR opened in any session, grouped by URL, with live state from GitHub.
+      const byUrl = new Map();
+      for (const m of scan()) {
+        for (const pr of m.prLinks || []) {
+          let e = byUrl.get(pr.url);
+          if (!e) { e = { url: pr.url, repo: pr.repo, number: pr.number, firstAt: pr.at || m.startTime, sessions: [] }; byUrl.set(pr.url, e); }
+          if (pr.at && (!e.firstAt || pr.at < e.firstAt)) e.firstAt = pr.at;
+          e.sessions.push({ id: m.id, title: m.title, project: m.project, agent: m.agent, lastTime: m.lastTime });
+        }
+      }
+      const prs = [...byUrl.values()];
+      const { states, error } = await prStates(prs, { force: url.searchParams.get('refresh') === '1' });
+      for (const pr of prs) { const st = states.get(pr.url); pr.gh = st?.data || null; pr.ghError = st?.error || null; }
+      prs.sort((a, b) => ((b.gh?.updatedAt || b.firstAt || '') > (a.gh?.updatedAt || a.firstAt || '') ? 1 : -1));
+      return send(res, 200, { prs, github: { ok: !error, error } });
     }
     if (p === '/api/outcomes' && req.method === 'GET') {
       const ids = (url.searchParams.get('ids') || '').split(',').filter(x => UUID_RE.test(x)).slice(0, 50);

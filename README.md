@@ -31,6 +31,10 @@ scripts/install-launchagent.sh     # CHITO_NODE=/path/to/node CHITO_PORT=8791 to
 
 Settings (`,` or the gear) has four tabs: Appearance, Conversation, Keyboard and About. Appearance offers six sans-serif presets, three light (Slate, the default; Ink; Sage) and three dark (Console, Midnight, Plum). Your choice is remembered per browser, and `?theme=<name>` overrides it. Palettes and type pairings start from [Hallmark](https://github.com/nutlope/hallmark) themes.
 
+## Artifacts: pull requests
+
+**Artifacts** (above the session list, or `P`) collects every PR opened in any session. Live state comes from GitHub through your local `gh` CLI (`gh auth login` once); no app or token setup. Each row shows the state (open, draft, merged, closed), repo, number, title, author, branch, diff size, checks, review and the sessions it came from. Open PRs stay until you dismiss them. Merged ones stay for 24 hours. Dismissed PRs move to their own tab and can be restored. Search matches title, number or repo; long lists page in 15s. State is cached: open PRs refresh every minute, merged ones far less often.
+
 ## Work and answers
 
 Each turn's final run of text is the answer; everything before it (interim notes, thinking, tool calls) is work. With work hidden (`w`, on by default), a turn shows one line, such as *Worked 6m: 5 notes, 15 tool calls*, followed by the answer. Click the line to open one turn. A turn still in flight keeps its work visible until the answer lands.
@@ -52,6 +56,7 @@ Each turn's final run of text is the answer; everything before it (interim notes
 | `g` `G`, `space` | top / bottom, page |
 | `a` | show / hide agent sessions |
 | `[` | collapse sidebar |
+| `P` | Artifacts (pull requests) or back to sessions |
 | `,` | settings |
 | `?` | keyboard shortcuts |
 
