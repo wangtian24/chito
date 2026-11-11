@@ -50,7 +50,7 @@ function fmtRel(iso) {
 function fmtDur(a, b) {
   const s = Math.max(0, (new Date(b) - new Date(a)) / 1000);
   if (s < 60) return `${Math.round(s)}s`;
-  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 3600) { const m = Math.floor(s / 60), r = Math.round(s % 60); return r ? `${m}m ${r}s` : `${m}m`; }
   if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`;
   return `${Math.floor(s / 86400)}d ${Math.round((s % 86400) / 3600)}h`;
 }
@@ -291,7 +291,7 @@ function setHeader(meta) {
   sub.append(n);
   updateToolsButton();
   const live = meta.live ?? state.sessions.find(s => s.id === meta.id)?.live;
-  $('#b-open span').textContent = live ? 'Focus in terminal' : 'Open in terminal';
+  $('#b-open span').textContent = live ? 'Focus terminal' : 'Open in terminal';
   $('#b-open').title = live ? `Running now (pid ${live.pid}): focus its terminal (o)` : 'Reopen in terminal (o)';
 }
 
@@ -632,14 +632,14 @@ function toggleInfo(force) {
   if (state.infoOpen) renderInfo();
 }
 
-const TOOL_MODES = { none: 'Tools: hidden', count: 'Tools: counts', full: 'Tools: detailed' };
+const TOOL_MODES = { none: 'Tools off', count: 'Tool counts', full: 'Tool details' };
 function updateToolsButton() {
   $('#b-tools span').textContent = TOOL_MODES[state.toolMode];
   $('#b-tools').classList.toggle('on', state.toolMode !== 'none');
 }
 
 function updateWorkButton() {
-  $('#b-work span').textContent = state.workMode === 'hide' ? 'Work: hidden' : 'Work: shown';
+  $('#b-work span').textContent = state.workMode === 'hide' ? 'Work hidden' : 'Work shown';
   $('#b-work').classList.toggle('on', state.workMode === 'show');
 }
 
@@ -760,6 +760,14 @@ $('#b-info').addEventListener('click', () => toggleInfo());
 $('#b-tools').addEventListener('click', toggleTools);
 updateToolsButton();
 $('#b-work').addEventListener('click', toggleWork);
+const themeSel = $('#theme');
+themeSel.value = document.documentElement.dataset.theme || 'slate';
+themeSel.addEventListener('change', () => {
+  document.documentElement.dataset.theme = themeSel.value;
+  store.set('theme', themeSel.value);
+});
+const qTheme = new URL(location.href).searchParams.get('theme');
+if (qTheme && [...themeSel.options].some(o => o.value === qTheme)) { document.documentElement.dataset.theme = qTheme; themeSel.value = qTheme; }
 updateWorkButton();
 $('#b-open').addEventListener('click', reopen);
 $('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, 'resume command'));

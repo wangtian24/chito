@@ -29,7 +29,21 @@ scripts/install-launchagent.sh     # CITO_NODE=/path/to/node CITO_PORT=8791 to o
 
 ## Look
 
-The Almanac theme from [Hallmark](https://github.com/nutlope/hallmark): slate stock for the index, a pale sheet for reading, Hanken Grotesk for UI, Newsreader for the conversation, IBM Plex Mono for figures and code, ruled lines instead of cards and shadows, and one chart magenta. Dark mode re-derives the same tokens.
+Nine themes, picked at the bottom of the sidebar and remembered per browser (`?theme=<name>` overrides). Each re-derives its tokens for dark mode. All but Almanac are sans-serif throughout.
+
+| Theme | Feel |
+| --- | --- |
+| Slate (default) | slate and magenta, Hanken Grotesk |
+| Console | graphite and amber, Host Grotesk |
+| Ink | white paper and teal, Epilogue, pill controls |
+| Mint | warm paper and green, Schibsted Grotesk and Instrument Sans |
+| Cobalt | cool white and electric blue, Familjen Grotesk and Plex Sans |
+| Midnight | deep blue and ice, Mona Sans |
+| Violet | lavender and violet, Outfit and Onest |
+| Rim | warm black and burnt orange, Geist |
+| Almanac | serif reading pane, ruled index |
+
+Palettes and type pairings start from [Hallmark](https://github.com/nutlope/hallmark) themes. System lines (work summaries, tool counts, notes) get their own cool tone in every theme.
 
 ## Work and answers
 

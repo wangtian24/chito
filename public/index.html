@@ -7,7 +7,8 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&family=Host+Grotesk:wght@400;500;600&family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Epilogue:wght@400;500;600;700&family=Schibsted+Grotesk:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&family=Familjen+Grotesk:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Mona+Sans:wght@400;500;600&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Outfit:wght@400;500;600&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>try { document.documentElement.dataset.theme = JSON.parse(localStorage.getItem("cito.theme")) || "slate"; } catch { document.documentElement.dataset.theme = "slate"; }</script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -28,6 +29,20 @@
         <button class="chip ghost" id="help-btn" title="Keyboard shortcuts (?)">Keys</button>
       </div>
       <nav class="list" id="list" tabindex="-1"></nav>
+      <div class="sidebar-foot">
+        <label for="theme">Theme</label>
+        <select id="theme">
+          <option value="slate">Slate: sans, slate and magenta</option>
+          <option value="console">Console: graphite and amber</option>
+          <option value="ink">Ink: white paper and teal</option>
+          <option value="mint">Mint: warm paper and green</option>
+          <option value="cobalt">Cobalt: cool white and electric blue</option>
+          <option value="midnight">Midnight: deep blue and ice</option>
+          <option value="violet">Violet: lavender and violet</option>
+          <option value="rim">Rim: warm black and burnt orange</option>
+          <option value="almanac">Almanac: serif and ruled</option>
+        </select>
+      </div>
     </aside>
 
     <main class="main">
@@ -37,12 +52,13 @@
           <div class="subtitle" id="subtitle"></div>
         </div>
         <div class="actions" id="actions" hidden>
-          <button class="btn" id="b-work" title="Hide or show the work before each answer (w)"><span>Work: hidden</span><kbd>w</kbd></button>
-          <button class="btn" id="b-tools" title="Cycle tool calls: hidden / counts / detailed (t)"><span>Tools: hidden</span><kbd>t</kbd></button>
-          <button class="btn" id="b-info" title="Session details (i)"><span>Details</span><kbd>i</kbd></button>
-          <button class="btn" id="b-link" title="Copy permalink (y)"><span>Link</span><kbd>y</kbd></button>
-          <button class="btn" id="b-copy" title="Copy resume command (c)"><span>Copy cmd</span><kbd>c</kbd></button>
-          <button class="btn primary" id="b-open" title="Reopen in terminal (o)"><span>Open in terminal</span><kbd>o</kbd></button>
+          <button class="btn" id="b-work" title="Hide or show the work before each answer (w)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg><span>Work hidden</span></button>
+          <button class="btn" id="b-tools" title="Tool calls: off, counts, or details (t)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/></svg><span>Tools off</span></button>
+          <span class="actions-sep" aria-hidden="true"></span>
+          <button class="btn icon" id="b-info" title="Session details (i)" aria-label="Session details"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.01"/></svg></button>
+          <button class="btn icon" id="b-link" title="Copy permalink (y)" aria-label="Copy permalink"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+          <button class="btn icon" id="b-copy" title="Copy resume command (c)" aria-label="Copy resume command"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg></button>
+          <button class="btn primary" id="b-open" title="Reopen in terminal (o)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg><span>Open in terminal</span></button>
         </div>
       </header>
       <div class="info" id="info" hidden></div>
