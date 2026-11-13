@@ -4,7 +4,7 @@
 SQLite at $BL_DB (default ~/.backlog/backlog.db). Stdlib only. Every write goes through here.
 Part of chito (github.com/wangtian24/chito); design in backlog/docs/design.md.
 """
-import argparse, json, os, shlex, signal, socket, sqlite3, subprocess, sys, time
+import argparse, json, os, re, shlex, signal, socket, sqlite3, subprocess, sys, time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,7 +23,12 @@ DEFAULTS = {
     "daemon_enabled": True,
     "daemon_max_parallel": 6,   # daemon's share of the global cap
     "daemon_max_runs_per_day": 60,
-    "orphan_policy": "wait",    # wait | daemon (daemon adopts session projects whose owner went away)
+    "orphan_policy": "adopt",   # adopt: a DSO session resumes stalled SO projects | daemon: run them as a queue | wait
+    "adopt_after_minutes": 10,  # an SO project with ready tickets, no live owner and no activity this long gets adopted
+    "orchestrate_min_ready": 1, # executor=auto (DSO): start an orchestrator session when this many tickets are ready (fewer: queue workers)
+    "orchestrator_model": "opus",
+    "quota_backoff_minutes": 30, # when a worker hits a usage limit and no reset time is given
+    "quota_until": "",          # set automatically when a usage limit is hit; claims wait until then
     "max_attempts": 2,
     "lease_minutes": 30,
     "worker_timeout_minutes": 120,
@@ -70,6 +75,15 @@ CREATE TABLE IF NOT EXISTS events(
 CREATE INDEX IF NOT EXISTS events_ticket ON events(ticket);
 CREATE TABLE IF NOT EXISTS settings(
   scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope, key));
+CREATE TABLE IF NOT EXISTS milestones(
+  id INTEGER PRIMARY KEY, key TEXT UNIQUE NOT NULL, project TEXT NOT NULL REFERENCES projects(key),
+  seq INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+  trigger TEXT NOT NULL DEFAULT 'all',       -- all | deploy | manual
+  gate TEXT,                                 -- ticket whose completion reaches the milestone (trigger=deploy)
+  showcase_kind TEXT NOT NULL DEFAULT 'screenshot',  -- screenshot | demo | localhost | link | none
+  showcase_ticket TEXT, showcases TEXT NOT NULL DEFAULT '[]', due TEXT,
+  status TEXT NOT NULL DEFAULT 'planned',    -- planned | active | reached | showcased | canceled
+  reached TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS runs(
   id INTEGER PRIMARY KEY, project TEXT, pid INTEGER, host TEXT, agent TEXT,
   started TEXT, heartbeat TEXT, ended TEXT, status TEXT);
@@ -110,6 +124,7 @@ def connect():
     migrate(c, "projects", {"executor": "TEXT NOT NULL DEFAULT 'session'", "owner": "TEXT", "owner_heartbeat": "TEXT",
                             "evergreen": "INTEGER NOT NULL DEFAULT 0"})
     migrate(c, "runs", {"kind": "TEXT"})
+    migrate(c, "tickets", {"milestone": "TEXT"})
     if c.execute("SELECT 1 FROM projects WHERE status='active' LIMIT 1").fetchone():
         try:
             c.execute("UPDATE projects SET status='executing' WHERE status='active'")
@@ -232,6 +247,8 @@ MODE_SQL = {
     None: "",
     "session": f"AND p.status='executing' AND {EXEC}!='daemon'",
     "daemon": f"AND p.status='executing' AND ({EXEC}='daemon' OR (:adopt AND p.executor='session' AND {{orphan}}))",
+    "auto1": "AND p.status='executing' AND p.executor='auto'",
+    "adopt": f"AND p.status='executing' AND p.executor='session' AND {EXEC}!='daemon'",
 }
 
 def orphan_sql(c):
@@ -250,7 +267,8 @@ def model_for(c, t):
     return json.loads(t["meta"]).get("model") or setting(c, "model", t["project"], json.loads(t["labels"]))
 
 def finalize_projects(c):
-    """Executing, non-evergreen projects with nothing left to do become done."""
+    """Executing, non-evergreen projects with nothing left to do become done. Also refreshes milestones."""
+    refresh_milestones(c)
     for p in c.execute("SELECT key FROM projects WHERE status='executing' AND evergreen=0").fetchall():
         n = c.execute("SELECT count(*) FROM tickets WHERE project=? AND state IN ('todo','in_progress','in_review','failed')",
                       (p["key"],)).fetchone()[0]
@@ -258,6 +276,91 @@ def finalize_projects(c):
         if n == 0 and done > 0:
             c.execute("UPDATE projects SET status='done', owner=NULL, updated=? WHERE key=?", (now(), p["key"]))
             event(c, "project", project=p["key"], body="executing → done (all tickets final)", actor="backlog")
+
+SHOWCASE_DIR = HOME / "showcase"
+SHOWCASE_HOW = {
+    "screenshot": "Capture screenshots of the finished work (headless Playwright is fine). Save each image and record it: "
+                  "`bl milestone showcase {m} --kind screenshot --file PATH --note \"what it shows\"`.",
+    "demo": "Make a short demo: a GIF/video or a step-by-step walkthrough with screenshots. Record each piece with "
+            "`bl milestone showcase {m} --kind demo --file PATH|--url URL --note \"...\"`.",
+    "localhost": "Start the app locally on a free port and leave it running if the spec says so; otherwise record how to run it. "
+                 "`bl milestone showcase {m} --kind localhost --url http://localhost:PORT --note \"how to start, what to try\"`.",
+    "link": "Record the live link(s) where the result can be seen: `bl milestone showcase {m} --kind link --url URL --note \"...\"`.",
+}
+
+def milestone(c, key):
+    m = c.execute("SELECT * FROM milestones WHERE key=?", (key.upper(),)).fetchone()
+    if not m:
+        die(f"no milestone {key}")
+    return m
+
+def ms_work(c, m):
+    """The milestone's own tickets (excluding its showcase ticket)."""
+    return c.execute("SELECT * FROM tickets WHERE milestone=? AND key IS NOT ? ORDER BY id",
+                     (m["key"], m["showcase_ticket"])).fetchall()
+
+def sync_showcase(c, m):
+    """Keep the showcase ticket waiting on the right things, and out of the ready set until there is work."""
+    st = m["showcase_ticket"]
+    if not st:
+        return
+    t = c.execute("SELECT * FROM tickets WHERE key=?", (st,)).fetchone()
+    if not t or t["state"] not in ("backlog", "todo"):
+        return
+    if m["trigger"] == "deploy" and m["gate"]:
+        need = [m["gate"]]
+    else:
+        need = [w["key"] for w in ms_work(c, m) if w["state"] != "canceled"]
+    for k in need:
+        if not c.execute("SELECT 1 FROM deps WHERE ticket=? AND blocker=?", (st, k)).fetchone() and not would_cycle(c, st, k):
+            c.execute("INSERT OR IGNORE INTO deps(ticket, blocker) VALUES(?,?)", (st, k))
+    want = "todo" if need else "backlog"
+    if t["state"] != want:
+        c.execute("UPDATE tickets SET state=?, updated=? WHERE key=?", (want, now(), st))
+
+def refresh_milestones(c, project=None):
+    q, args = "SELECT * FROM milestones WHERE status NOT IN ('canceled','accepted')", []
+    if project:
+        q += " AND project=?"; args.append(project)
+    for m in c.execute(q, args).fetchall():
+        sync_showcase(c, m)
+        work = ms_work(c, m)
+        shows = json.loads(m["showcases"])
+        st_t = c.execute("SELECT * FROM tickets WHERE key=?", (m["showcase_ticket"],)).fetchone() if m["showcase_ticket"] else None
+        if m["trigger"] == "deploy":
+            g = c.execute("SELECT state FROM tickets WHERE key=?", (m["gate"],)).fetchone() if m["gate"] else None
+            reached = bool(g and g["state"] == "done")
+        elif m["trigger"] == "manual":
+            reached = m["reached"] is not None
+        else:
+            reached = bool(work) and all(w["state"] in ("done", "canceled") for w in work) and any(w["state"] == "done" for w in work)
+        if reached and st_t and st_t["state"] == "done" and not shows and st_t["result"]:
+            shows = [{"kind": "note", "note": st_t["result"], "ticket": st_t["key"], "at": now()}]
+            c.execute("UPDATE milestones SET showcases=? WHERE key=?", (json.dumps(shows), m["key"]))
+        showcase_done = m["showcase_kind"] == "none" or bool(shows) and (not st_t or st_t["state"] in ("done", "canceled"))
+        if reached and showcase_done:
+            new = "showcased" if shows else "reached"
+        elif reached:
+            new = "reached"
+        elif any(w["state"] in ("in_progress", "in_review", "done") for w in work):
+            new = "active"
+        else:
+            new = "planned"
+        if new != m["status"]:
+            c.execute("UPDATE milestones SET status=?, reached=CASE WHEN ? IN ('reached','showcased') THEN coalesce(reached, ?) ELSE reached END, "
+                      "updated=? WHERE key=?", (new, new, now(), now(), m["key"]))
+            event(c, "milestone", project=m["project"], body=f"{m['key']} {m['status']} → {new}: {m['title']}", actor="backlog")
+
+def assign_milestone(c, tkey, mkey):
+    if mkey:
+        m = milestone(c, mkey)
+        t = ticket(c, tkey)
+        if m["project"] != t["project"]:
+            die(f"{mkey} belongs to {m['project']}, not {t['project']}")
+        c.execute("UPDATE tickets SET milestone=? WHERE key=?", (m["key"], tkey))
+        sync_showcase(c, milestone(c, mkey))
+    else:
+        c.execute("UPDATE tickets SET milestone=NULL WHERE key=?", (tkey,))
 
 def set_project_status(c, key, new, reason=""):
     p = project_row(c, key)
@@ -272,7 +375,9 @@ def reap(c):
     rows = c.execute("SELECT * FROM tickets WHERE state='in_progress' AND lease_until IS NOT NULL AND lease_until < ?",
                      (now(),)).fetchall()
     for t in rows:
-        release_ticket(c, t, "lease expired", count_failure=True, actor="reaper")
+        # A lapsed lease usually means the holder went away (closed session, usage limit, sleep), not that the
+        # ticket is broken, so it doesn't use an attempt. Workers that exit without reporting do.
+        release_ticket(c, t, "lease expired", count_failure=False, actor="reaper")
 
 def release_ticket(c, t, reason, count_failure=False, actor=None):
     maxa = t["max_attempts"] or setting(c, "max_attempts", t["project"], json.loads(t["labels"]))
@@ -280,7 +385,7 @@ def release_ticket(c, t, reason, count_failure=False, actor=None):
         new = "failed"
     else:
         new = "todo"
-    # a plain release (split / handoff) gives the attempt back
+    # a plain release (split / handoff / lease expiry / usage limit) gives the attempt back
     att = t["attempts"] if count_failure else max(0, t["attempts"] - 1)
     c.execute("UPDATE tickets SET state=?, attempts=?, claimed_by=NULL, lease_until=NULL, updated=?, "
               "finished=CASE WHEN ?='failed' THEN ? ELSE finished END WHERE key=?",
@@ -288,10 +393,54 @@ def release_ticket(c, t, reason, count_failure=False, actor=None):
     event(c, "state", t["key"], body=f"in_progress → {new}: {reason}", actor=actor)
     return new
 
+QUOTA_RE = re.compile(r"(usage limit|limit reached|hit your (?:\w+ )?limit|rate.?limit|quota|too many requests|\b429\b|overloaded_error|out of (?:extra )?usage)", re.I)
+
+def quota_until(c):
+    q = setting(c, "quota_until") or ""
+    return q if q and q > now() else None
+
+def detect_quota(text):
+    """Return (True, reset_iso or None) when worker output shows a usage/rate limit."""
+    if not text or not QUOTA_RE.search(text):
+        return False, None
+    m = re.search(r"limit reached\|(\d{10})", text)
+    if m:
+        return True, datetime.fromtimestamp(int(m.group(1)), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    m = re.search(r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)", text, re.I)
+    if m:
+        h = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "pm" else 0)
+        loc = datetime.now().astimezone()
+        t = loc.replace(hour=h, minute=int(m.group(2) or 0), second=0, microsecond=0)
+        if t <= loc:
+            t += timedelta(days=1)
+        return True, t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return True, None
+
+def note_quota(c, key, text, actor):
+    """A worker stopped on a usage limit: pause all claims until the reset time and notify once."""
+    _, reset = detect_quota(text)
+    until = reset or later(setting(c, "quota_backoff_minutes"))
+    cur = setting(c, "quota_until") or ""
+    if until > cur:
+        c.execute("INSERT OR REPLACE INTO settings VALUES('global','quota_until',?)", (json.dumps(until),))
+    line = next((l for l in reversed(text.splitlines()) if QUOTA_RE.search(l)), "")[:200]
+    event(c, "quota", key, body=f"usage limit hit; claims paused until {until}: {line}", actor=actor, data={"until": until})
+    return until
+
+def log_tail(lf_name, n=6000):
+    try:
+        with open(lf_name, "rb") as f:
+            f.seek(0, 2); size = f.tell(); f.seek(max(0, size - n))
+            return f.read().decode("utf-8", "replace")
+    except Exception:
+        return ""
+
 def claim(c, project=None, key=None, agent=None, lease=None, force=False, mode="session"):
     agent = agent or agent_id()
     with tx(c):
         reap(c)
+        if not force and quota_until(c):
+            return None, f"paused for usage limit until {quota_until(c)} (bl quota clear to retry now)"
         if not force and mode == "daemon":
             if not setting(c, "daemon_enabled"):
                 return None, "daemon paused"
@@ -375,8 +524,8 @@ def cmd_project(a):
                 k, v = kv.split("=", 1)
                 if k not in ("name", "repo", "doc_slug", "status", "executor", "evergreen"):
                     die(f"unknown project field {k}")
-                if k == "executor" and v not in ("daemon", "session"):
-                    die("executor must be daemon or session")
+                if k == "executor" and v not in ("daemon", "session", "auto"):
+                    die("executor must be session (SO: you start an orchestrator), auto (DSO: the daemon starts orchestrator sessions) or daemon (DQ: queue)")
                 if k == "evergreen":
                     v = 1 if v.lower() in ("1", "true", "yes", "on") else 0
                 c.execute(f"UPDATE projects SET {k}=?, updated=? WHERE key=?", (v if v != "" else None, now(), p["key"]))
@@ -413,6 +562,8 @@ def cmd_add(a):
             add_dep(c, key, b)
         for d in csv(a.blocks):
             add_dep(c, d, key, force=a.force)
+        if a.milestone:
+            assign_milestone(c, key, a.milestone)
     out(a, {"key": key}, key)
 
 def fmt_line(t, extra=""):
@@ -642,6 +793,8 @@ def cmd_set(a):
                 c.execute(f"UPDATE tickets SET {k}=? WHERE key=?", (json.dumps([x for x in v.split(",") if x]), t["key"]))
             elif k in allowed:
                 c.execute(f"UPDATE tickets SET {k}=? WHERE key=?", (v if v != "" else None, t["key"]))
+            elif k == "milestone":
+                assign_milestone(c, t["key"], v or None)
             elif k.startswith("meta.") or k in ("review", "size", "model", "executor"):
                 mk = k[5:] if k.startswith("meta.") else k
                 if v == "": meta.pop(mk, None)
@@ -696,6 +849,19 @@ def build_prompt(c, t, compact=False):
             L.append("## Notes on this ticket (newest first)")
             L += [f"- {e['at']} {e['actor']}: {e['body']}" for e in comments]
             L.append("")
+        if t["milestone"]:
+            m = c.execute("SELECT * FROM milestones WHERE key=?", (t["milestone"],)).fetchone()
+            if m:
+                L += [f"Milestone: {m['key']} {m['title']}" + (f" (due {m['due']})" if m["due"] else ""), ""]
+        if meta.get("showcase_for"):
+            m = c.execute("SELECT * FROM milestones WHERE key=?", (meta["showcase_for"],)).fetchone()
+            if m:
+                work = ms_work(c, m)
+                L += [f"## Showcase for milestone {m['key']}: {m['title']}",
+                      "This ticket produces the portfolio piece for the milestone: proof of what was built, for a human to look at.",
+                      SHOWCASE_HOW.get(m["showcase_kind"], SHOWCASE_HOW["screenshot"]).format(m=m["key"]),
+                      "Cover every ticket below that is done; say what changed and how to see it. Files are copied into the backlog's showcase folder.",
+                      *[f"- {w['key']} [{w['state']}] {w['title']}: {(w['result'] or '')[:300]}" for w in work], ""]
         if t["parent"]:
             par = c.execute("SELECT title FROM tickets WHERE key=?", (t["parent"],)).fetchone()
             L += [f"Parent: {t['parent']} {par['title'] if par else ''}", ""]
@@ -709,6 +875,42 @@ def build_prompt(c, t, compact=False):
           "ask = open the PR and stop, a human decides.",
           "- Never deploy, spend money or push to main unless the spec says so."]
     return "\n".join(L)
+
+def orchestrator_prompt(c, proj, agent):
+    p = project_row(c, proj)
+    n = setting(c, "max_parallel", proj)
+    docs = f"\nDesign doc: {p['doc_slug']} ({setting(c, 'doc_hint', proj)})." if p["doc_slug"] else ""
+    return f"""# Backlog orchestrator for {proj}: {p['name']}
+
+You are the orchestrator session for backlog project {proj} (repo: {p['repo'] or 'n/a'}). Nobody is watching; do not ask questions.{docs}
+Your bl identity is {agent}; you own the project while you run. Read ~/.backlog/LOCAL.md first if it exists.
+
+Loop until nothing is ready and none of your tickets are in progress:
+1. `bl next {proj} --json` lists ready tickets. `bl status` shows the rest.
+2. Claim up to {n} at a time: `bl claim {proj} KEY --json` (exit 3 = cap reached or nothing ready; that's fine).
+3. For every claimed ticket, dispatch one subagent (Agent tool), all in the same message so they run in parallel. Brief = the full output of `bl prompt KEY`, plus: "Follow the backlog-worker contract. Work in the repo's conventions. Finish with `bl done KEY -m ...`, `bl fail KEY -m ...` or `bl release KEY --reason ...` yourself." Use the ticket's `model` if it sets one (bl show KEY --json → meta.model), else opus. A ticket that is size xl may get its own subagents.
+4. When subagents return, check each ticket (`bl show KEY --json`). If one is still in_progress, record the outcome from its report with bl done/fail.
+5. Between rounds, use judgment: read what finished tickets delivered, tighten specs of downstream tickets (`bl set KEY body=...`, `bl comment`), add missing tickets (`bl add {proj} ... --after KEY`), and leave anything that needs a human to them (`--assignee human`).
+6. Repeat. If claims stop with "paused for usage limit", stop: the daemon resumes the project later.
+
+Never deploy, spend money or push to main unless a ticket says so and isn't assigned to human. End with a short summary of what got done and what is left."""
+
+def cmd_orchestrate_prompt(a):
+    c = connect()
+    print(orchestrator_prompt(c, project_row(c, a.project)["key"], os.environ.get("BL_AGENT") or agent_id()))
+
+def cmd_quota(a):
+    c = connect()
+    with tx(c):
+        if a.action == "clear":
+            c.execute("DELETE FROM settings WHERE scope='global' AND key='quota_until'")
+            event(c, "quota", body="cleared")
+        elif a.action == "set":
+            until = later(a.minutes or setting(c, "quota_backoff_minutes"))
+            c.execute("INSERT OR REPLACE INTO settings VALUES('global','quota_until',?)", (json.dumps(until),))
+            event(c, "quota", body=f"paused by hand until {until}")
+    q = quota_until(c)
+    print(f"paused for usage limit until {q}" if q else "no usage-limit pause")
 
 def cmd_prompt(a):
     c = connect()
@@ -765,10 +967,20 @@ def cmd_status(a):
                      " ".join(f"{s}={cnt[s]}" for s in STATES if s in cnt and s != "done") +
                      (f" · ready: {','.join(r['key'] for r in rd[:6])}" if rd else "") +
                      (f" · run pid {runs[0]['pid']}" if runs else ""))
+        nxt = c.execute("SELECT * FROM milestones WHERE project=? AND status IN ('planned','active','reached') ORDER BY seq LIMIT 1",
+                        (p["key"],)).fetchone()
+        if nxt:
+            w = ms_work(c, nxt)
+            lines.append(f"   next milestone: {nxt['key']} {nxt['title']} [{nxt['status']}, "
+                         f"{sum(1 for x in w if x['state'] == 'done')}/{len(w)} done{', due ' + nxt['due'] if nxt['due'] else ''}]")
         for h in human:
             lines.append(f"   needs you: {h['key']} [{h['state']}] {h['title']}")
+        for m in c.execute("SELECT * FROM milestones WHERE project=? AND status='showcased'", (p["key"],)).fetchall():
+            lines.append(f"   needs you: review the showcase of {m['key']} {m['title']} (bl milestone accept|reopen {m['key']})")
     d = daemon_info(c)
-    head = (f"daemon: {'running' if d['alive'] else 'NOT running'}{'' if d['enabled'] else ' (paused)'} · "
+    q = quota_until(c)
+    head = (f"{'USAGE LIMIT: claims paused until ' + q + ' (bl quota clear) · ' if q else ''}"
+            f"daemon: {'running' if d['alive'] else 'NOT running'}{'' if d['enabled'] else ' (paused)'} · "
             f"{d['workers']} working · {d['runs_today']} runs today · in flight {d['in_flight']}/{setting(c, 'global_max_parallel')}")
     if a.json:
         print(json.dumps({"daemon": d, "projects": res}, indent=1, default=str))
@@ -787,7 +999,7 @@ def daemon_info(c):
             alive = True
     today = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
     return {"alive": alive, "pid": r["pid"] if r else None, "heartbeat": r["heartbeat"] if r else None,
-            "enabled": bool(setting(c, "daemon_enabled")),
+            "enabled": bool(setting(c, "daemon_enabled")), "quota_until": quota_until(c),
             "workers": c.execute("SELECT count(*) FROM tickets WHERE state='in_progress' AND claimed_by LIKE 'daemon:%'").fetchone()[0],
             "in_flight": c.execute("SELECT count(*) FROM tickets WHERE state='in_progress'").fetchone()[0],
             "runs_today": c.execute("SELECT count(*) FROM events WHERE kind='claim' AND actor LIKE 'daemon:%' AND at>=?", (today,)).fetchone()[0]}
@@ -820,6 +1032,112 @@ def cmd_export(a):
     print("```")
 
 
+# ---------------------------------------------------------------- milestones
+def cmd_milestone(a):
+    c = connect()
+    act = a.action
+    if act == "add":
+        proj = project_row(c, a.target)["key"]
+        if not a.title:
+            die("usage: bl milestone add PROJ \"Title\" [--trigger all|deploy|manual] [--gate KEY] [--showcase KIND] [--due DATE]")
+        if a.trigger == "deploy" and not a.gate:
+            die("--trigger deploy needs --gate KEY (the deploy ticket)")
+        with tx(c):
+            n = c.execute("SELECT count(*) FROM milestones WHERE project=?", (proj,)).fetchone()[0] + 1
+            key = f"{proj}-M{n}"
+            while c.execute("SELECT 1 FROM milestones WHERE key=?", (key,)).fetchone():
+                n += 1; key = f"{proj}-M{n}"
+            seq = a.seq if a.seq is not None else (c.execute("SELECT coalesce(max(seq),0) FROM milestones WHERE project=?", (proj,)).fetchone()[0] + 1)
+            c.execute("INSERT INTO milestones(key,project,seq,title,body,trigger,gate,showcase_kind,due,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                      (key, proj, seq, a.title, a.body or "", a.trigger, a.gate.upper() if a.gate else None, a.showcase, a.due, now(), now()))
+            if a.gate:
+                ticket(c, a.gate)
+                c.execute("UPDATE tickets SET milestone=coalesce(milestone, ?) WHERE key=?", (key, a.gate.upper()))
+            if a.showcase != "none":
+                tseq = c.execute("UPDATE projects SET next_seq=next_seq+1 WHERE key=? RETURNING next_seq-1", (proj,)).fetchone()[0]
+                tk = f"{proj}-{tseq}"
+                body = (f"Produce the showcase for milestone {key}: {a.title}.\n\nKind: {a.showcase}. "
+                        f"Done when: the showcase is recorded with `bl milestone showcase {key} ...` and `bl done` summarizes it.")
+                c.execute("""INSERT INTO tickets(key,project,title,body,state,priority,labels,meta,milestone,created,updated)
+                             VALUES(?,?,?,?,'backlog',2,'["showcase"]',?,?,?,?)""",
+                          (tk, proj, f"Showcase: {a.title}", body,
+                           json.dumps({"showcase_for": key, **({"model": "sonnet"} if a.showcase in ("screenshot", "link") else {})}),
+                           key, now(), now()))
+                c.execute("UPDATE milestones SET showcase_ticket=? WHERE key=?", (tk, key))
+                event(c, "created", tk, proj, body=f"Showcase: {a.title}")
+            event(c, "milestone", project=proj, body=f"{key} created: {a.title} (trigger {a.trigger}, showcase {a.showcase})")
+            refresh_milestones(c, proj)
+        out(a, {"key": key}, key)
+        return
+    if act == "ls":
+        proj = project_row(c, a.target)["key"]
+        rows = c.execute("SELECT * FROM milestones WHERE project=? ORDER BY seq, id", (proj,)).fetchall()
+        res = []
+        for m in rows:
+            w = ms_work(c, m)
+            res.append({**rowd(m), "showcases": json.loads(m["showcases"]), "tickets": [x["key"] for x in w],
+                        "done": sum(1 for x in w if x["state"] == "done")})
+        out(a, res, "\n".join(f"{m['key']:16} {m['status']:9} {m['trigger']:7} {r['done']}/{len(r['tickets'])} "
+                               f"{m['title']}{'  due ' + m['due'] if m['due'] else ''}{'  showcase: ' + str(len(r['showcases'])) if r['showcases'] else ''}"
+                               for m, r in zip(rows, res)) or "(no milestones)")
+        return
+    m = milestone(c, a.target)
+    if act == "show":
+        w = ms_work(c, m)
+        d = {**rowd(m), "showcases": json.loads(m["showcases"]), "tickets": [dict(x) for x in w]}
+        lines = [f"{m['key']}  {m['title']}  [{m['status']}]", f"trigger={m['trigger']} gate={m['gate']} showcase={m['showcase_kind']} "
+                 f"ticket={m['showcase_ticket']} due={m['due']} reached={m['reached']}", "", m["body"] or "", ""]
+        lines += [f"  {x['key']:16} {x['state']:11} {x['title']}" for x in w]
+        for sc in json.loads(m["showcases"]):
+            lines.append(f"  showcase [{sc.get('kind')}] {sc.get('url') or sc.get('file') or ''} {sc.get('note', '')[:120]}")
+        out(a, d, "\n".join(lines)); return
+    with tx(c):
+        if act == "showcase":
+            entry = {"kind": a.kind or m["showcase_kind"], "at": now(), "by": agent_id()}
+            if a.note: entry["note"] = a.note
+            if a.url: entry["url"] = a.url
+            if a.file:
+                src = Path(a.file).expanduser()
+                if not src.is_file():
+                    die(f"no file {src}")
+                dst_dir = SHOWCASE_DIR / m["key"]
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                dst = dst_dir / f"{int(time.time())}-{src.name}"
+                dst.write_bytes(src.read_bytes())
+                entry["file"] = str(dst.relative_to(SHOWCASE_DIR))
+            if len(entry) <= 3:
+                die("give at least one of --file, --url, --note")
+            shows = json.loads(m["showcases"]) + [entry]
+            c.execute("UPDATE milestones SET showcases=?, updated=? WHERE key=?", (json.dumps(shows), now(), m["key"]))
+            event(c, "milestone", project=m["project"], body=f"{m['key']} showcase added ({entry['kind']})", data=entry)
+        elif act == "reach":
+            c.execute("UPDATE milestones SET reached=coalesce(reached, ?), updated=? WHERE key=?", (now(), now(), m["key"]))
+            if m["trigger"] != "manual":
+                c.execute("UPDATE milestones SET trigger='manual' WHERE key=?", (m["key"],))
+        elif act == "cancel":
+            c.execute("UPDATE milestones SET status='canceled', updated=? WHERE key=?", (now(), m["key"]))
+            event(c, "milestone", project=m["project"], body=f"{m['key']} canceled")
+        elif act == "accept":
+            c.execute("UPDATE milestones SET status='accepted', updated=? WHERE key=?", (now(), m["key"]))
+            event(c, "milestone", project=m["project"], body=f"{m['key']} accepted" + (f": {a.note}" if a.note else ""))
+        elif act == "reopen":
+            c.execute("UPDATE milestones SET status='active', updated=? WHERE key=?", (now(), m["key"]))
+            event(c, "milestone", project=m["project"], body=f"{m['key']} reopened" + (f": {a.note}" if a.note else ""))
+        elif act == "set":
+            fields = ([a.title] if a.title else []) + a.fields   # `title` is positional for `add`
+            if not fields or any("=" not in f for f in fields):
+                die("usage: bl milestone set KEY field=value ...")
+            a.fields = fields
+            for kv in fields:
+                k, v = kv.split("=", 1)
+                if k not in ("title", "body", "trigger", "gate", "due", "seq", "showcase_kind"):
+                    die(f"unknown milestone field {k}")
+                c.execute(f"UPDATE milestones SET {k}=?, updated=? WHERE key=?", (v if v != "" else None, now(), m["key"]))
+            event(c, "milestone", project=m["project"], body=f"{m['key']} " + " ".join(a.fields))
+        refresh_milestones(c, m["project"])
+    print("ok")
+
+
 # ---------------------------------------------------------------- workers (shared by bl run and the daemon)
 def spawn_worker(c, t, ag, actor):
     """Start worker_cmd for a claimed ticket. Returns (Popen, logfile) or None (ticket released)."""
@@ -849,10 +1167,17 @@ def collect_children(c, children, actor, project=None):
         if pr.poll() is not None:
             del children[k]; lf.close()
             if t["state"] == "in_progress" and t["claimed_by"] == ag:
+                tail = log_tail(lf.name)
+                hit, _ = detect_quota(tail)
                 with tx(c):
-                    new = release_ticket(c, ticket(c, k), f"worker exited ({pr.returncode}) without reporting",
-                                         count_failure=True, actor=actor)
-                notify(c, t["project"], f"{k} worker exited without reporting → {new}")
+                    if hit:
+                        until = note_quota(c, k, tail, actor)
+                        new = release_ticket(c, ticket(c, k), f"usage limit; retry after {until}", count_failure=False, actor=actor)
+                    else:
+                        new = release_ticket(c, ticket(c, k), f"worker exited ({pr.returncode}) without reporting",
+                                             count_failure=True, actor=actor)
+                notify(c, t["project"], f"{k}: usage limit hit, paused until {until}; ticket back to {new}" if hit
+                       else f"{k} worker exited without reporting → {new}")
             else:
                 notify(c, t["project"], f"{k} → {t['state']}: {(t['result'] or '')[:200]}")
         elif time.monotonic() - t0 > 60 * setting(c, "worker_timeout_minutes", t["project"]):
@@ -1039,19 +1364,45 @@ def cmd_daemon(a):
         event(c, "daemon", body=f"daemon started (pid {os.getpid()})", actor=me)
     print(f"[{now()}] {me} started; db {DB}", flush=True)
     children = {}
+    orchs = {}   # project -> (Popen, agent, t0, logfile) for orchestrator sessions
     stopping = {"flag": False}
     def stop(*_): stopping["flag"] = True
     signal.signal(signal.SIGINT, stop); signal.signal(signal.SIGTERM, stop)
     seq = 0
     last_why = None
+    paused_seen = quota_until(c)
+    probe = None          # after a usage-limit pause: {"key": ticket, "t0": monotonic} until one worker proves the limit reset
     try:
         while not stopping["flag"]:
             with tx(c):
                 reap(c)
                 finalize_projects(c)
+            q = quota_until(c)
+            if q and q != paused_seen:
+                paused_seen = q; probe = None
+                notify(c, None, f"usage limit: all claims paused until {q}; the daemon resumes on its own")
+            elif not q and paused_seen:
+                paused_seen = None; probe = {"key": None, "t0": None}
+                with tx(c):
+                    event(c, "quota", body="pause over; probing with one worker", actor=me)
+                notify(c, None, "usage-limit pause over; trying one worker before resuming fully")
             collect_children(c, children, me)
+            if probe is not None:
+                k = probe["key"]
+                if k and (k not in children or time.monotonic() - probe["t0"] > 90) and not quota_until(c):
+                    t = ticket(c, k)
+                    if k in children or t["state"] != "todo":
+                        probe = None
+                        with tx(c):
+                            event(c, "quota", body="resumed: the probe worker got through", actor=me)
+                        notify(c, None, "usage limit reset confirmed; resuming at full capacity")
+                    else:
+                        probe["key"] = None   # it was released for another reason; probe again
             # fill slots, round-robin across projects: the project with the fewest of our workers goes first
-            while setting(c, "daemon_enabled") and len(children) < setting(c, "daemon_max_parallel"):
+            cap = setting(c, "daemon_max_parallel")
+            if probe is not None:
+                cap = len(children) + (0 if probe["key"] else 1)   # one canary at a time until the limit is known to be reset
+            while setting(c, "daemon_enabled") and len(children) < cap:
                 cands = ready(c, None, me, None, "daemon")
                 if not cands:
                     break
@@ -1070,16 +1421,112 @@ def cmd_daemon(a):
                 got = spawn_worker(c, t, ag, me)
                 if got:
                     children[t["key"]] = (got[0], ag, time.monotonic(), got[1])
-                    notify(c, t["project"], f"daemon started {t['key']} ({t['title']}) model {model_for(c, t)}, log {got[1].name}")
+                    if probe is not None and not probe["key"]:
+                        probe.update(key=t["key"], t0=time.monotonic())
+                    notify(c, t["project"], f"daemon started {t['key']} ({t['title']}) model {model_for(c, t)}" +
+                           (" as the usage-limit probe" if probe is not None and probe["key"] == t["key"] else "") + f", log {got[1].name}")
+            auto_projects(c, children, orchs, me, lambda: probe is not None)
             beat_children(c, children)
             with tx(c):
+                for pk, (pr, ag, t0, lf) in orchs.items():
+                    c.execute("UPDATE projects SET owner_heartbeat=? WHERE key=? AND owner=?", (now(), pk, ag))
+                    c.execute("UPDATE tickets SET lease_until=? WHERE state='in_progress' AND claimed_by=?",
+                              (later(setting(c, "lease_minutes")), ag))
                 c.execute("UPDATE runs SET heartbeat=? WHERE id=?", (now(), run_id))
             time.sleep(setting(c, "poll_seconds"))
     finally:
         stop_children(c, children, me, "daemon stopped")
+        for pk, (pr, ag, t0, lf) in orchs.items():
+            try: os.killpg(pr.pid, signal.SIGTERM)
+            except Exception: pass
+            with tx(c):
+                for t in c.execute("SELECT * FROM tickets WHERE state='in_progress' AND claimed_by=?", (ag,)).fetchall():
+                    release_ticket(c, t, "daemon stopped", actor=me)
+                c.execute("UPDATE projects SET owner=NULL WHERE key=? AND owner=?", (pk, ag))
         with tx(c):
             c.execute("UPDATE runs SET ended=?, status='stopped' WHERE id=?", (now(), run_id))
             event(c, "daemon", body="daemon stopped", actor=me)
+
+
+def project_has_live_owner(c, p):
+    if c.execute("SELECT 1 FROM runs WHERE project=? AND status='running' AND kind='orchestrator'", (p["key"],)).fetchone():
+        return True
+    if not p["owner"]:
+        return False
+    hb = p["owner_heartbeat"] or ""
+    return hb > (datetime.now(timezone.utc) - timedelta(minutes=setting(c, "lease_minutes"))).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def auto_projects(c, children, orchs, me, probe_active=None):
+    """executor=auto: 2+ ready tickets → one orchestrator session per project; 1 ready → run it as a queue worker."""
+    # finished orchestrators
+    for pk, (pr, ag, t0, lf) in list(orchs.items()):
+        if pr.poll() is None:
+            if time.monotonic() - t0 > 60 * setting(c, "worker_timeout_minutes", pk) * 3:
+                try: os.killpg(pr.pid, signal.SIGTERM)
+                except Exception: pr.terminate()
+                notify(c, pk, f"{pk} orchestrator timed out; terminated")
+            continue
+        del orchs[pk]; lf.close()
+        tail = log_tail(lf.name)
+        hit, _ = detect_quota(tail)
+        with tx(c):
+            left = c.execute("SELECT * FROM tickets WHERE state='in_progress' AND claimed_by=?", (ag,)).fetchall()
+            until = note_quota(c, None, tail, me) if hit else None
+            for t in left:
+                release_ticket(c, t, "usage limit" if hit else f"orchestrator exited ({pr.returncode})", count_failure=not hit, actor=me)
+            c.execute("UPDATE projects SET owner=NULL WHERE key=? AND owner=?", (pk, ag))
+            event(c, "run", project=pk, body=f"orchestrator session ended ({pr.returncode})" + (f"; usage limit until {until}" if hit else ""), actor=ag)
+        notify(c, pk, f"{pk} orchestrator session finished" + (f" (usage limit, paused until {until})" if hit else ""))
+    if not setting(c, "daemon_enabled") or quota_until(c) or (probe_active and probe_active()):
+        return
+    adopt = setting(c, "orphan_policy") == "adopt"
+    quiet_since = (datetime.now(timezone.utc) - timedelta(minutes=setting(c, "adopt_after_minutes"))).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for p in c.execute("SELECT * FROM projects WHERE status='executing' AND executor IN ('auto','session') ORDER BY key").fetchall():
+        if p["key"] in orchs or project_has_live_owner(c, p):
+            continue
+        adopting = p["executor"] == "session"
+        if adopting:
+            if not adopt:
+                continue
+            busy = c.execute("SELECT 1 FROM events WHERE project=? AND at>? LIMIT 1", (p["key"], quiet_since)).fetchone() or \
+                   c.execute("SELECT 1 FROM tickets WHERE project=? AND state='in_progress' LIMIT 1", (p["key"],)).fetchone()
+            if busy:
+                continue
+        rd = ready(c, p["key"], me, None, "adopt" if adopting else "auto1")
+        if not rd:
+            continue
+        cap = setting(c, "daemon_max_parallel")
+        if len(children) + len(orchs) >= cap:
+            return
+        if adopting or len(rd) >= setting(c, "orchestrate_min_ready", p["key"]):
+            ag = f"orchs:{p['key']}:{int(time.time()) % 1000000}"
+            cwd = p["repo"] if p["repo"] and Path(p["repo"]).exists() else str(HOME)
+            LOGS.mkdir(parents=True, exist_ok=True)
+            lf = open(LOGS / f"orchestrator-{p['key']}-{int(time.time())}.log", "w")
+            env = {k: v for k, v in os.environ.items() if k not in ("BL_IN_ORCH", "CLAUDE_CODE_SESSION_ID", "BL_TICKET", "BL_DAEMON")}
+            env.update({"BL_AGENT": ag, "BL_OWNER": ag, "BL_ORCH_PROJECT": p["key"], "BL_DB": str(DB),
+                        "BL_MODEL": str(setting(c, "orchestrator_model", p["key"])),
+                        "PATH": f"{Path(__file__).resolve().parent}:{os.environ.get('PATH', '')}"})
+            prompt = orchestrator_prompt(c, p["key"], ag)
+            pr = subprocess.Popen(["claude", "-p", prompt, "--model", env["BL_MODEL"], "--permission-mode", "bypassPermissions",
+                                   "--append-system-prompt", f"You are the backlog orchestrator for {p['key']}. Keep going until nothing is ready."],
+                                  cwd=cwd, env=env, stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
+            orchs[p["key"]] = (pr, ag, time.monotonic(), lf)
+            with tx(c):
+                c.execute("UPDATE projects SET owner=?, owner_heartbeat=? WHERE key=?", (ag, now(), p["key"]))
+                event(c, "run", project=p["key"], body=(f"daemon adopted the stalled project: " if adopting else "") +
+                      f"orchestrator session started for {len(rd)} ready tickets", actor=ag,
+                      data={"pid": pr.pid, "log": lf.name, "cwd": cwd, "adopted": adopting})
+            notify(c, p["key"], f"{p['key']}: {'adopted (no live session); ' if adopting else ''}started an orchestrator session for {len(rd)} ready tickets, log {lf.name}")
+        else:
+            ag = f"{me}:a{int(time.time()) % 100000}"
+            t, why = claim(c, p["key"], rd[0]["key"], agent=ag, mode="auto1")
+            if not t:
+                continue
+            got = spawn_worker(c, t, ag, me)
+            if got:
+                children[t["key"]] = (got[0], ag, time.monotonic(), got[1])
+                notify(c, p["key"], f"daemon started {t['key']} ({t['title']}) as a single ticket")
 
 
 # ---------------------------------------------------------------- hooks
@@ -1107,6 +1554,17 @@ def cmd_hook(a):
                 print("Backlog: this session holds " + ", ".join(f"{m['key']} ({m['title']})" for m in mine) +
                       ". Finish each with bl done / bl fail / bl release.")
     elif a.event == "stop":
+        op = os.environ.get("BL_ORCH_PROJECT")
+        if op and not tk and not data.get("stop_hook_active") and not quota_until(c):
+            ag = os.environ.get("BL_AGENT")
+            mine = c.execute("SELECT key FROM tickets WHERE state='in_progress' AND claimed_by=?", (ag,)).fetchall()
+            rd = ready(c, op, ag, None, "session")
+            if mine or rd:
+                print(json.dumps({"decision": "block", "reason":
+                    f"You are the orchestrator for {op}: " + (f"{len(rd)} tickets are ready" if rd else "") +
+                    (f"{' and ' if rd else ''}{', '.join(m['key'] for m in mine)} still in progress" if mine else "") +
+                    ". Keep going: claim, dispatch subagents, record results."}))
+            return
         if not tk or data.get("stop_hook_active"):
             return
         t = c.execute("SELECT * FROM tickets WHERE key=?", (tk,)).fetchone()
@@ -1135,7 +1593,7 @@ def main():
     P("init", cmd_init)
     p = P("project", cmd_project)
     p.add_argument("action", choices=["add", "ls", "set", "start", "pause", "resume", "plan", "archive", "done"]); p.add_argument("key", nargs="?")
-    p.add_argument("--executor", choices=["daemon", "session"]); p.add_argument("--evergreen", action="store_true")
+    p.add_argument("--executor", choices=["daemon", "session", "auto"]); p.add_argument("--evergreen", action="store_true")
     p.add_argument("name", nargs="?"); p.add_argument("--repo"); p.add_argument("--doc"); p.add_argument("--review", choices=["self", "pr", "ask"])
     p.add_argument("fields", nargs="*")
     p = P("add", cmd_add); p.add_argument("project"); p.add_argument("title"); p.add_argument("-b", "--body"); p.add_argument("-f", "--file")
@@ -1146,6 +1604,7 @@ def main():
     p.add_argument("--review", choices=["self", "pr", "ask"]); p.add_argument("--size", choices=["s", "m", "l", "xl"])
     p.add_argument("--model", help="worker model for this ticket, e.g. sonnet for simple work (default: opus)")
     p.add_argument("--executor", choices=["daemon", "session"], help="override the project's executor for this ticket")
+    p.add_argument("--milestone", help="milestone key, e.g. PROJ-M1")
     p.add_argument("--force", action="store_true")
     p = P("ls", cmd_ls); p.add_argument("project", nargs="?"); p.add_argument("--state"); p.add_argument("--all", action="store_true")
     p.add_argument("--ready", action="store_true"); p.add_argument("--mine", action="store_true"); p.add_argument("--assignee")
@@ -1175,6 +1634,18 @@ def main():
     p = P("run", cmd_run); p.add_argument("project"); p.add_argument("--parallel", type=int)
     p.add_argument("--until", choices=["done", "forever"], default="done"); p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true")
+    p = P("milestone", cmd_milestone)
+    p.add_argument("action", choices=["add", "ls", "show", "set", "showcase", "reach", "cancel", "accept", "reopen"])
+    p.add_argument("target", help="project (add, ls) or milestone key"); p.add_argument("title", nargs="?")
+    p.add_argument("fields", nargs="*"); p.add_argument("-b", "--body")
+    p.add_argument("--trigger", choices=["all", "deploy", "manual"], default="all")
+    p.add_argument("--gate", help="ticket whose completion reaches the milestone (with --trigger deploy)")
+    p.add_argument("--showcase", choices=["screenshot", "demo", "localhost", "link", "none"], default="screenshot")
+    p.add_argument("--due"); p.add_argument("--seq", type=int)
+    p.add_argument("--kind", choices=["screenshot", "demo", "localhost", "link", "note"]); p.add_argument("--file"); p.add_argument("--url"); p.add_argument("--note")
+    p = P("orchestrate-prompt", cmd_orchestrate_prompt); p.add_argument("project")
+    p = P("quota", cmd_quota); p.add_argument("action", nargs="?", default="status", choices=["status", "clear", "set"])
+    p.add_argument("minutes", nargs="?", type=int)
     p = P("daemon", cmd_daemon); p.add_argument("action", choices=["run", "status", "pause", "resume", "install", "uninstall"])
     p = P("hook", cmd_hook); p.add_argument("event", choices=["session-start", "stop", "beat"])
 

@@ -1319,7 +1319,7 @@ if (qTheme && PRESETS.some(p => p.id === qTheme)) document.documentElement.datas
 updateWorkButton();
 $('#b-open').addEventListener('click', reopen);
 $('#b-pin').addEventListener('click', () => togglePin());
-initBacklog({ openSession: id => openSession(id), toast, fmtRel, fmtDateTime });
+initBacklog({ openSession: id => openSession(id), toast, fmtRel, fmtDateTime, getPr: url => state.prMap.get(url)?.gh || null });
 $('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, 'resume command'));
 $('#b-link').addEventListener('click', () => copy(`${location.origin}/s/${state.activeId}`, 'permalink'));
 document.addEventListener('click', e => {
