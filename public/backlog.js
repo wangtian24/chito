@@ -721,7 +721,7 @@ function graph(tks, big = false) {
   const wrap = el('div', 'bl-graph' + (big ? ' big' : ''));
   const shown = tks.filter(t => t.state !== 'canceled' || ui.showDone);
   if (!shown.length) { wrap.append(el('div', 'prs-empty', 'No tickets.')); return wrap; }
-  const W = big ? 250 : 200, H = big ? 74 : 58, GX = big ? 80 : 64, GY = big ? 26 : 20, PAD = 12;
+  const W = big ? 250 : 200, H = big ? 86 : 58, GX = big ? 80 : 64, GY = big ? 26 : 20, PAD = 12;
   const cols = new Map();
   for (const t of [...shown].sort((a, b) => bl.order.get(a.key) - bl.order.get(b.key))) {
     const d = bl.depth.get(t.key) || 0;
@@ -806,6 +806,12 @@ function openGraphModal(tks) {
   card.addEventListener('click', e => { if (e.target.closest('.bl-node')) done(); });
   document.addEventListener('keydown', esc, true);
   document.body.append(m);
+  // Fill the window: zoom the graph up (never down past 1) to fit the available area.
+  const sc = card.querySelector('.bl-graph-scroll'), g = card.querySelector('.bl-graph');
+  if (sc && g) {
+    const z = Math.min((sc.clientWidth - 48) / g.offsetWidth, (sc.clientHeight - 48) / g.offsetHeight, 1.8);
+    if (z > 1) g.style.zoom = String(z);
+  }
 }
 
 const COLS = [
