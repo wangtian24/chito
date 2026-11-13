@@ -1270,3 +1270,9 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-ask-opt:focus-visible, .bl-ask-text:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 .bl-ask-text { width: 100%; box-sizing: border-box; padding: 6px 10px; border: 1px solid var(--color-rule-2); border-radius: var(--radius-ctl); background: var(--color-sheet); color: var(--color-ink); font: 400 13px var(--font-body); }
 .bl-ho-detail { display: block; font: 400 12.5px/1.45 var(--font-body); color: var(--color-muted); }
+
+/* Projects on the board: a firmer divider, with room above and below */
+.bl-lane-side, .bl-col, .bl-lane-compact { border-bottom: 2px solid var(--color-rule-2); }
+.bl-lane-side { padding-top: var(--space-lg); padding-bottom: var(--space-lg); }
+.bl-col { padding-top: var(--space-lg); padding-bottom: var(--space-lg); }
+.bl-lane-compact { padding: var(--space-md) 0; }
