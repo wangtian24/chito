@@ -1,4 +1,4 @@
-// Backlog view: swim lanes by project, a project page (dependency graph + table), and a ticket drawer.
+// Backlog view: a main page with Overview and Projects tabs (swim lanes by project), a project page (dependency graph + table), and a ticket drawer.
 // Reads /api/backlog (the local `bl` SQLite database). Read-only.
 import { marked } from '/vendor/marked.js';
 import DOMPurify from '/vendor/purify.js';
@@ -767,6 +767,43 @@ function card(t) {
   return c;
 }
 
+// ---- main page tabs: Overview (daemon, waiting on you, in flight) and Projects (lanes + the tickets toggle) ----
+// The tab lives in ?tab=; with none in the URL, the last one picked is used, else Overview.
+const TABS = [['overview', 'Overview'], ['projects', 'Projects']];
+function currentTab() {
+  const q = new URLSearchParams(location.search).get('tab');
+  if (TABS.some(([k]) => k === q)) return q;
+  const saved = store.get('blTab', 'overview');
+  return TABS.some(([k]) => k === saved) ? saved : 'overview';
+}
+function setTab(k) {
+  store.set('blTab', k);
+  const url = new URL(location.href);
+  if (k === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab', k);
+  if (url.href !== location.href) history.pushState({}, '', url.pathname + url.search + url.hash);
+  renderBacklog();
+  $(`#bl-tab-${k}`)?.focus();
+}
+function tabBar(cur, counts) {
+  const bar = el('div', 'tabs bl-tabs'); bar.setAttribute('role', 'tablist'); bar.setAttribute('aria-label', 'Backlog views');
+  for (const [k, label] of TABS) {
+    const b = el('button', 'tab', label); b.type = 'button'; b.id = `bl-tab-${k}`;
+    b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(k === cur)); b.tabIndex = k === cur ? 0 : -1;
+    const n = counts[k];
+    if (k === 'overview' && n) { const c = el('span', 'num bl-tab-count you', String(n)); c.title = `${n} waiting on you`; b.append(c); b.title = `${n} waiting on you`; }
+    else if (k === 'projects' && n) b.append(el('span', 'num bl-tab-count', String(n)));
+    b.addEventListener('click', () => { if (k !== cur) setTab(k); });
+    b.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault(); e.stopPropagation();
+      const i = TABS.findIndex(([x]) => x === k), j = (i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length;
+      setTab(TABS[j][0]);
+    });
+    bar.append(b);
+  }
+  return bar;
+}
+
 function renderLanes(root) {
   const d = bl.data;
   const projects = d.projects.filter(p => p.status !== 'archived');
@@ -774,7 +811,18 @@ function renderLanes(root) {
   const running = all.filter(t => t.state === 'in_progress').length;
   const you = all.filter(needsYou).length;
   const sub = [factRow('', `${projects.length} project${projects.length === 1 ? '' : 's'}`, `${running} in progress`, you ? `${you} waiting on you` : 'nothing waiting on you')];
-  root.append(head('Backlog', sub, headRight()), daemonBar());
+  root.append(head('Backlog', sub, headRight()));
+  const tab = currentTab();
+  if (tab !== 'overview' && !new URLSearchParams(location.search).has('tab')) {   // a remembered tab: show it in the URL too
+    const url = new URL(location.href); url.searchParams.set('tab', tab); history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+  }
+  root.append(tabBar(tab, { overview: you, projects: projects.length }));
+  if (tab === 'overview') {
+    root.append(daemonBar());
+    const ny = needsYouPanel(all); if (ny) root.append(ny);
+    root.append(el('h2', 'bl-h2', 'In flight'), inFlight(all));
+    return;
+  }
   const ctl = controls();
   const visible = projects.map(p => p.key);
   const allCollapsed = visible.length && visible.every(k => ui.collapsed.has(k));
@@ -782,8 +830,7 @@ function renderLanes(root) {
   tog.title = allCollapsed ? 'Show every project\'s tickets' : 'Show projects only';
   tog.addEventListener('click', () => { if (allCollapsed) visible.forEach(k => ui.collapsed.delete(k)); else visible.forEach(k => ui.collapsed.add(k)); saveCollapsed(); renderBacklog(); });
   ctl.insertBefore(tog, ctl.querySelector('.bl-cap'));
-  const ny = needsYouPanel(all); if (ny) root.append(ny);
-  root.append(el('h2', 'bl-h2', 'In flight'), inFlight(all), el('h2', 'bl-h2', 'Projects'), ctl);
+  root.append(ctl);
   if (finishedMode()) {   // one flat list across projects, newest finished first
     tog.remove();
     const live = new Set(projects.map(p => p.key));
