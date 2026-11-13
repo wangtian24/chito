@@ -883,7 +883,7 @@ body:not(.has-session) .topbar { display: none; }
 .bl-drawer[hidden] { display: none; }
 /* While a ticket is open, the board behind it steps back. The dim lets clicks through,
    so another row or node still opens its ticket and empty space still closes the drawer. */
-.main:has(> .bl-drawer:not([hidden]))::after { content: ''; position: absolute; inset: 0; z-index: 29; background: var(--color-scrim); opacity: .45; pointer-events: none; animation: bl-dim-in .15s ease-out; }
+.main:has(> .bl-drawer:not([hidden]))::after { content: ''; position: absolute; inset: 0; z-index: 29; background: var(--color-scrim); opacity: .2; pointer-events: none; animation: bl-dim-in .15s ease-out; }
 @keyframes bl-dim-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .main:has(> .bl-drawer:not([hidden]))::after { animation: none; } }
 .bl-d-top { display: flex; align-items: center; gap: var(--space-sm); }
@@ -1151,7 +1151,8 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-table tbody tr.sel td { background: var(--color-accent-wash); }
 
 /* state emphasis: done recedes, running stands out, what needs you is marked */
-.bl-table tr.bl-done td, .bl-table tr.bl-canceled td { opacity: .55; }
+.bl-table tr.bl-done td { opacity: .85; }
+.bl-table tr.bl-canceled td { opacity: .6; }
 .bl-table tr.bl-done:hover td, .bl-table tr.bl-canceled:hover td { opacity: 1; }
 .bl-table tr.bl-in_progress td { background: color-mix(in oklch, var(--bl-in_progress-wash) 45%, transparent); }
 /* same tint as the Waiting on you panel above the table */
@@ -1300,3 +1301,14 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-sec > summary:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-ctl); }
 .bl-sec > summary:hover .bl-h2 { color: var(--color-accent); }
 @media (prefers-reduced-motion: reduce) { .bl-sec > summary::before { transition: none; } }
+
+/* A finished ticket's result, one line under its title in the table */
+.bl-res { display: flex; align-items: baseline; gap: 4px 8px; margin-top: 3px; min-width: 0; font-size: 12px; line-height: 1.4; color: var(--color-muted); }
+.bl-res-link { flex: none; color: var(--color-accent); text-decoration: underline; text-decoration-color: color-mix(in oklch, var(--color-accent) 40%, transparent); text-underline-offset: 2px; }
+.bl-res-link:hover { text-decoration-color: currentColor; }
+.bl-res-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The Result section in the ticket details: a quiet green wash (red-ish for a failure) */
+.bl-d-result { margin: var(--space-md) 0; padding: var(--space-xs) var(--space-md) var(--space-sm); border-left: 3px solid var(--bl-done); border-radius: 0 var(--radius-ctl) var(--radius-ctl) 0; background: color-mix(in oklch, var(--bl-done) 7%, var(--color-sheet)); }
+.bl-d-result.failed { border-left-color: var(--bl-failed); background: color-mix(in oklch, var(--bl-failed) 6%, var(--color-sheet)); }
+.bl-d-result > .bl-d-h { margin-top: var(--space-sm); }
