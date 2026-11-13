@@ -11,9 +11,13 @@ Work out which kind of request this is, then act. `bl` is the only thing that wr
 
 ## Model
 - **Project lifecycle**: `planning` (the default for new projects; nothing runs) → `executing` → `done` (set automatically when every ticket is final, unless the project is evergreen), plus `paused` and `archived`. Adding a ticket to a done project sets it back to executing. Commands: `bl project start|pause|resume|plan|archive KEY`.
-- **Executor** (per project, and a ticket can override it):
-  - `daemon`: a queue of independent tickets. The background daemon picks up ready tickets of executing daemon projects by itself, and anyone can add tickets.
-  - `session` (the default): DAG-shaped work that needs judgment between steps. A Claude Code session runs it through `/backlog-run`, and the daemon never touches it. A session project whose owner went silent shows as **orphaned**.
+- **Mode** (the project's `executor` field; a ticket can override it):
+  - **SO** (`session`, the default): you start `/backlog-run`. If that session dies or stalls with ready tickets, the daemon adopts the project with an orchestrator session after 10 quiet minutes.
+  - **DSO** (`auto`): the daemon starts an orchestrator session whenever tickets are ready, and another when more arrive. Hands-off for DAG work.
+  - **DQ** (`daemon`): a queue. The daemon runs one `claude -p` per ready ticket with no coordinator; for independent tickets.
+  SO and DSO are "orchestrated"; DQ is "queue".
+- **Milestones**: an ordered roadmap per project. Each milestone is reached when its tickets are done (`all`), at a deploy ticket (`deploy`), or by hand. A showcase ticket then produces screenshots, a demo, a localhost URL or a link, and you accept it (`bl milestone …`).
+- **Usage limits**: a worker that hits a quota puts its ticket back without using an attempt, and every claim pauses until the reset (`bl quota`, `bl quota clear`).
 - **Evergreen**: the project never moves to done, so it stays a standing queue (`--evergreen`, or `bl project set KEY evergreen=1`).
 - **Ticket states**: `backlog` (captured, not scheduled) → `todo` → `in_progress` → `in_review` → `done`, plus `canceled` and `failed`. Done and canceled unblock dependents; failed does not.
   - **Ready** means: the ticket is in todo, every blocker is done or canceled, it isn't assigned to `human`, and no lock it needs is held.
@@ -28,7 +32,8 @@ Work out which kind of request this is, then act. `bl` is the only thing that wr
 | "what's stuck", "waiting on me", "triage", "anything failed?" | **Triage** | §2 |
 | "add / file a ticket", "queue this", an idea worth tracking | **Capture** | §3 |
 | "plan X", "break X into tickets", a big multi-step goal | **Plan** | §4 |
-| "start / pause / resume / archive the project", "make it evergreen", "let the daemon run it" | **Lifecycle** | §5 |
+| "start / pause / resume / archive the project", "make it evergreen", "let the daemon run it", SO / DSO / DQ | **Lifecycle** | §5 |
+| "add a milestone", "roadmap", "showcase", "demo", "accept M1" | **Milestones** | §5b |
 | "groom", "reprioritize", "split / merge tickets", "fix the deps" | **Groom** | §6 |
 | "run", "execute", "drain", "keep going until done", "stop the run" | **Run** | load **backlog-run** |
 | "work on KEY", "do the next ticket yourself" | **Work one** | `bl claim PROJ KEY`, then load **backlog-worker** |
@@ -75,11 +80,18 @@ Act straight away on the obvious ones (approve a merged PR, reap a stale lease).
 
 ## 5. Lifecycle and executor
 - `bl project start KEY` (planning → executing), `pause` (running work finishes, nothing new is claimed), `resume`, `plan` (back to planning to edit the graph), `archive`.
-- **Choosing the executor**:
-  - `daemon` when the tickets are independent and self-contained: a queue of chores, batch processing, or standing work anyone can add to. Consider `--evergreen` too.
-  - `session` when there are real dependency chains, cross-ticket judgment, or a human in the loop.
-  - A single independent ticket inside a session project can go to the queue with `bl set KEY executor=daemon`.
-- Switching a running project's executor: `bl project set KEY executor=daemon|session`. Pause first if a session is mid-run.
+- **Choosing the mode**:
+  - **DQ** (`daemon`) when the tickets are independent and self-contained: a queue of chores, batch processing, or standing work anyone can add to. Consider `--evergreen` too.
+  - **DSO** (`auto`) for DAG work that should run without anyone starting it.
+  - **SO** (`session`) when you want to watch and steer from a session (it is still adopted if the session dies).
+  - A single independent ticket inside an orchestrated project can go to the queue with `bl set KEY executor=daemon`.
+- Switching mode: `bl project set KEY executor=session|auto|daemon`, or the SO / DSO / DQ toggle in chito. Pause first if a session is mid-run.
+
+## 5b. Milestones
+- `bl milestone add PROJ "Title" [--trigger all|deploy|manual] [--gate DEPLOY_KEY] [--showcase screenshot|demo|localhost|link|none] [--due YYYY-MM-DD]`, then `bl add … --milestone PROJ-M1` or `bl set KEY milestone=PROJ-M1`.
+- Plan milestones up front when the work has natural checkpoints. For example: "core works, shown as screenshots", then "live in prod" (trigger `deploy`, gated on the deploy ticket, shown as a link), then "polish".
+- The showcase ticket is created for you. It waits on the milestone's work or the deploy gate, and its worker records the showcase with `bl milestone showcase M --file|--url|--note`.
+- `bl milestone ls PROJ`, `bl milestone show M`. When a milestone is showcased, tell the user and point at chito's roadmap. They answer with `bl milestone accept M` or `bl milestone reopen M --note "…"`.
 - Every one of these is also a button in chito (`/backlog`, and each project page).
 
 ## 6. Groom
@@ -98,7 +110,8 @@ Act straight away on the obvious ones (approve a merged PR, reap a stale lease).
   - `ask` (the default): like `pr`, and flagged as needing the user.
   Set it per repo, and ask when you're unsure. A ticket can override it with `bl set KEY review=pr`.
 - **Caps**: `global_max_parallel` (6), `daemon_max_parallel` (6), `max_parallel` (3 per project), `daemon_max_runs_per_day` (60).
-- **Daemon**: `bl daemon status | pause | resume | install | uninstall`. `orphan_policy` is `wait` or `daemon`.
+- **Daemon**: `bl daemon status | pause | resume | install | uninstall`. Settings: `orphan_policy` (`adopt`, `daemon` or `wait`), `adopt_after_minutes` (10), `orchestrate_min_ready` (1), `orchestrator_model` (opus).
+- **Usage limits**: `bl quota` (status), `bl quota clear`, `bl quota set MIN`; `quota_backoff_minutes` (30).
 - **Other settings**: `model` (opus), `max_attempts` 2, `lease_minutes` 30, `worker_timeout_minutes` 120, `worktree` true, `on_stuck`, `notify_cmd` (a shell command using `$BL_MSG`), `worker_cmd`, `doc_hint`.
 
 ## 9. View

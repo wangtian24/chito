@@ -58,7 +58,31 @@ Only `executing` projects are claimable, so `planning` is a safe place to build 
 - Leases are kept alive by the orchestrator or daemon for their children, by the PostToolUse hook for sessions, or by hand with `bl beat`. An expired lease sends the ticket back to `todo`, or to `failed` once it's out of attempts. Every `bl` call reaps, so no daemon is needed for correctness.
 - A session-mode claim makes the claimer the project's `owner`. A session project with a stale owner heartbeat and no live run is **orphaned**: with `orphan_policy=wait` (the default) it waits for a person; with `daemon`, the daemon adopts it.
 
-## 5. Executors
+## 5. Execution modes
+
+Each project runs in one of three modes. Its `executor` field holds the mode, and a ticket can override it.
+
+| Mode | `executor` | Board marking | What happens |
+|---|---|---|---|
+| **SO**: session orchestrator | `session` | Orchestrated · SO | You start `/backlog-run PROJ` in a session; it orchestrates (inline, subagents or `bl run`) until done. **If that session goes away**, the project has ready tickets, no live owner, and no activity for `adopt_after_minutes` (10), the daemon **adopts** it with a DSO session (`orphan_policy=adopt`). |
+| **DSO**: daemon session orchestrator | `auto` | Orchestrated · DSO | The daemon watches the project. Whenever tickets are ready and no orchestrator is alive, it starts an orchestrator session: `claude -p` with `bl orchestrate-prompt PROJ`, which claims tickets, runs one subagent per ticket in parallel, records results, adjusts downstream specs and keeps going until nothing is ready. When more tickets become ready later, it starts another. |
+| **DQ**: daemon queue | `daemon` | Queue · DQ | The daemon starts one `claude -p` per ready ticket. No coordinating session. |
+
+The goal: once a project is executing, it moves as far as it can without you. You add tasks and step in only for human touchpoints: tickets assigned to `human` (answers, decisions, deploys), PRs in review (`review=pr|ask`), failed tickets, and milestone showcases to view and accept.
+
+### Usage limits
+When a worker or orchestrator exits on a usage or rate limit (detected in its log: "usage limit reached|<epoch>", "resets 3pm", 429, …):
+- its tickets go back to `todo` **without** using an attempt;
+- `quota_until` is set to the reset time, or `quota_backoff_minutes` (30) when no reset time is given;
+- every claim (daemon, orchestrators, sessions) waits until then;
+- `bl status`, `bl daemon status` and the board show the pause;
+- once the time passes, the daemon resumes **by itself**. It starts one probe worker first, and goes back to full capacity once that worker has run for 90 seconds or reported back. If the probe hits the limit again, the pause is set again with the new reset time. DSO orchestrator sessions also wait for the probe.
+
+A lapsed lease (a session that closed, slept, or died on a limit) puts the ticket back without using an attempt. Attempts are used up only when a worker process exits without reporting, or when it reports `bl fail`.
+
+`bl quota` shows the pause, `bl quota clear` (or **Retry now** on the board) retries immediately, and `bl quota set MIN` pauses by hand.
+
+## 5b. Executors (details)
 | | Daemon | Session |
 |---|---|---|
 | Fits | Queues of independent tickets; evergreen projects anyone adds to | DAGs that need judgment between steps |
@@ -78,6 +102,18 @@ Switches: `bl daemon pause|resume` (or the button in chito), `bl daemon status`,
 
 **Worker prompt** (`bl prompt KEY`): the spec, the design docs to read, each upstream ticket's `result`, recent comments, the review policy, the size hint, and the worker protocol.
 
+## 5c. Milestones and showcases
+A project's roadmap is an ordered list of milestones (`bl milestone add PROJ "Title" [--trigger all|deploy|manual] [--gate KEY] [--showcase screenshot|demo|localhost|link|none] [--due DATE]`). Tickets join one with `--milestone PROJ-M1`.
+- **Triggers:**
+  - `all`: the milestone is reached when its tickets are final;
+  - `deploy`: it's reached when the gate ticket (the deploy) is done;
+  - `manual`: you reach it with `bl milestone reach`.
+- **Showcase:** each milestone gets a showcase ticket that waits on the milestone's work, or on the deploy gate. Its worker produces the portfolio piece (screenshots, a demo, a localhost URL, a link) and records it with `bl milestone showcase M --file|--url|--note`. Files are copied to `~/.backlog/showcase/<M>/`.
+- **Status:** planned → active → reached → showcased → **accepted**. You view the showcase and run `bl milestone accept M`, or `bl milestone reopen M --note "..."`. A showcased milestone counts as waiting on you.
+
+## 5d. Cost and usage
+chito computes per-ticket turns, tokens and nominal cost from the worker transcripts, including subagent transcripts. Only sessions dedicated to one ticket count toward that ticket. Shared sessions (planners, DSO orchestrators) count toward the project's "orchestration and shared" total. Prices are list prices per model (`lib/pricing.js`, which `prices` in `~/.config/chito/config.json` can override); on a subscription nothing is billed per token.
+
 ## 6. Review policy
 Each ticket is roughly one PR. `review` is set per repo or project, and a ticket can override it:
 - `self`: the worker tests its own change and merges it, then the ticket goes to done.
@@ -86,11 +122,12 @@ Each ticket is roughly one PR. `review` is set per repo or project, and a ticket
 
 ## 7. chito board
 - `/backlog`:
-  - a daemon bar (status, workers, runs today, in flight against the cap, pause and resume);
+  - an auto-refresh setting (off, or 1m to 1h) and Refresh;
+  - a daemon bar (status, workers, runs today, in flight against the cap, pause and resume, plus a usage-limit banner with Retry now);
   - **In flight**: every running ticket with its executor (daemon, orchestrator or session), model, elapsed time, and a link to the worker's session;
-  - swim lanes per project, with lifecycle and executor badges, progress, and Start / Pause / Resume.
-- `/backlog/<PROJ>`: project controls (lifecycle, executor, evergreen, archive), the dependency graph, and a sortable ticket table in topological order showing waits-on / blocks chips, tries, agent and sessions.
-- **Ticket drawer**: spec, result, metadata, sessions and activity, plus Reopen / Approve / Cancel, priority, model and assignee.
+  - swim lanes per project, with lifecycle and mode badges, who is executing (orchestrator pid and session, DSO session, or queue), the next milestone, progress, and Start / Pause / Resume. Lanes collapse to a compact row (counts and up to 3 running tickets); Collapse all / Expand all.
+- `/backlog/<PROJ>`: project controls (lifecycle, mode SO / DSO / DQ, evergreen, archive), total nominal cost, the roadmap (milestone cards with showcases; clicking one filters the table), the dependency graph (columns ordered to reduce crossings), and a sortable ticket table. In dependency order it's a tree: each ticket hangs under its deepest blocker, with connector lines, and the other blockers show as chips. Columns: state, waits on / blocks, priority, tries, who ran it, milestone, PRs (live state), turns, tokens, cost, session.
+- **Ticket drawer**: spec, result, metadata, usage, PRs, sessions and activity, plus Reopen / Approve / Cancel, priority, model, assignee and milestone. Clicking outside it closes it.
 
 Every control posts to `/api/backlog/action`, which maps a fixed allowlist of actions to `bl` commands.
 

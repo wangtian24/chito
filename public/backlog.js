@@ -27,7 +27,10 @@ const SESSION_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><pa
 
 let ctx = null;          // { openSession, toast, fmtRel, fmtDateTime }
 const bl = { data: null, byKey: new Map(), blockers: new Map(), dependents: new Map(), depth: new Map(), order: new Map(), error: null, timer: null, ticket: null, ticketKey: null };
-const ui = { showDone: store.get('blShowDone', false), q: '', sort: store.get('blSort', { col: 'order', dir: 1 }) };
+const ui = { showDone: store.get('blShowDone', false), q: '', sort: store.get('blSort', { col: 'order', dir: 1 }), milestone: null,
+  collapsed: new Set(store.get('blCollapsed', [])) };
+const saveCollapsed = () => store.set('blCollapsed', [...ui.collapsed]);
+ui.refresh = store.get('blRefresh', 60);
 
 export function statePill(st) {
   const s = el('span', `bl-pill bl-${st}`);
@@ -56,8 +59,27 @@ function index(d) {
     bl.depth.set(k, d); return d;
   };
   d.tickets.forEach(t => visit(t.key));
-  const sorted = [...d.tickets].sort((a, b) => a.project.localeCompare(b.project) || bl.depth.get(a.key) - bl.depth.get(b.key) || a.priority - b.priority || a.id - b.id);
-  bl.order = new Map(sorted.map((t, i) => [t.key, i]));
+  // Tree view of the DAG: each ticket hangs under its deepest in-project blocker (ties: earliest).
+  // Other blockers still show as chips. Order = depth-first walk of that tree.
+  const topo = (a, b) => bl.depth.get(a.key) - bl.depth.get(b.key) || a.priority - b.priority || a.id - b.id;
+  bl.treeParent = new Map();
+  bl.children = new Map();
+  for (const t of d.tickets) {
+    const cands = (bl.blockers.get(t.key) || []).map(k => bl.byKey.get(k)).filter(b => b && b.project === t.project);
+    cands.sort((a, b) => bl.depth.get(b.key) - bl.depth.get(a.key) || a.id - b.id);
+    const par = cands[0]?.key || null;
+    bl.treeParent.set(t.key, par);
+    if (par) { if (!bl.children.has(par)) bl.children.set(par, []); bl.children.get(par).push(t); }
+  }
+  for (const list of bl.children.values()) list.sort(topo);
+  const order = [];
+  const seen = new Set();
+  const walk = t => { if (seen.has(t.key)) return; seen.add(t.key); order.push(t); for (const c of bl.children.get(t.key) || []) walk(c); };
+  const byProj = [...d.tickets].sort((a, b) => a.project.localeCompare(b.project) || topo(a, b));
+  for (const t of byProj) if (!bl.treeParent.get(t.key)) walk(t);
+  for (const t of byProj) walk(t);
+  bl.order = new Map(order.map((t, i) => [t.key, i]));
+  bl.milestones = new Map((d.milestones || []).map(m => [m.key, m]));
 }
 
 const isBlocked = t => t.state === 'todo' && (bl.blockers.get(t.key) || []).some(b => !FINAL.has(bl.byKey.get(b)?.state ?? 'done'));
@@ -182,6 +204,22 @@ const matches = t => {
   return ui.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w));
 };
 
+const REFRESH = [[0, 'Off'], [60, '1m'], [300, '5m'], [600, '10m'], [1800, '30m'], [3600, '1h']];
+function refreshSelect() {
+  const wrap = el('label', 'bl-sel bl-refresh'); wrap.title = 'Auto-refresh this page';
+  wrap.append(el('span', null, 'Auto-refresh'));
+  const s = el('select');
+  for (const [v, t] of REFRESH) { const o = el('option', null, t); o.value = String(v); if (v === ui.refresh) o.selected = true; s.append(o); }
+  s.addEventListener('change', () => { ui.refresh = Number(s.value); store.set('blRefresh', ui.refresh); startBacklogPolling(); ctx.toast(ui.refresh ? `Refreshing every ${REFRESH.find(r => r[0] === ui.refresh)[1]}` : 'Auto-refresh off'); });
+  wrap.append(s);
+  return wrap;
+}
+function headRight(extra) {
+  const r = el('div', 'bl-head-right');
+  if (extra) r.append(extra);
+  r.append(refreshSelect(), refreshBtn());
+  return r;
+}
 function refreshBtn() {
   const b = el('button', 'btn'); b.title = 'Reload from the database';
   b.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 5v4h4M4 13a8 8 0 0 0 14.9 3.9M20 19v-4h-4"/></svg><span>Refresh</span>';
@@ -253,9 +291,16 @@ function isOrphan(p) {
   const lease = setting(p.key, 'lease_minutes', 30);
   return !p.owner_heartbeat || Date.now() - new Date(p.owner_heartbeat).getTime() > lease * 60e3;
 }
+const MODES = {
+  session: { short: 'SO', kind: 'Orchestrated', title: 'Session orchestrator: you start /backlog-run in a session and it orchestrates until done' },
+  auto: { short: 'DSO', kind: 'Orchestrated', title: 'Daemon session orchestrator: the daemon starts an orchestrator session whenever tickets are ready, and again when more arrive' },
+  daemon: { short: 'DQ', kind: 'Queue', title: 'Daemon queue: one Claude per ready ticket, no coordinating session' },
+};
 function execBadge(p) {
-  const s = el('span', `bl-exec ex-${p.executor}`, p.executor === 'daemon' ? 'Daemon' : 'Session');
-  s.title = p.executor === 'daemon' ? 'Run by the background daemon as a queue' : 'Run by a Claude Code session (/backlog-run)';
+  const m = MODES[p.executor] || MODES.session;
+  const s = el('span', `bl-exec ex-${p.executor === 'daemon' ? 'queue' : 'orch'}`);
+  s.append(el('b', null, m.kind), ` · ${m.short}`);
+  s.title = m.title;
   return s;
 }
 function lifecycleButtons(p, compact) {
@@ -265,13 +310,13 @@ function lifecycleButtons(p, compact) {
   if (p.status === 'paused') box.append(actBtn('Resume', 'project-resume', p.key, null, { primary: true }));
   if (!compact) {
     if (p.status !== 'planning') box.append(actBtn('Back to planning', 'project-plan', p.key));
-    const seg = el('div', 'seg bl-seg'); seg.title = 'Executor: who runs this project';
-    for (const ex of ['session', 'daemon']) {
-      const b = el('button', null, ex === 'daemon' ? 'Daemon' : 'Session'); b.setAttribute('aria-checked', String(p.executor === ex));
+    const seg = el('div', 'seg bl-seg'); seg.title = 'Mode: who runs this project';
+    for (const ex of ['session', 'auto', 'daemon']) {
+      const b = el('button', null, MODES[ex].short); b.title = MODES[ex].title; b.setAttribute('aria-checked', String(p.executor === ex));
       b.addEventListener('click', () => { if (p.executor !== ex) act('project-executor', p.key, ex); });
       seg.append(b);
     }
-    const lab = el('span', 'bl-cap', 'Executor'); box.append(lab, seg);
+    const lab = el('span', 'bl-cap', 'Mode'); box.append(lab, seg);
     const eg = el('button', `chip${p.evergreen ? ' on' : ''}`, 'Evergreen'); eg.title = 'Evergreen projects never finish; new tickets keep flowing';
     eg.addEventListener('click', () => act('project-evergreen', p.key, !p.evergreen));
     box.append(eg, actBtn('Archive', 'project-archive', p.key, null, { confirm: true }));
@@ -292,6 +337,13 @@ function daemonBar() {
   facts.append(`${workers} working · ${d?.runsToday ?? 0} runs today · ${inFlight}/${cap} in flight`);
   if (d?.heartbeat) { const h = el('span', null, ` · heartbeat ${ctx.fmtRel(d.heartbeat)} ago`); h.title = ctx.fmtDateTime(d.heartbeat); facts.append(h); }
   bar.append(dot, t, facts);
+  if (d?.quota?.until) {
+    const q = el('div', 'bl-quota');
+    q.append(el('b', null, 'Usage limit hit.'), ` Nothing new starts until ${ctx.fmtDateTime(d.quota.until)}; the tickets that hit it went back to todo without using an attempt.`);
+    if (d.quota.last?.ticket) q.append(' Last: ', d.quota.last.ticket, '.');
+    q.append(actBtn('Retry now', 'quota-clear', null, null, { title: 'Clear the pause; the next claims try again' }));
+    bar.append(q);
+  }
   if (d?.alive) bar.append(d.enabled ? actBtn('Pause daemon', 'daemon-pause', null, null, { title: 'Workers already running finish; nothing new starts' }) : actBtn('Resume daemon', 'daemon-resume', null, null, { primary: true }));
   else { const hint = el('span', 'bl-daemon-hint'); hint.append('Start it with ', el('code', null, 'bl daemon install')); bar.append(hint); }
   return bar;
@@ -299,9 +351,11 @@ function daemonBar() {
 
 function executorOf(t) {
   const c = t.claimed_by || '';
-  if (c.startsWith('daemon:')) return ['Daemon', 'ex-daemon'];
-  if (c.startsWith('orch:')) return ['Orchestrator', 'ex-orch'];
+  if (c.startsWith('daemon:')) return ['Queue worker', 'ex-queue'];
+  if (c.startsWith('orchs:')) return ['DSO session', 'ex-orch'];
+  if (c.startsWith('orch:')) return ['bl run', 'ex-orch'];
   if (c.startsWith('cc:')) return ['Session', 'ex-session'];
+  if (c === 'chito') return ['chito', ''];
   return [c || '—', ''];
 }
 function workerSession(t) {
@@ -329,6 +383,158 @@ function inFlight(tks) {
   return wrap;
 }
 
+// ---- who is executing a project ----
+function execLine(p, compact) {
+  const ex = p.execution || {};
+  const box = el('div', 'bl-execline');
+  if (p.status !== 'executing') return null;
+  if (p.executor === 'auto') {
+    const d = bl.data.daemon;
+    const o = ex.orchestrator;
+    if (o) {
+      const row = el('span', 'bl-execrun');
+      row.append(el('span', 'live-dot busy'), el('span', null, 'Daemon orchestrator session'), sessionLink(o, compact ? 'Session' : (o.title || 'Session')));
+      box.append(row);
+    } else {
+      box.append(el('span', 'bl-exec ex-orch', 'DSO'));
+      box.append(el('span', null, !d?.alive ? 'daemon not running' : !d.enabled ? 'daemon paused' : d.quota?.until ? 'waiting for the usage limit to reset' : 'idle; the daemon starts a session when tickets are ready'));
+      if (!d?.alive || !d?.enabled || d?.quota?.until) box.classList.add('warn');
+      const last = (p.orchSessions || [])[0];
+      if (last && !compact) box.append(sessionLink(last, 'Last session'));
+    }
+    return box;
+  }
+  if (p.executor === 'daemon') {
+    const d = bl.data.daemon;
+    const n = (ex.workers || []).length;
+    box.append(el('span', 'bl-exec ex-queue', 'DQ'));
+    box.append(el('span', null, !d?.alive ? 'daemon not running' : !d.enabled ? 'daemon paused' : n ? `${n} working` : 'idle, waiting for tickets'));
+    if (!d?.alive || !d?.enabled) box.classList.add('warn');
+    return box;
+  }
+  if (ex.runs?.length) {
+    for (const r of ex.runs) {
+      const row = el('span', 'bl-execrun');
+      row.append(el('span', 'live-dot busy'), el('span', null, `Orchestrator pid ${r.pid}`));
+      if (r.session) row.append(sessionLink(r.session, compact ? 'Session' : (r.session.title || 'Launching session')));
+      row.title = `bl run started ${ctx.fmtDateTime(r.started)}; heartbeat ${ctx.fmtRel(r.heartbeat)} ago`;
+      box.append(row);
+    }
+    return box;
+  }
+  if (ex.owner?.session) {
+    const row = el('span', 'bl-execrun');
+    row.append(el('span', 'live-dot' + (isOrphan(p) ? '' : ' busy')), el('span', null, isOrphan(p) ? 'Owner session went quiet' : 'Run by session'),
+      sessionLink(ex.owner.session, compact ? 'Session' : (ex.owner.session.title || 'Session')));
+    box.append(row);
+    if (isOrphan(p)) box.classList.add('warn');
+    return box;
+  }
+  const ready = bl.data.tickets.filter(t => t.project === p.key && isReady(t)).length;
+  if (!ready) return null;
+  box.classList.add('warn');
+  box.append(el('span', null, `${ready} ready, no orchestrator running`));
+  const hint = el('code', null, `/backlog-run ${p.key}`); hint.title = 'Run it from a Claude Code session, or switch the executor to Daemon';
+  box.append(hint);
+  return box;
+}
+
+// ---- usage (nominal cost from transcripts) ----
+const fmtTok = n => n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0);
+const fmtCost = u => u ? `$${u.cost < 10 ? u.cost.toFixed(2) : Math.round(u.cost)}${u.unpriced ? '+' : ''}` : '';
+function usageTitle(u) {
+  if (!u) return '';
+  return `Nominal list-price cost (not billed on a subscription)\n${u.turns} model turns · ${(u.models || []).join(', ')}\n` +
+    `input ${fmtTok(u.input)} · output ${fmtTok(u.output)} · cache read ${fmtTok(u.cacheRead)} · cache write ${fmtTok(u.cacheWrite)}`;
+}
+function usageStat(label, u) {
+  const s = el('span', 'bl-usage');
+  s.append(el('span', null, label), el('b', 'num', fmtCost(u)), el('span', 'num', `${u.turns} turns · ${fmtTok(u.tokens)} tok`));
+  s.title = usageTitle(u);
+  return s;
+}
+
+// ---- PRs ----
+function prChips(t, max = 3) {
+  const out = [];
+  for (const pr of (t.prs || []).slice(0, max)) {
+    const gh = ctx.getPr ? ctx.getPr(pr.url) : null;
+    const st = gh?.state || 'UNKNOWN';
+    const a = el('a', `bl-pr st-${st}`);
+    a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
+    a.title = `${pr.repo || ''} #${pr.number}${gh?.title ? ' · ' + gh.title : ''} · ${st.toLowerCase()}`;
+    a.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-3"/></svg>';
+    a.append(el('span', 'num', `#${pr.number}`));
+    a.addEventListener('click', e => e.stopPropagation());
+    out.push(a);
+  }
+  if ((t.prs || []).length > max) out.push(el('span', 'num bl-pr-more', `+${t.prs.length - max}`));
+  return out;
+}
+
+// ---- milestones ----
+const MS_LABEL = { planned: 'Planned', active: 'Active', reached: 'Reached', showcased: 'Showcased', canceled: 'Canceled' };
+function msTrigger(m) {
+  if (m.trigger === 'deploy') return `On deploy (${m.gate || '?'})`;
+  if (m.trigger === 'manual') return 'Manual';
+  return 'When all done';
+}
+function msTickets(m) { return bl.data.tickets.filter(t => t.milestone === m.key && t.key !== m.showcase_ticket); }
+function showcaseItems(m, big) {
+  const box = el('div', big ? 'bl-shows big' : 'bl-shows');
+  for (const sc of m.showcases || []) {
+    const it = el('div', `bl-show k-${sc.kind}`);
+    if (sc.file && /\.(png|jpe?g|gif|webp|svg)$/i.test(sc.file)) {
+      const a = el('a'); a.href = `/api/backlog/showcase?f=${encodeURIComponent(sc.file)}`; a.target = '_blank'; a.rel = 'noopener';
+      const img = el('img'); img.src = a.href; img.alt = sc.note || 'showcase'; img.loading = 'lazy';
+      a.append(img); it.append(a);
+    } else if (sc.file) {
+      const a = el('a', 'bl-show-link', sc.file.split('/').pop()); a.href = `/api/backlog/showcase?f=${encodeURIComponent(sc.file)}`; a.target = '_blank'; a.rel = 'noopener'; it.append(a);
+    }
+    if (sc.url) { const a = el('a', 'bl-show-link', sc.url.replace(/^https?:\/\//, '')); a.href = sc.url; a.target = '_blank'; a.rel = 'noopener'; it.append(a); }
+    if (sc.note) it.append(el('div', 'bl-show-note', sc.note.length > 220 && !big ? sc.note.slice(0, 220) + '…' : sc.note));
+    box.append(it);
+  }
+  return box;
+}
+function roadmap(p) {
+  const ms = (bl.data.milestones || []).filter(m => m.project === p.key && (ui.showDone || m.status !== 'canceled'));
+  if (!ms.length) return null;
+  const wrap = el('div', 'bl-roadmap');
+  for (const m of ms) {
+    const tks = msTickets(m);
+    const card = el('button', `bl-ms ms-${m.status}${ui.milestone === m.key ? ' on' : ''}`);
+    card.type = 'button';
+    card.title = ui.milestone === m.key ? 'Show all tickets' : 'Show only this milestone\'s tickets';
+    card.addEventListener('click', e => { if (e.target.closest('a')) return; ui.milestone = ui.milestone === m.key ? null : m.key; renderBacklog(); });
+    const top = el('div', 'bl-ms-top');
+    top.append(el('span', 'num bl-ms-key', m.key.slice(p.key.length + 1)), el('span', `bl-ms-state ms-${m.status}`, MS_LABEL[m.status] || m.status));
+    if (m.due) { const due = el('span', 'bl-ms-due', `due ${m.due}`); if (m.due < new Date().toISOString().slice(0, 10) && !['reached', 'showcased'].includes(m.status)) due.classList.add('late'); top.append(due); }
+    card.append(top, el('div', 'bl-ms-title', m.title));
+    const meta = el('div', 'bl-ms-meta'); meta.append(el('span', null, msTrigger(m)));
+    if (m.showcase_kind && m.showcase_kind !== 'none') meta.append(el('span', null, `showcase: ${m.showcase_kind}`));
+    card.append(meta, progress(tks));
+    if (m.showcases?.length) card.append(showcaseItems(m));
+    else if (m.showcase_ticket) {
+      const st = bl.byKey.get(m.showcase_ticket);
+      if (st) { const l = linkTo(el('a', 'bl-ms-st'), ticketPath(st)); l.append(stateIcon(st.state), el('span', null, `Showcase ${st.key.slice(p.key.length + 1)}: ${LABEL[st.state].toLowerCase()}`)); card.append(l); }
+    }
+    wrap.append(card);
+  }
+  const none = bl.data.tickets.filter(t => t.project === p.key && !t.milestone && !t.meta?.showcase_for && !FINAL.has(t.state)).length;
+  if (none) {
+    const c = el('button', `bl-ms ms-none${ui.milestone === '-' ? ' on' : ''}`); c.type = 'button';
+    c.append(el('div', 'bl-ms-title', `${none} open ticket${none === 1 ? '' : 's'} without a milestone`));
+    c.addEventListener('click', () => { ui.milestone = ui.milestone === '-' ? null : '-'; renderBacklog(); });
+    wrap.append(c);
+  }
+  const sc = el('div', 'bl-roadmap-scroll'); sc.append(wrap);
+  return sc;
+}
+function nextMilestone(p) {
+  return (bl.data.milestones || []).filter(m => m.project === p.key && ['planned', 'active', 'reached'].includes(m.status)).sort((a, b) => a.seq - b.seq)[0];
+}
+
 // ---- swim lanes ----
 const LANE_COLS = ['backlog', 'todo', 'in_progress', 'in_review', 'failed', 'done'];
 
@@ -350,6 +556,7 @@ function card(t) {
   if (t.state === 'failed') meta.append(el('span', 'bad', `${t.attempts} attempt${t.attempts === 1 ? '' : 's'}`));
   if (t.state === 'in_review') meta.append(el('span', 'wait', 'Waiting for approval'));
   if (t.assignee === 'human' && t.state !== 'todo') meta.append(el('span', null, 'human'));
+  meta.append(...prChips(t, 2));
   if (t.sessions?.length) meta.append(sessionLink(t.sessions[0], t.sessions.length > 1 ? String(t.sessions.length) : null));
   if (meta.childNodes.length) c.append(meta);
   return c;
@@ -362,8 +569,15 @@ function renderLanes(root) {
   const running = all.filter(t => t.state === 'in_progress').length;
   const you = all.filter(needsYou).length;
   const sub = `${projects.length} project${projects.length === 1 ? '' : 's'} · ${running} in progress · ${you ? `${you} waiting on you` : 'nothing waiting on you'}`;
-  root.append(head('Backlog', sub, refreshBtn()), daemonBar());
-  root.append(el('h2', 'bl-h2', 'In flight'), inFlight(all), el('h2', 'bl-h2', 'Projects'), controls());
+  root.append(head('Backlog', sub, headRight()), daemonBar());
+  const ctl = controls();
+  const visible = projects.map(p => p.key);
+  const allCollapsed = visible.length && visible.every(k => ui.collapsed.has(k));
+  const tog = el('button', 'btn bl-collapse-all', allCollapsed ? 'Expand all' : 'Collapse all');
+  tog.title = allCollapsed ? 'Show every project\'s tickets' : 'Show projects only';
+  tog.addEventListener('click', () => { if (allCollapsed) visible.forEach(k => ui.collapsed.delete(k)); else visible.forEach(k => ui.collapsed.add(k)); saveCollapsed(); renderBacklog(); });
+  ctl.insertBefore(tog, ctl.querySelector('.bl-cap'));
+  root.append(el('h2', 'bl-h2', 'In flight'), inFlight(all), el('h2', 'bl-h2', 'Projects'), ctl);
   const cols = LANE_COLS.filter(st => (ui.showDone || st !== 'done') && (st === 'todo' || st === 'in_progress' || all.some(t => t.state === st)));
   const grid = el('div', 'bl-lanes');
   grid.style.setProperty('--cols', String(cols.length));
@@ -374,7 +588,7 @@ function renderLanes(root) {
     const n = all.filter(t => t.state === st && matches(t)).length; if (n) h.append(el('span', 'num', String(n)));
     hdr.append(h);
   }
-  grid.append(hdr);
+  if (!(visible.length && visible.every(k => ui.collapsed.has(k)))) grid.append(hdr);
   if (!projects.length) grid.append(el('div', 'prs-empty', 'No projects yet. Create one with bl project add.'));
   for (const p of projects) {
     const tks = all.filter(t => t.project === p.key);
@@ -383,13 +597,57 @@ function renderLanes(root) {
     if (!ui.showDone && tks.length && tks.every(t => FINAL.has(t.state))) continue;
     const lane = el('div', 'bl-lane');
     const side = el('div', 'bl-lane-side');
+    const collapsed = ui.collapsed.has(p.key);
+    const chev = el('button', `bl-chev${collapsed ? '' : ' open'}`);
+    chev.type = 'button'; chev.title = collapsed ? 'Show tickets' : 'Hide tickets';
+    chev.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+    chev.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (collapsed) ui.collapsed.delete(p.key); else ui.collapsed.add(p.key); saveCollapsed(); renderBacklog(); });
     const name = linkTo(el('a', 'bl-lane-name'), projPath(p.key));
     name.append(el('span', 'bl-lane-key num', p.key), el('span', 'bl-lane-title', p.name));
+    const nameRow = el('div', 'bl-lane-namerow'); nameRow.append(chev, name);
+    if (collapsed) {
+      const lane2 = el('div', 'bl-lane'); 
+      const row = el('div', 'bl-lane-compact');
+      const head = el('div', 'bl-compact-head');
+      head.append(nameRow);
+      const b2 = el('div', 'bl-lane-badges'); b2.append(projState(p), execBadge(p)); head.append(b2);
+      const counts = el('div', 'bl-compact-counts');
+      for (const st of LANE_COLS) { const n = shown.filter(t => t.state === st).length; if (n) { const x = statePill(st); x.append(el('span', 'num', String(n))); counts.append(x); } }
+      const you = tks.filter(needsYou).length; if (you) counts.append(el('span', 'bl-compact-you', `${you} need${you === 1 ? 's' : ''} you`));
+      head.append(counts, progress(tks));
+      row.append(head);
+      const run = shown.filter(t => t.state === 'in_progress').sort((a, b) => (a.started || '') < (b.started || '') ? -1 : 1);
+      if (run.length) {
+        const list = el('div', 'bl-compact-run');
+        for (const t of run.slice(0, 3)) {
+          const r = linkTo(el('a', 'bl-compact-row'), ticketPath(t));
+          const ws = workerSession(t);
+          r.append(stateIcon('in_progress'), el('span', 'num', t.key.slice(p.key.length + 1)), el('span', 'bl-compact-title', t.title),
+            el('span', 'num bl-compact-since', t.started ? ctx.fmtRel(t.spawn?.at || t.started) : ''));
+          if (ws) r.append(sessionLink(ws));
+          list.append(r);
+        }
+        if (run.length > 3) list.append(el('span', 'bl-compact-more', `and ${run.length - 3} more running`));
+        row.append(list);
+      }
+      lane2.append(row);
+      grid.append(lane2);
+      continue;
+    }
     const badges = el('div', 'bl-lane-badges'); badges.append(projState(p), execBadge(p));
     if (p.evergreen) badges.append(el('span', 'bl-exec ex-ever', 'Evergreen'));
-    side.append(name, badges, progress(tks), lifecycleButtons(p, true));
+    side.append(nameRow, badges, progress(tks));
+    const nm = nextMilestone(p);
+    if (nm) {
+      const mt = msTickets(nm);
+      const l = linkTo(el('a', 'bl-lane-ms'), projPath(p.key));
+      l.append(el('span', `bl-ms-state ms-${nm.status}`, MS_LABEL[nm.status]), el('span', null, `${nm.key.slice(p.key.length + 1)} ${nm.title}`),
+        el('span', 'num', `${mt.filter(t => t.state === 'done').length}/${mt.length}`));
+      side.append(l);
+    }
+    const exl = execLine(p, true); if (exl) side.append(exl);
+    side.append(lifecycleButtons(p, true));
     const facts = el('div', 'bl-lane-facts');
-    const rb = runBadge(p); if (rb) facts.append(rb);
     const you = tks.filter(needsYou).length; if (you) facts.append(el('span', 'bad', `${you} need${you === 1 ? 's' : ''} you`));
     facts.append(el('span', null, `review ${setting(p.key, 'review', 'ask')}`));
     side.append(facts);
@@ -422,18 +680,24 @@ function renderProject(root, p) {
     else sub.push(el('span', null, `doc: ${p.doc_slug}`));
   }
   const subWrap = sub.flatMap((n, i) => (i ? [' · ', n] : [n]));
-  const right = el('div', 'bl-head-right');
-  const rb = runBadge(p); if (rb) right.append(rb);
-  right.append(refreshBtn());
+  const right = headRight(runBadge(p));
   root.append(head(`${p.name}`, subWrap, right));
   const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), execBadge(p), lifecycleButtons(p, false));
   root.append(ctl);
+  const exl = execLine(p, false); if (exl) root.append(exl);
   if (tks.some(t => t.state === 'in_progress')) root.append(el('h2', 'bl-h2', 'In flight'), inFlight(tks));
 
   const stats = el('div', 'bl-stats');
   stats.append(progress(tks));
   for (const st of STATES) { const n = tks.filter(t => t.state === st).length; if (n) { const x = statePill(st); x.append(el('span', 'num', String(n))); stats.append(x); } }
   root.append(stats);
+  if (p.usage) {
+    const us = el('div', 'bl-usage-row');
+    us.append(usageStat('Total', p.usage));
+    if (p.sharedUsage) us.append(usageStat('Orchestration and shared sessions', p.sharedUsage));
+    us.append(el('span', 'bl-usage-note', 'Nominal list prices from transcripts; not billed on a subscription.'));
+    root.append(us);
+  }
 
   const you = tks.filter(needsYou);
   if (you.length) {
@@ -443,15 +707,21 @@ function renderProject(root, p) {
     root.append(s);
   }
 
+  const rm = roadmap(p);
+  if (rm) root.append(el('h2', 'bl-h2', 'Roadmap'), rm);
+  else if (ui.milestone) ui.milestone = null;
   root.append(el('h2', 'bl-h2', 'Dependency graph'), graph(tks));
-  root.append(el('h2', 'bl-h2', 'Tickets'), controls(), table(tks.filter(t => (ui.showDone || !FINAL.has(t.state)) && matches(t))));
+  const msOk = t => !ui.milestone || (ui.milestone === '-' ? !t.milestone && !t.meta?.showcase_for : t.milestone === ui.milestone);
+  const th = el('h2', 'bl-h2', 'Tickets');
+  if (ui.milestone) { const x = el('button', 'chip on', `${ui.milestone === '-' ? 'No milestone' : ui.milestone} ×`); x.addEventListener('click', () => { ui.milestone = null; renderBacklog(); }); th.append(' ', x); }
+  root.append(th, controls(), table(tks.filter(t => (ui.showDone || !FINAL.has(t.state)) && matches(t) && msOk(t))));
 }
 
-function graph(tks) {
-  const wrap = el('div', 'bl-graph');
+function graph(tks, big = false) {
+  const wrap = el('div', 'bl-graph' + (big ? ' big' : ''));
   const shown = tks.filter(t => t.state !== 'canceled' || ui.showDone);
   if (!shown.length) { wrap.append(el('div', 'prs-empty', 'No tickets.')); return wrap; }
-  const W = 188, H = 46, GX = 54, GY = 14, PAD = 8;
+  const W = big ? 250 : 200, H = big ? 74 : 58, GX = big ? 80 : 64, GY = big ? 26 : 20, PAD = 12;
   const cols = new Map();
   for (const t of [...shown].sort((a, b) => bl.order.get(a.key) - bl.order.get(b.key))) {
     const d = bl.depth.get(t.key) || 0;
@@ -460,6 +730,16 @@ function graph(tks) {
   }
   const pos = new Map();
   const depths = [...cols.keys()].sort((a, b) => a - b);
+  // Order each column by the average row of its blockers (barycenter), so edges cross less.
+  const row = new Map();
+  depths.forEach((d, ci) => {
+    const col = cols.get(d);
+    if (ci > 0) {
+      const bc = t => { const rs = (bl.blockers.get(t.key) || []).map(k => row.get(k)).filter(v => v != null); return rs.length ? rs.reduce((x, y) => x + y, 0) / rs.length : Infinity; };
+      col.sort((a, b) => bc(a) - bc(b) || bl.order.get(a.key) - bl.order.get(b.key));
+    }
+    col.forEach((t, ri) => row.set(t.key, ri));
+  });
   depths.forEach((d, ci) => cols.get(d).forEach((t, ri) => pos.set(t.key, { x: PAD + ci * (W + GX), y: PAD + ri * (H + GY) })));
   const width = PAD * 2 + depths.length * W + (depths.length - 1) * GX;
   const height = PAD * 2 + Math.max(...[...cols.values()].map(c => c.length)) * (H + GY) - GY;
@@ -473,6 +753,7 @@ function graph(tks) {
       const path = document.createElementNS(NS, 'path');
       path.setAttribute('d', `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2 - 4},${y2}`);
       path.setAttribute('class', `bl-edge${FINAL.has(bl.byKey.get(b)?.state) ? ' met' : ''}`);
+      path.dataset.from = b; path.dataset.to = t.key;
       svg.append(path);
       const tip = document.createElementNS(NS, 'path');
       tip.setAttribute('d', `M${x2 - 8},${y2 - 4} L${x2 - 2},${y2} L${x2 - 8},${y2 + 4}`);
@@ -480,36 +761,66 @@ function graph(tks) {
       svg.append(tip);
     }
   }
-  wrap.append(svg);
-  // Nodes are HTML so they can use the same pill styles and links.
+  // Nodes are HTML so they can use the same pill styles and links; edges are drawn on top so none hide behind a box.
   const layer = el('div', 'bl-nodes'); layer.style.width = width + 'px'; layer.style.height = height + 'px';
   for (const t of shown) {
     const p = pos.get(t.key);
     const n = linkTo(el('a', `bl-node bl-${t.state}${isReady(t) ? ' ready' : ''}${bl.ticketKey === t.key ? ' sel' : ''}`), ticketPath(t));
     n.style.left = p.x + 'px'; n.style.top = p.y + 'px'; n.style.width = W + 'px'; n.style.height = H + 'px';
     n.title = `${t.key} · ${LABEL[t.state]}${isReady(t) ? ' · ready' : ''}\n${t.title}`;
-    const top = el('div', 'bl-node-top'); top.append(stateIcon(t.state), el('span', 'num', t.key));
+    const top = el('div', 'bl-node-top'); top.append(stateIcon(t.state), el('span', 'num', t.project === tks[0].project ? t.key.slice(t.project.length + 1) : t.key));
+    n.addEventListener('mouseenter', () => svg.querySelectorAll(`[data-from="${t.key}"], [data-to="${t.key}"]`).forEach(e => e.classList.add('hl')));
+    n.addEventListener('mouseleave', () => svg.querySelectorAll('.hl').forEach(e => e.classList.remove('hl')));
     if (t.assignee === 'human') top.append(el('span', 'bl-node-tag', 'human'));
     else if (isReady(t)) top.append(el('span', 'bl-node-tag ok', 'ready'));
     n.append(top, el('div', 'bl-node-title', t.title));
     layer.append(n);
   }
-  wrap.append(layer);
+  wrap.append(svg, layer);
   const scroller = el('div', 'bl-graph-scroll'); scroller.append(wrap);
-  return scroller;
+  if (big) return scroller;
+  const box = el('div', 'bl-graph-box');
+  const ex = el('button', 'btn bl-graph-expand'); ex.type = 'button'; ex.title = 'Open a larger view';
+  ex.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg><span>Expand</span>';
+  ex.addEventListener('click', () => openGraphModal(tks));
+  box.title = 'Click anywhere to expand';
+  box.addEventListener('click', e => { if (e.target.closest('.bl-node, .bl-graph-expand')) return; openGraphModal(tks); });
+  box.append(ex, scroller);
+  return box;
+}
+
+function openGraphModal(tks) {
+  const m = el('div', 'bl-modal');
+  const card = el('div', 'bl-modal-card');
+  const head = el('div', 'bl-modal-head');
+  head.append(el('b', null, 'Dependency graph'), el('span', null, 'Hover a ticket to highlight its edges; click to open it.'));
+  const close = el('button', 'btn icon'); close.title = 'Close (Esc)';
+  close.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  head.append(close);
+  card.append(head, graph(tks, true));
+  m.append(card);
+  const done = () => { m.remove(); document.removeEventListener('keydown', esc, true); };
+  const esc = e => { if (e.key === 'Escape') { e.stopPropagation(); done(); } };
+  close.addEventListener('click', done);
+  m.addEventListener('click', e => { if (e.target === m) done(); });
+  card.addEventListener('click', e => { if (e.target.closest('.bl-node')) done(); });
+  document.addEventListener('keydown', esc, true);
+  document.body.append(m);
 }
 
 const COLS = [
   ['order', '#', t => bl.order.get(t.key)],
-  ['key', 'Ticket', t => [t.project, t.id]],
+  ['key', 'Key', t => [t.project, t.id]],
   ['title', 'Title', t => t.title.toLowerCase()],
   ['state', 'State', t => STATES.indexOf(t.state)],
   ['deps', 'Waits on', t => (bl.blockers.get(t.key) || []).length],
   ['blocks', 'Blocks', t => (bl.dependents.get(t.key) || []).length],
   ['priority', 'P', t => t.priority],
   ['attempts', 'Tries', t => t.attempts],
-  ['who', 'Agent', t => t.claimed_by || t.assignee || ''],
-  ['sessions', 'Sessions', t => (t.sessions || []).length],
+  ['who', 'Who', t => t.claimed_by || t.assignee || ''],
+  ['ms', 'Milestone', t => bl.milestones.get(t.milestone)?.seq ?? 1e9],
+  ['prs', 'PRs', t => (t.prs || []).length],
+  ['cost', 'Cost', t => t.usage?.cost ?? -1],
   ['updated', 'Updated', t => t.updated || ''],
 ];
 
@@ -523,6 +834,7 @@ function depChip(k, proj = bl.byKey.get(bl.ticketKey || '')?.project) {
   if (!t) return el('span', 'bl-chip', k);
   const c = linkTo(el('a', `bl-chip bl-${t.state}`), ticketPath(t)); c.title = `${t.title} · ${LABEL[t.state]}`;
   c.append(stateIcon(t.state), el('span', 'num', t.project === proj ? k.slice(t.project.length + 1) : k));
+  if (FINAL.has(t.state)) c.classList.add('met');
   return c;
 }
 
@@ -530,39 +842,90 @@ function table(tks) {
   const wrap = el('div', 'bl-table-wrap');
   const tbl = el('table', 'bl-table');
   const thead = el('thead'); const tr = el('tr');
-  for (const [id, label] of COLS) {
+  const has = {
+    ms: tks.some(t => t.milestone) || (bl.data.milestones || []).some(m => tks[0] && m.project === tks[0].project),
+    prs: tks.some(t => t.prs?.length),
+    usage: tks.some(t => t.usage),
+    who: tks.some(t => t.claimed_by || t.assignee),
+  };
+  const cols = COLS.filter(([id]) => !(id === 'ms' && !has.ms) && !(id === 'prs' && !has.prs) && !(id === 'cost' && !has.usage) && !(id === 'who' && !has.who));
+  const on = id => cols.some(c => c[0] === id);
+  for (const [id, label] of cols) {
     const th = el('th', `c-${id}`); const b = el('button', null, label);
     if (ui.sort.col === id) { th.setAttribute('aria-sort', ui.sort.dir > 0 ? 'ascending' : 'descending'); b.append(el('span', 'bl-sort', ui.sort.dir > 0 ? '↑' : '↓')); }
     b.addEventListener('click', () => { ui.sort = { col: id, dir: ui.sort.col === id ? -ui.sort.dir : (id === 'updated' ? -1 : 1) }; store.set('blSort', ui.sort); renderBacklog(); });
     th.append(b); tr.append(th);
   }
   thead.append(tr); tbl.append(thead);
-  const key = COLS.find(c => c[0] === ui.sort.col)?.[2] || COLS[0][2];
+  const key = cols.find(c => c[0] === ui.sort.col)?.[2] || COLS[0][2];
   const rows = [...tks].sort((a, b) => ui.sort.dir * cmp(key(a), key(b)) || bl.order.get(a.key) - bl.order.get(b.key));
   const tbody = el('tbody');
-  const treeMode = ui.sort.col === 'order';
+  const treeMode = ui.sort.col === 'order' && ui.sort.dir > 0;
+  // Tree geometry over the visible rows: depth, and which ancestor levels continue below this row.
+  const geo = new Map();
+  if (treeMode) {
+    const vis = new Set(rows.map(t => t.key));
+    const parentOf = k => { let p = bl.treeParent.get(k); while (p && !vis.has(p)) p = bl.treeParent.get(p); return p; };
+    const kids = new Map();
+    for (const t of rows) { const p = parentOf(t.key); if (p) { if (!kids.has(p)) kids.set(p, []); kids.get(p).push(t.key); } }
+    const walk = (k, depth, cont) => {
+      const ks = kids.get(k) || [];
+      ks.forEach((c, i) => { const last = i === ks.length - 1; geo.set(c, { depth, cont, last }); walk(c, depth + 1, [...cont, !last]); });
+    };
+    for (const t of rows) if (!parentOf(t.key)) { geo.set(t.key, { depth: 0, cont: [], last: true }); walk(t.key, 1, []); }
+    for (const [k, ks] of kids) if (geo.has(k)) geo.get(k).kids = ks.length;
+  }
+  // Tree gutter: each title has a node dot; lines run between dots, left of the text, so they never cross it.
+  const STEP = 18, PAD = 8, DOT = 5, TEXT = 16, MAXD = 8;
   for (const t of rows) {
     const r = el('tr', `bl-${t.state}${bl.ticketKey === t.key ? ' sel' : ''}`);
     r.addEventListener('click', e => { if (e.target.closest('a')) return; go(ticketPath(t)); });
     const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); r.append(c); return c; };
     td('c-order num', String(bl.order.get(t.key) - Math.min(...tks.map(x => bl.order.get(x.key))) + 1));
-    td('c-key num', linkTo(el('a', null, t.key), ticketPath(t)));
+    const kl = linkTo(el('a', null, t.key.slice(t.project.length + 1)), ticketPath(t)); kl.title = t.key;
+    td('c-key num', kl);
     const ttl = el('div', 'bl-tt');
-    if (treeMode) { const dpt = bl.depth.get(t.key) || 0; ttl.style.paddingLeft = `${dpt * 18}px`; if (dpt) ttl.append(el('span', 'bl-tree', '└')); }
-    ttl.append(el('span', null, t.title));
+    const wsess = workerSession(t);
+    if (wsess) {
+      const a = el('a', 'bl-tt-text linked'); a.href = `/s/${wsess.id}`;
+      a.title = `Open the session: ${wsess.title || wsess.id}${t.sessions.length > 1 ? ` (${t.sessions.length} sessions; all in the details)` : ''}`;
+      a.append(t.title);
+      const ic = el('span', 'bl-tt-sess'); ic.innerHTML = SESSION_ICON; a.append(ic);
+      a.addEventListener('click', e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); e.stopPropagation(); ctx.openSession(wsess.id); });
+      ttl.append(a);
+    } else ttl.append(el('span', 'bl-tt-text', t.title));
     if (t.labels?.length) for (const l of t.labels) ttl.append(el('span', 'bl-label', l));
-    td('c-title', ttl);
+    if (t.usage) { const u = el('div', 'bl-tt-usage num', `${t.usage.turns} turns · ${fmtTok(t.usage.tokens)} tokens · ${fmtCost(t.usage)}`); u.title = usageTitle(t.usage); ttl.append(u); }
+    const tcell = td('c-title', ttl);
+    const g = geo.get(t.key);
+    if (g) {
+      tcell.classList.add('tree');
+      const d = Math.min(g.depth, MAXD);
+      const x = lvl => PAD + Math.min(lvl, MAXD) * STEP + DOT;     // centre of the dot at this level
+      ttl.style.marginLeft = `${d * STEP + TEXT}px`;
+      g.cont.forEach((cont, i) => { if (cont && i < MAXD) { const v = el('i', 'bl-guide'); v.style.left = `${x(i)}px`; tcell.append(v); } });
+      if (g.depth) {
+        const e = el('i', 'bl-elbow'); e.style.left = `${x(g.depth - 1)}px`; e.style.width = `${x(g.depth) - x(g.depth - 1) - DOT}px`;
+        tcell.append(e);
+        if (!g.last) { const v = el('i', 'bl-guide'); v.style.left = `${x(g.depth - 1)}px`; tcell.append(v); }
+      }
+      if (g.kids) { const st = el('i', 'bl-stem'); st.style.left = `${x(g.depth)}px`; tcell.append(st); }
+      const dot = el('i', `bl-node-dot bl-${t.state}`); dot.style.left = `${x(g.depth) - DOT}px`; tcell.append(dot);
+    }
     td('c-state', statePill(t.state), ...(isReady(t) ? [el('span', 'bl-ready', 'ready')] : isBlocked(t) ? [el('span', 'bl-blocked', 'blocked')] : []));
     td('c-deps', ...(bl.blockers.get(t.key) || []).map(k => depChip(k, t.project)));
     td('c-blocks', ...(bl.dependents.get(t.key) || []).map(k => depChip(k, t.project)));
     td(`c-priority num p${t.priority}`, String(t.priority));
     td('c-attempts num', t.attempts ? `${t.attempts}${t.max_attempts ? '/' + t.max_attempts : ''}` : '');
-    td('c-who', el('span', 'bl-who', t.claimed_by ? (t.claimed_by.startsWith('orch:') ? 'worker' : t.claimed_by) : (t.assignee || '')));
-    td('c-sessions', ...(t.sessions || []).slice(0, 4).map(s => sessionLink(s)), ...((t.sessions || []).length > 4 ? [el('span', 'num', `+${t.sessions.length - 4}`)] : []));
-    const up = td('c-updated', t.updated ? `${ctx.fmtRel(t.updated)} ago` : ''); up.title = ctx.fmtDateTime(t.updated);
+    if (on('who')) td('c-who', el('span', 'bl-who', t.claimed_by ? executorOf(t)[0] : (t.assignee || '')));
+    const ms = bl.milestones.get(t.milestone);
+    if (on('ms')) { td('c-ms', ...(ms ? [el('span', `bl-ms-chip ms-${ms.status}`, ms.key.slice(t.project.length + 1))] : [])); if (ms) r.lastChild.title = ms.title; }
+    if (on('prs')) td('c-prs', ...prChips(t, 3));
+    if (on('cost')) td('c-cost num', fmtCost(t.usage)).title = usageTitle(t.usage);
+    const up = td('c-updated', t.updated ? ctx.fmtRel(t.updated) : ''); up.title = `Updated ${ctx.fmtDateTime(t.updated)}`;
     tbody.append(r);
   }
-  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', ui.q ? 'No tickets match that search.' : 'No open tickets. Switch to All to see finished ones.'); c.colSpan = COLS.length; r.append(c); tbody.append(r); }
+  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', ui.q ? 'No tickets match that search.' : 'No open tickets. Switch to All to see finished ones.'); c.colSpan = cols.length; r.append(c); tbody.append(r); }
   tbl.append(tbody); wrap.append(tbl);
   return wrap;
 }
@@ -628,6 +991,8 @@ function drawDrawer(box, t) {
     if (base) { const a = el('a', null, t.doc_slug); a.href = `${base.replace(/\/$/, '')}/s/${encodeURIComponent(t.doc_slug)}`; a.target = '_blank'; a.rel = 'noopener'; row('Design doc', a); }
     else row('Design doc', t.doc_slug);
   }
+  const tu = bl.byKey.get(t.key)?.usage;
+  if (tu) { const x = el('span', null, `${fmtCost(tu)} · ${tu.turns} turns · ${fmtTok(tu.tokens)} tokens`); x.title = usageTitle(tu); row('Usage', x); }
   row('Created', ctx.fmtDateTime(t.created));
   if (t.started) row('Started', ctx.fmtDateTime(t.started));
   if (t.finished) row('Finished', ctx.fmtDateTime(t.finished));
@@ -640,6 +1005,17 @@ function drawDrawer(box, t) {
     box.append(deps);
   }
 
+  if (t.prs?.length) {
+    box.append(el('h4', 'bl-d-h', 'Pull requests'));
+    const list = el('div', 'bl-d-prs');
+    for (const pr of t.prs) {
+      const gh = ctx.getPr ? ctx.getPr(pr.url) : null;
+      const a = el('a', `bl-d-pr st-${gh?.state || 'UNKNOWN'}`); a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
+      a.append(el('span', 'num', `${(pr.repo || '').split('/').pop()} #${pr.number}`), el('span', 'bl-d-pr-title', gh?.title || ''), el('span', 'bl-d-pr-state', (gh?.state || '').toLowerCase()));
+      list.append(a);
+    }
+    box.append(list);
+  }
   if (t.sessions.length) {
     box.append(el('h4', 'bl-d-h', 'Sessions'));
     const list = el('div', 'bl-d-sessions');
@@ -680,11 +1056,19 @@ function drawDrawer(box, t) {
 // ---------- lifecycle ----------
 export function initBacklog(c) {
   ctx = c;
+  document.addEventListener('click', e => {
+    const d = $('#bl-drawer');
+    if (!d || d.hidden || !e.isTrusted) return;
+    if (e.target.closest('#bl-drawer, .bl-card, .bl-node, .bl-table tbody tr, .bl-chip, .bl-flight-row, .toast, .modal, a[href^="/backlog/"]')) return;
+    if (!document.body.contains(e.target)) return; // re-rendered under the click
+    closeDrawer();
+  });
   loadBacklog().then(() => { if (!$('#backlog').hidden) renderBacklog(); });
 }
 
 export function startBacklogPolling() {
   stopBacklogPolling();
+  if (!ui.refresh) return;
   bl.timer = setInterval(async () => {
     if (document.hidden) return;
     await loadBacklog();
@@ -692,7 +1076,7 @@ export function startBacklogPolling() {
     const scroller = $('#backlog'); const y = scroller.scrollTop;
     renderBacklog();
     scroller.scrollTop = y;
-  }, 5000);
+  }, ui.refresh * 1000);
 }
 export function stopBacklogPolling() { clearInterval(bl.timer); bl.timer = null; }
 export function backlogRefreshCount() { return loadBacklog(); }
@@ -714,5 +1098,7 @@ function ticketActions(t) {
   box.append(sel('Priority', 'ticket-priority', [[0, 'Urgent'], [1, 'High'], [2, 'Normal'], [3, 'Low'], [4, 'None']], t.priority));
   box.append(sel('Model', 'ticket-model', [['', 'Default (opus)'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']], t.meta?.model || ''));
   box.append(sel('Assignee', 'ticket-assignee', [['', 'Agents'], ['human', 'Human']], t.assignee === 'human' ? 'human' : ''));
+  const pms = (bl.data?.milestones || []).filter(m => m.project === t.project && m.status !== 'canceled');
+  if (pms.length && !t.meta?.showcase_for) box.append(sel('Milestone', 'ticket-milestone', [['', 'None'], ...pms.map(m => [m.key, `${m.key.slice(t.project.length + 1)} ${m.title}`])], t.milestone || ''));
   return box;
 }

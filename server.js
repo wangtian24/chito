@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { scan, getMeta, HOME, PROJECTS_DIR } from './lib/index.js';
 import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
-import { backlogSummary, backlogTicket } from './lib/backlog.js';
+import { backlogSummary, backlogTicket, showcaseFile } from './lib/backlog.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CHITO_PORT || 8791);
@@ -27,13 +27,16 @@ function blArgs(b) {
   switch (action) {
     case 'project-start': case 'project-pause': case 'project-resume': case 'project-plan': case 'project-archive':
       return k && ['project', action.slice(8), k];
-    case 'project-executor': return k && ['daemon', 'session'].includes(value) && ['project', 'set', k, `executor=${value}`];
+    case 'project-executor': return k && ['daemon', 'session', 'auto'].includes(value) && ['project', 'set', k, `executor=${value}`];
     case 'project-evergreen': return k && ['project', 'set', k, `evergreen=${value ? 1 : 0}`];
     case 'daemon-pause': case 'daemon-resume': return ['daemon', action.slice(7)];
+    case 'quota-clear': return ['quota', 'clear'];
     case 'ticket-reopen': case 'ticket-cancel': case 'ticket-approve': return k && [action.slice(7), k, '--reason', 'from chito'];
     case 'ticket-move': return k && ['backlog', 'todo'].includes(value) && ['move', k, value, '--reason', 'from chito'];
     case 'ticket-priority': return k && /^[0-4]$/.test(String(value)) && ['set', k, `priority=${value}`];
     case 'ticket-model': return k && /^[a-z0-9.-]{0,40}$/.test(String(value ?? '')) && ['set', k, `model=${value || ''}`];
+    case 'milestone-reach': case 'milestone-cancel': return k && ['milestone', action.slice(10), k];
+    case 'ticket-milestone': return k && (value === '' || KEY_RE.test(String(value))) && ['set', k, `milestone=${value || ''}`];
     case 'ticket-assignee': return k && ['', 'human'].includes(value) && ['set', k, `assignee=${value}`];
     default: return null;
   }
@@ -203,6 +206,16 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { prs, github: { ok: !error, error } });
     }
     if (p === '/api/backlog' && req.method === 'GET') return send(res, 200, { ...(await backlogSummary()), artiBase: ARTI_BASE });
+    if (p === '/api/backlog/showcase' && req.method === 'GET') {
+      let file = null;
+      try { file = showcaseFile(url.searchParams.get('f') || ''); } catch { file = null; }
+      if (!file) return send(res, 404, { error: 'not found' });
+      const types = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.mp4': 'video/mp4', '.webm': 'video/webm', '.svg': 'image/svg+xml', '.md': 'text/plain; charset=utf-8', '.txt': 'text/plain; charset=utf-8' };
+      const type = types[path.extname(file).toLowerCase()];
+      if (!type) return send(res, 415, { error: 'unsupported type' });
+      res.writeHead(200, { 'content-type': type, 'cache-control': 'max-age=3600', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'", 'x-content-type-options': 'nosniff' });
+      return fs.createReadStream(file).pipe(res);
+    }
     if (p === '/api/backlog/action') {
       if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
       let body; try { body = JSON.parse(await readBody(req)); } catch { return send(res, 400, { error: 'bad body' }); }
