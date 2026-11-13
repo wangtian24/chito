@@ -596,7 +596,7 @@ async function openInTerminal(id) {
     const r = await fetch(`/api/sessions/${id}/open`, { method: 'POST', headers: { 'x-chito': '1' } });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
-    ctx.toast(j.action === 'focused' ? 'Focused its terminal' : 'Opened in a terminal');
+    ctx.toast(j.action === 'focused' ? 'Focused its terminal' : j.action === 'forked' ? 'Still running in the background, so this opened a forked copy; the running session will not see what you type there' : 'Opened in a terminal');
   } catch (e) { ctx.toast(`Could not open: ${e.message}`); }
 }
 function needsYouPanel(tks) {

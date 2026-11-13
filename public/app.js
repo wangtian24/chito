@@ -858,7 +858,7 @@ async function reopen() {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error);
     const app = j.terminal === 'iterm' ? 'iTerm' : 'Terminal';
-    toast(j.action === 'focused' ? `Focused running session in ${app} (${j.tty})` : `Opened in ${app}`);
+    toast(j.action === 'focused' ? `Focused running session in ${app} (${j.tty})` : j.action === 'forked' ? `Running in the background (pid ${j.pid}), so this opened a forked copy in ${app}; the running session will not see what you type there` : `Opened in ${app}`);
   } catch (e) { toast(`Failed: ${e.message}`); }
 }
 
