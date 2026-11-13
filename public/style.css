@@ -881,6 +881,11 @@ body:not(.has-session) .topbar { display: none; }
 /* drawer */
 .bl-drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(520px, 92%); z-index: 30; overflow-y: auto; background: var(--color-sheet); border-left: var(--bar-w) solid var(--head-bar); box-shadow: var(--shadow-float); padding: var(--space-lg) var(--space-xl) var(--space-2xl); }
 .bl-drawer[hidden] { display: none; }
+/* While a ticket is open, the board behind it steps back. The dim lets clicks through,
+   so another row or node still opens its ticket and empty space still closes the drawer. */
+.main:has(> .bl-drawer:not([hidden]))::after { content: ''; position: absolute; inset: 0; z-index: 29; background: var(--color-scrim); opacity: .45; pointer-events: none; animation: bl-dim-in .15s ease-out; }
+@keyframes bl-dim-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .main:has(> .bl-drawer:not([hidden]))::after { animation: none; } }
 .bl-d-top { display: flex; align-items: center; gap: var(--space-sm); }
 .bl-d-key { font-size: 12.5px; color: var(--color-muted); }
 .bl-close { margin-left: auto; }
