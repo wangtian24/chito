@@ -705,8 +705,6 @@ function needsYouPanel(tks) {
   const sync = o => { box.classList.toggle('folded', !o); h.setAttribute('aria-expanded', String(o)); h.title = o ? 'Fold this list' : 'Show what is waiting on you'; };
   sync(open);
   h.addEventListener('click', () => { const o = box.classList.contains('folded'); store.set('blNeedsOpen', o); sync(o); });
-  // app.js's global shortcuts claim Enter and Space; keep them for the button's own activation.
-  h.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); });
   box.append(h);
   for (const t of items) {
     const row = el('div', 'bl-needs-row');
