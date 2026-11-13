@@ -56,9 +56,9 @@ const STATIC = {
 
 const shq = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
-function resumeCommand(meta, prompt) {
+function resumeCommand(meta, prompt, fork = false) {
   const dir = meta.cwd && fs.existsSync(meta.cwd) ? meta.cwd : HOME;
-  return `cd ${shq(dir)} && claude --resume ${meta.id}${CLAUDE_FLAGS ? ' ' + CLAUDE_FLAGS : ''}${prompt ? ' ' + shq(prompt) : ''}`;
+  return `cd ${shq(dir)} && claude --resume ${meta.id}${fork ? ' --fork-session' : ''}${CLAUDE_FLAGS ? ' ' + CLAUDE_FLAGS : ''}${prompt ? ' ' + shq(prompt) : ''}`;
 }
 
 function readBody(req, limit = 200_000) {
@@ -254,7 +254,7 @@ const server = http.createServer(async (req, res) => {
         // A typed newline would submit early in the live TUI, so flatten for that path.
         const existing = await focusExisting(id, text.replace(/\s*\n\s*/g, ' '));
         if (existing?.state === 'focused') return send(res, 200, { ok: true, action: 'typed', terminal: TERMINAL, ...existing });
-        if (existing?.state === 'running-elsewhere') return send(res, 409, { error: `already running (pid ${existing.pid}${existing.tty ? ', ' + existing.tty : ''}) outside ${TERMINAL}` });
+        if (existing?.state === 'running-elsewhere') return send(res, 409, { error: `It is running in the background (pid ${existing.pid}) with no terminal to type into; open it to get a forked copy, or wait for it to finish` });
         await openInTerminal(resumeCommand(meta, text));
         return send(res, 200, { ok: true, action: 'resumed', terminal: TERMINAL });
       }
@@ -264,8 +264,13 @@ const server = http.createServer(async (req, res) => {
         const cmd = resumeCommand(meta);
         const existing = await focusExisting(id);
         if (existing?.state === 'focused') return send(res, 200, { ok: true, action: 'focused', terminal: TERMINAL, ...existing });
-        // Resuming a session that is live in another process would fork it; refuse instead.
-        if (existing?.state === 'running-elsewhere') return send(res, 409, { error: `already running (pid ${existing.pid}${existing.tty ? ', ' + existing.tty : ''}) outside ${TERMINAL}` });
+        // Live in a process with no terminal (a daemon's claude -p): open a fork, a copy with the full history under a new
+        // session id, so the running process keeps sole ownership of its own transcript.
+        if (existing?.state === 'running-elsewhere') {
+          const fcmd = resumeCommand(meta, null, true);
+          await openInTerminal(fcmd);
+          return send(res, 200, { ok: true, action: 'forked', command: fcmd, terminal: TERMINAL, pid: existing.pid });
+        }
         await openInTerminal(cmd);
         return send(res, 200, { ok: true, action: 'opened', command: cmd, terminal: TERMINAL });
       }
