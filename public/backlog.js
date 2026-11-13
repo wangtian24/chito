@@ -346,8 +346,10 @@ function lifecycleButtons(p, compact) {
       seg.append(b);
     }
     const lab = el('span', 'bl-cap', 'Orchestration'); box.append(lab, seg);
-    const eg = el('button', `chip${p.evergreen ? ' on' : ''}`, 'Evergreen'); eg.title = 'Evergreen projects never finish; new tickets keep flowing';
-    eg.addEventListener('click', () => act('project-evergreen', p.key, !p.evergreen));
+    const eg = el('label', 'bl-check'); eg.title = 'Evergreen: the project never counts as finished; new tickets keep flowing in';
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!p.evergreen;
+    cb.addEventListener('change', () => act('project-evergreen', p.key, cb.checked));
+    eg.append(cb, evergreenIcon(), 'Evergreen');
     box.append(eg, actBtn('Archive', 'project-archive', p.key, null, { confirm: true }));
   }
   return box;
