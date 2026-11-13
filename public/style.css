@@ -1149,7 +1149,8 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-table tr.bl-done td, .bl-table tr.bl-canceled td { opacity: .55; }
 .bl-table tr.bl-done:hover td, .bl-table tr.bl-canceled:hover td { opacity: 1; }
 .bl-table tr.bl-in_progress td { background: color-mix(in oklch, var(--bl-in_progress-wash) 45%, transparent); }
-.bl-table tr.needs-you td { background: color-mix(in oklch, var(--bl-failed-wash) 55%, transparent); }
+/* same tint as the Waiting on you panel above the table */
+.bl-table tr.needs-you td { background: color-mix(in oklch, var(--bl-failed-wash) 45%, var(--color-sheet)); }
 .bl-table tr.needs-you td.c-title .bl-tt { font-weight: 600; }
 .bl-needs-tag { margin-left: var(--space-sm); font: 600 11.5px var(--font-body); color: var(--bl-failed); }
 .bl-card.bl-done { opacity: .6; }
@@ -1240,3 +1241,6 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-instr textarea { display: block; width: 100%; box-sizing: border-box; margin: var(--space-sm) 0; padding: var(--space-xs) var(--space-sm); font: 400 13px/1.45 var(--font-body); color: var(--color-ink); background: var(--color-sheet); border: 1px solid var(--color-rule-2); border-radius: var(--radius-ctl); resize: vertical; }
 .bl-instr textarea:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 .bl-instr-row { display: flex; align-items: center; gap: var(--space-sm); }
+
+/* State cell: the pill and its tag (Needs you, blocked, ready) share one middle line */
+.bl-table td.c-state > * { vertical-align: middle; line-height: 1.4; }
