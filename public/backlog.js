@@ -1250,13 +1250,13 @@ function handoffView(t) {
   }
   if (pk.links?.length) {
     const l = el('div', 'bl-ho-links');
-    for (const x of pk.links) { const a = el('a', null, x.label || x.url); a.href = x.url; a.target = '_blank'; a.rel = 'noopener'; l.append(a); }
+    for (const x0 of pk.links) { const x = typeof x0 === 'string' ? { url: (x0.match(/https?:\/\/[^\s)]+/) || [])[0], label: x0 } : x0; if (!x.url) continue; const a = el('a', null, x.label || x.url); a.href = x.url; a.target = '_blank'; a.rel = 'noopener'; l.append(a); }
     box.append(l);
   }
   if (pk.done?.length) {
     box.append(el('h4', 'bl-d-h', "What's done and new"));
     const ol = el('ol', 'bl-ho-done');
-    for (const d of pk.done) { const li = el('li'); li.append(el('b', null, d.title)); if (d.ref) li.append(' ', el('span', 'num', d.ref)); if (d.what) li.append(el('div', null, d.what)); ol.append(li); }
+    for (const d0 of pk.done) { const d = typeof d0 === 'string' ? { title: d0 } : d0; const li = el('li'); li.append(el('b', null, d.title)); if (d.ref) li.append(' ', el('span', 'num', d.ref)); if (d.what) li.append(el('div', null, d.what)); ol.append(li); }
     box.append(ol);
   }
   if (pk.tests?.length) {
@@ -1264,7 +1264,8 @@ function handoffView(t) {
     const ticked = store.get(key, []);
     box.append(el('h4', 'bl-d-h', 'What to test'));
     const ul = el('ul', 'bl-ho-tests');
-    pk.tests.forEach((x, i) => {
+    pk.tests.forEach((x0, i) => {
+      const x = typeof x0 === 'string' ? { step: x0 } : x0;
       const li = el('li');
       const cb = el('input'); cb.type = 'checkbox'; cb.checked = ticked.includes(i); cb.id = `ho-${t.key}-${i}`;
       cb.addEventListener('change', () => { const now = store.get(key, []).filter(v => v !== i); if (cb.checked) now.push(i); store.set(key, now); li.classList.toggle('ticked', cb.checked); });
