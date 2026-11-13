@@ -318,6 +318,24 @@ function evergreenIcon() {
   const s = el('span', 'bl-ever'); s.innerHTML = CEDAR; s.title = 'Evergreen: this project never finishes; new tickets keep flowing'; s.setAttribute('role', 'img'); s.setAttribute('aria-label', 'Evergreen');
   return s;
 }
+// Project page: click the name to rename it; Enter or leaving the field saves, Escape cancels.
+function nameEditor(p) {
+  const t = el('button', 'bl-name-edit', p.name); t.title = 'Click to rename';
+  t.addEventListener('click', () => {
+    const inp = el('input', 'bl-name-input'); inp.value = p.name; inp.maxLength = 120; const fit = () => { inp.size = Math.max(12, inp.value.length + 2); }; fit(); inp.addEventListener('input', fit); inp.setAttribute('aria-label', 'Project name');
+    let done = false;
+    const finish = save => {
+      if (done) return; done = true;
+      const v = inp.value.replace(/\s+/g, ' ').trim();
+      if (save && v && v !== p.name) { t.textContent = v; act('project-name', p.key, v); }
+      inp.replaceWith(t);
+    };
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); });
+    inp.addEventListener('blur', () => finish(true));
+    t.replaceWith(inp); inp.focus(); inp.select();
+  });
+  return t;
+}
 // Project page: a tree beside the title, filled when evergreen, hollow when not; click to switch.
 function evergreenToggle(p) {
   const on = !!p.evergreen;
@@ -810,7 +828,8 @@ function renderProject(root, p) {
   const subWrap = [factRow('', ...sub)];
   const right = headRight(runBadge(p));
   const hd = head(`${p.name}`, subWrap, right);
-  hd.querySelector('h1').append(evergreenToggle(p));
+  const h1 = hd.querySelector('h1'); h1.textContent = '';
+  h1.append(nameEditor(p), evergreenToggle(p));
   root.append(hd);
   const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), lifecycleButtons(p, false));
   root.append(ctl);
@@ -835,7 +854,12 @@ function renderProject(root, p) {
   const rm = roadmap(p);
   if (rm) root.append(el('h2', 'bl-h2', 'Roadmap'), rm);
   else if (ui.milestone) ui.milestone = null;
-  root.append(el('h2', 'bl-h2', 'Dependency graph'), graph(tks));
+  // The graph collapses; the choice is remembered for every project.
+  const gsec = el('details', 'bl-sec'); gsec.open = store.get('graphOpen', true);
+  const gsum = el('summary'); gsum.append(el('h2', 'bl-h2', 'Dependency graph'));
+  gsec.append(gsum, graph(tks));
+  gsec.addEventListener('toggle', () => store.set('graphOpen', gsec.open));
+  root.append(gsec);
   const msOk = t => !ui.milestone || (ui.milestone === '-' ? !t.milestone && !t.meta?.showcase_for : t.milestone === ui.milestone);
   const th = el('h2', 'bl-h2', 'Tickets');
   if (ui.milestone) { const x = el('button', 'chip on', `${ui.milestone === '-' ? 'No milestone' : ui.milestone} ×`); x.addEventListener('click', () => { ui.milestone = null; renderBacklog(); }); th.append(' ', x); }
