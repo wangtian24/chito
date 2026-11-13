@@ -1160,6 +1160,7 @@ export function backlogRefreshCount() { return loadBacklog(); }
 function ticketActions(t) {
   const box = el('div', 'bl-d-actions');
   if (['failed', 'canceled', 'done'].includes(t.state)) box.append(actBtn('Reopen', 'ticket-reopen', t.key, null, { primary: t.state === 'failed', title: 'Back to todo with attempts reset' }));
+  if (t.assignee === 'human' && !FINAL.has(t.state)) box.append(actBtn('Mark done', 'ticket-resolve', t.key, null, { primary: true, title: 'Close this human ticket as done (bl resolve)' }));
   if (t.state === 'in_review') box.append(actBtn('Approve', 'ticket-approve', t.key, null, { primary: true, title: 'Mark done (after the PR is merged)' }));
   if (t.state === 'backlog') box.append(actBtn('Move to todo', 'ticket-move', t.key, 'todo', { primary: true }));
   if (t.state === 'todo') box.append(actBtn('Move to backlog', 'ticket-move', t.key, 'backlog'));
