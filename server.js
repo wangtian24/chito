@@ -37,6 +37,7 @@ function blArgs(b) {
     case 'ticket-model': return k && /^[a-z0-9.-]{0,40}$/.test(String(value ?? '')) && ['set', k, `model=${value || ''}`];
     case 'milestone-reach': case 'milestone-cancel': return k && ['milestone', action.slice(10), k];
     case 'ticket-milestone': return k && (value === '' || KEY_RE.test(String(value))) && ['set', k, `milestone=${value || ''}`];
+    case 'ticket-handoff': return k && ['preparing', 'awaiting', 'discussing'].includes(value) && ['handoff', k, '--phase', value];
     case 'ticket-assignee': return k && ['', 'human'].includes(value) && ['set', k, `assignee=${value}`];
     default: return null;
   }

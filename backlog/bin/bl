@@ -29,6 +29,8 @@ DEFAULTS = {
     "orchestrator_model": "opus",
     "brief_humans": True,       # the daemon prepares a briefing session for every unblocked human ticket
     "brief_model": "opus",
+    "notify_human_cmd": "",     # how to tell the human a handoff is ready; empty = a macOS notification ($BL_MSG, $BL_TICKET, $BL_URL)
+    "board_url": "http://localhost:8791/backlog",
     "quota_backoff_minutes": 30, # when a worker hits a usage limit and no reset time is given
     "quota_until": "",          # set automatically when a usage limit is hit; claims wait until then
     "max_attempts": 2,
@@ -895,20 +897,91 @@ Now:
 2. Make it easy to see: work out exactly how the human checks the work (a local preview URL and the command that starts
    it, a PR link, a screenshot, a file to open). If the spec asks for a local preview and it is safe and cheap, start it
    and leave it running; otherwise give the exact command.
-3. Write the briefing as your final message, short and concrete: what this is for, what changed (by ticket and PR),
-   how to see it (links and commands), what to look at closely, and then 1 to 3 numbered questions that end with a
-   clear decision (for example go / no-go, or pick A / B).
-4. Record it: `bl comment {key} "Briefing ready: <one line>"` so the board links this session as where to answer.
+3. Compile the handoff packet and record it. It is what the human reads on the board, so every field is required:
+   - summary: what this is and what they decide, one or two sentences
+   - see: {{"url": ..., "how": ...}}: exactly how to see it (the preview URL and the command that starts it)
+   - links: PRs, the design doc, screenshots
+   - done: EVERY ticket and PR delivered (workers' included), each as what the human will see, with its PR
+   - tests: concrete steps, each with what good looks like and what bad looks like
+   - gaps: known gaps or limitations (may be empty)
+   - questions: 1 to 3, the last one the decision (go / no-go, pick A / B), saying what each answer triggers
+   Record it with a heredoc: `bl handoff {key} --packet - <<'EOF'` + the JSON + `EOF`. That moves the ticket to
+   "awaiting" and notifies the human.
+4. Your final message repeats the packet in readable form (preview, done and new, what to test, questions).
 
 Do not mark the ticket done and do not change other tickets in this first turn.
 
 When the human answers (in this session, later):
+- First run `bl handoff {key} --phase discussing` so the board shows you are on it.
 - Interview briefly if their answer is ambiguous; one question at a time.
 - Turn every problem they report into a ticket: `bl add {p['key']} "<fix>" -b "<what they saw, where, what they expect>" --blocks {key}`
   (so this decision waits for the fixes), or `--after {key}` when it can follow.
 - Record their words: `bl comment {key} "<decision and reasons>"`.
 - When they give the decision, close it: `bl resolve {key} -m "<decision, by the human, and what follows>"`.
   If fixes were filed first, leave {key} open; it comes back to them when the fixes land."""
+
+HANDOFF_FIELDS = {
+    "summary": "one or two sentences: what this is and what you decide",
+    "see": "how to see it: {\"url\": \"http://localhost:4810\", \"how\": \"the command that starts it, sign-in notes\"}",
+    "links": "[{\"label\": \"PR #213\", \"url\": \"https://...\"}] (PRs, design doc, screenshots)",
+    "done": "[{\"title\": \"Brush levels\", \"ref\": \"#194\", \"what\": \"what the human will see\"}]: every ticket and PR delivered, workers' too",
+    "tests": "[{\"step\": \"brush Faint, Some, Rugged on one stretch\", \"good\": \"...\", \"bad\": \"...\"}]",
+    "gaps": "[\"known gap or limitation\"] (may be empty)",
+    "questions": "[\"Go / no-go to merge PR #213 (merging deploys)?\", ...]: 1 to 3, the last one the decision",
+}
+
+def handoff_of(t):
+    return json.loads(t["meta"]).get("handoff") or {}
+
+def set_handoff(c, t, **kw):
+    meta = json.loads(t["meta"])
+    h = meta.get("handoff") or {}
+    h.update({k: v for k, v in kw.items() if v is not None})
+    h["updated"] = now()
+    meta["handoff"] = h
+    c.execute("UPDATE tickets SET meta=?, updated=? WHERE key=?", (json.dumps(meta), now(), t["key"]))
+    return h
+
+def notify_human(c, t, msg):
+    url = f"{setting(c, 'board_url')}/{t['project']}/{t['key']}"
+    env = {**os.environ, "BL_MSG": msg, "BL_TICKET": t["key"], "BL_URL": url, "BL_PROJECT": t["project"]}
+    cmd = setting(c, "notify_human_cmd", t["project"])
+    if cmd:
+        subprocess.Popen(cmd, shell=True, env=env)
+    elif sys.platform == "darwin":
+        script = 'on run argv\ndisplay notification (item 1 of argv) with title "Backlog needs you" subtitle (item 2 of argv) sound name "Glass"\nend run'
+        subprocess.Popen(["osascript", "-e", script, msg, t["key"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proj_cmd = setting(c, "notify_cmd", t["project"])
+    if proj_cmd:
+        subprocess.Popen(proj_cmd, shell=True, env=env)
+
+def cmd_handoff(a):
+    """Record the handoff packet for a human ticket (or move its phase)."""
+    c = connect()
+    with tx(c):
+        t = ticket(c, a.key)
+        if t["assignee"] != "human" and not a.force:
+            die(f"{t['key']} is not assigned to human")
+        if a.packet:
+            raw = sys.stdin.read() if a.packet == "-" else Path(a.packet).read_text()
+            try:
+                pk = json.loads(raw)
+            except Exception as e:
+                die(f"packet is not JSON: {e}")
+            missing = [k for k in ("summary", "see", "done", "tests", "questions") if not pk.get(k)]
+            if missing:
+                die("packet is missing " + ", ".join(missing) + ". Fields:\n" + "\n".join(f"  {k}: {v}" for k, v in HANDOFF_FIELDS.items()))
+            sid = session_id()
+            h = set_handoff(c, t, packet=pk, phase="awaiting", session=sid or handoff_of(t).get("session"), ready_at=now())
+            event(c, "handoff", t["key"], body=f"handoff ready: {pk['summary'][:200]}", data={"phase": "awaiting"})
+            notify_human(c, t, pk["summary"][:180])
+            print("awaiting: the human has been notified")
+        elif a.phase:
+            set_handoff(c, t, phase=a.phase, **({"answered_at": now()} if a.phase == "discussing" else {}))
+            event(c, "handoff", t["key"], body=f"handoff phase: {a.phase}")
+            print(a.phase)
+        else:
+            print(json.dumps(handoff_of(t), indent=1))
 
 def cmd_brief_prompt(a):
     c = connect()
@@ -927,6 +1000,8 @@ def cmd_resolve(a):
         c.execute("UPDATE tickets SET state=?, result=coalesce(?, result), claimed_by=NULL, lease_until=NULL, updated=?, finished=? WHERE key=?",
                   (new, a.message, now(), now(), t["key"]))
         event(c, "state", t["key"], body=f"{t['state']} → {new} (human decision)" + (f": {a.message}" if a.message else ""))
+        if handoff_of(t):
+            set_handoff(c, ticket(c, t["key"]), phase="done", decided_at=now())
         finalize_projects(c)
     print(new)
 
@@ -1545,6 +1620,14 @@ def brief_humans(c, briefs, me):
                 meta.pop("brief", None)                       # try again after the pause
             elif sid:
                 meta["brief"] = {"session": sid["session_id"], "at": now(), "log": lf.name}
+                h = meta.get("handoff") or {}
+                h["session"] = h.get("session") or sid["session_id"]
+                if h.get("phase") == "preparing":   # the session never recorded a packet: hand over the chat anyway
+                    h["phase"] = "awaiting"; h["ready_at"] = now()
+                    meta["handoff"] = h
+                    c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), k))
+                    notify_human(c, t, "A briefing is ready (no packet; read the session)")
+                meta["handoff"] = h
                 event(c, "brief", k, body="briefing ready: resume its session to answer", actor=ag,
                       data={"session": sid["session_id"]})
             else:
@@ -1555,7 +1638,7 @@ def brief_humans(c, briefs, me):
         return
     for t in human_ready(c):
         meta = json.loads(t["meta"])
-        if t["key"] in briefs or meta.get("brief"):
+        if t["key"] in briefs or meta.get("brief") or (meta.get("handoff") or {}).get("packet"):
             continue
         if len(briefs) >= 2:
             return
@@ -1573,6 +1656,7 @@ def brief_humans(c, briefs, me):
         briefs[t["key"]] = (pr, ag, time.monotonic(), lf)
         with tx(c):
             meta["brief"] = {"pending": True, "at": now(), "log": lf.name}
+            meta["handoff"] = {**(meta.get("handoff") or {}), "phase": "preparing", "updated": now()}
             c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), t["key"]))
             event(c, "brief", t["key"], body="preparing a briefing session for the human", actor=ag, data={"pid": pr.pid, "log": lf.name})
         notify(c, t["project"], f"{t['key']}: preparing a briefing for you ({t['title']})")
@@ -1741,6 +1825,8 @@ def main():
     p = P("resolve", cmd_resolve); p.add_argument("key"); p.add_argument("-m", "--message")
     p.add_argument("--state", choices=["done", "canceled"], default="done"); p.add_argument("--force", action="store_true")
     p = P("brief-prompt", cmd_brief_prompt); p.add_argument("key")
+    p = P("handoff", cmd_handoff); p.add_argument("key"); p.add_argument("--packet", help="packet JSON file, or - for stdin")
+    p.add_argument("--phase", choices=["preparing", "awaiting", "discussing"]); p.add_argument("--force", action="store_true")
     p = P("done", cmd_done); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--force", action="store_true")
     p.add_argument("--final", action="store_true", help="skip review: go straight to done")
     p = P("fail", cmd_fail); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--force", action="store_true")
