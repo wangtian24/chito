@@ -43,6 +43,7 @@
       <nav class="views" aria-label="Views">
         <a class="view-tab" href="/" data-view="sessions">Sessions</a>
         <a class="view-tab" href="/artifacts" data-view="artifacts">Artifacts <span class="num view-count" id="art-count"></span></a>
+        <a class="view-tab" href="/backlog" data-view="backlog">Backlog <span class="num view-count" id="bl-count"></span></a>
       </nav>
       <div class="search">
         <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -67,6 +68,7 @@
           <button class="btn" id="b-work" title="Hide or show the work before each answer (w)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg><span>Work hidden</span></button>
           <button class="btn" id="b-tools" title="Tool calls: off, counts, or details (t)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/></svg><span>Tools off</span></button>
           <span class="actions-sep" aria-hidden="true"></span>
+          <button class="btn icon" id="b-pin" title="Pin to the top of the list (f)" aria-label="Pin session" aria-pressed="false"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z"/><path d="M12 15v5"/></svg></button>
           <button class="btn icon" id="b-info" title="Session details (i)" aria-label="Session details"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.01"/></svg></button>
           <button class="btn icon" id="b-link" title="Copy permalink (y)" aria-label="Copy permalink"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
           <button class="btn icon" id="b-copy" title="Copy resume command (c)" aria-label="Copy resume command"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg></button>
@@ -123,6 +125,10 @@
           <div class="pager" id="pager"></div>
         </div>
       </section>
+      <section class="board backlog" id="backlog" hidden>
+        <div class="board-inner backlog-inner" id="backlog-inner"></div>
+      </section>
+      <aside class="bl-drawer" id="bl-drawer" hidden></aside>
     </main>
   </div>
 
@@ -176,6 +182,8 @@
         <div><kbd>a</kbd></div><div>Show / hide agent sessions</div>
         <div><kbd>[</kbd></div><div>Collapse sidebar</div>
         <div><kbd>P</kbd></div><div>Artifacts (pull requests) or back to sessions</div>
+        <div><kbd>B</kbd></div><div>Backlog or back to sessions</div>
+        <div><kbd>f</kbd></div><div>Pin or unpin this session (or drag sessions into Pinned)</div>
         <div><kbd>,</kbd></div><div>Settings</div>
       </div>
       <p class="panel-note" style="margin-top: var(--space-md)">Search matches title first, then project and first prompt. Use <code>p:name</code> to filter by project.</p>
