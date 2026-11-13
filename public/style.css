@@ -1078,7 +1078,10 @@ body:not(.has-session) .topbar { display: none; }
 .bl-node:hover, .bl-node.sel { background: color-mix(in oklch, var(--color-sheet) 92%, transparent); }
 .bl-graph-box { cursor: zoom-in; }
 .bl-graph-box .bl-node { cursor: pointer; }
-.bl-modal-card { width: 96vw; }
+.bl-modal-card { width: 95vw; height: 92vh; }
+.bl-modal { padding: 4vh 2.5vw; }
+.bl-modal-card .bl-graph-scroll { display: flex; align-items: center; justify-content: center; padding: 24px; }
+.bl-modal-card .bl-graph { margin: auto; }
 .bl-node-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
 .bl-graph.big .bl-node-title { -webkit-line-clamp: 3; font-size: 13px; }
 .bl-edge { opacity: .5; }
