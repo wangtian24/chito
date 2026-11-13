@@ -28,6 +28,10 @@ function blArgs(b) {
     case 'project-start': case 'project-pause': case 'project-resume': case 'project-plan': case 'project-archive':
       return k && ['project', action.slice(8), k];
     case 'project-executor': return k && ['daemon', 'session', 'auto'].includes(value) && ['project', 'set', k, `executor=${value}`];
+    case 'project-name': {
+      const v = String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      return k && v && ['project', 'set', k, `name=${v}`];
+    }
     case 'project-evergreen': return k && ['project', 'set', k, `evergreen=${value ? 1 : 0}`];
     case 'daemon-pause': case 'daemon-resume': return ['daemon', action.slice(7)];
     case 'quota-clear': return ['quota', 'clear'];
