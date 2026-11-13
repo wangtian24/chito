@@ -771,7 +771,7 @@ body:not(.has-session) .topbar { display: none; }
 }
 [data-theme="console"], [data-theme="midnight"], [data-theme="plum"] { --bl-in_progress: oklch(80% 0.100 235); --bl-in_progress-wash: oklch(31% 0.050 240); --bl-amber: oklch(82% 0.130 80); --bl-amber-wash: oklch(32% 0.060 80); }
 .view-backlog .topbar, .view-backlog .convo, .view-backlog .composer, .view-backlog .info { display: none !important; }
-.backlog-inner { max-width: 1320px; }
+.backlog-inner { max-width: 1480px; }
 .bl-backlog { --c: var(--bl-backlog); --w: var(--bl-backlog-wash); } .bl-todo { --c: var(--bl-todo); --w: var(--bl-todo-wash); }
 .bl-in_progress { --c: var(--bl-in_progress); --w: var(--bl-in_progress-wash); } .bl-in_review { --c: var(--bl-in_review); --w: var(--bl-in_review-wash); }
 .bl-done { --c: var(--bl-done); --w: var(--bl-done-wash); } .bl-failed { --c: var(--bl-failed); --w: var(--bl-failed-wash); }
@@ -796,7 +796,7 @@ body:not(.has-session) .topbar { display: none; }
 .bl-progress i.bl-todo, .bl-progress i.bl-backlog { background: var(--color-rule-2); opacity: .25; }
 
 /* swim lanes */
-.bl-lanes { display: grid; grid-template-columns: 200px repeat(var(--cols), minmax(170px, 1fr)); gap: 0; overflow-x: auto; }
+.bl-lanes { display: grid; grid-template-columns: 252px repeat(var(--cols), minmax(170px, 1fr)); gap: 0; overflow-x: auto; }
 .bl-lane-head, .bl-lane { display: contents; }
 .bl-col-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; padding: var(--space-sm) var(--space-sm) 6px; background: var(--color-sheet); border-bottom: var(--bar-w) solid var(--head-bar); font: 600 12.5px var(--font-display); color: var(--color-ink); }
 .bl-col-head .num { font-size: 11px; color: var(--color-muted); font-weight: 400; }
@@ -1244,3 +1244,10 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 
 /* State cell: the pill and its tag (Needs you, blocked, ready) share one middle line */
 .bl-table td.c-state > * { vertical-align: middle; line-height: 1.4; }
+
+/* Lane chevrons hang in the left gutter, outside the board, so project keys and titles align with the page edge.
+   The board borrows the gutter with padding (overflow-x clips at the padding box, so the chevrons stay visible). */
+.bl-lanes { padding-left: 28px; margin-left: -28px; }
+.bl-lane-namerow { position: relative; }
+.bl-lane-namerow .bl-chev { position: absolute; left: -28px; top: -2px; margin: 0; }
+.bl-compact-head .bl-lane-namerow .bl-chev { top: 50%; transform: translateY(-50%); }
