@@ -309,9 +309,9 @@ function isOrphan(p) {
   return !p.owner_heartbeat || Date.now() - new Date(p.owner_heartbeat).getTime() > lease * 60e3;
 }
 const MODES = {
-  session: { short: 'SO', kind: 'Orchestrated', title: 'Session orchestrator: you start /backlog-run in a session and it orchestrates until done' },
-  auto: { short: 'DSO', kind: 'Orchestrated', title: 'Daemon session orchestrator: the daemon starts an orchestrator session whenever tickets are ready, and again when more arrive' },
-  daemon: { short: 'DQ', kind: 'Queue', title: 'Daemon queue: one Claude per ready ticket, no coordinating session' },
+  session: { short: 'Manual', title: 'Manual (SO): you start /backlog-run in a session and it orchestrates until done' },
+  auto: { short: 'Auto', title: 'Auto (DSO): the daemon starts an orchestrator session whenever tickets are ready, and again when more arrive' },
+  daemon: { short: 'Simple', title: 'Simple (DQ): the daemon runs one Claude per ready ticket, with no orchestrator session' },
 };
 const CEDAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l4.5 6h-2.5l4 5h-2.5l4 5.5H4.5l4-5.5H6l4-5H7.5z" fill="currentColor"/><path d="M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 function evergreenIcon() {
@@ -339,13 +339,13 @@ function lifecycleButtons(p, compact) {
   if (p.status === 'paused') box.append(actBtn('Resume', 'project-resume', p.key, null, { primary: true }));
   if (!compact) {
     if (p.status !== 'planning') box.append(actBtn('Back to planning', 'project-plan', p.key));
-    const seg = el('div', 'seg bl-seg'); seg.title = 'Mode: who runs this project';
+    const seg = el('div', 'seg bl-seg'); seg.title = 'Orchestration: who runs this project';
     for (const ex of ['session', 'auto', 'daemon']) {
       const b = el('button', null, MODES[ex].short); b.title = MODES[ex].title; b.setAttribute('aria-checked', String(p.executor === ex));
       b.addEventListener('click', () => { if (p.executor !== ex) act('project-executor', p.key, ex); });
       seg.append(b);
     }
-    const lab = el('span', 'bl-cap', 'Mode'); box.append(lab, seg);
+    const lab = el('span', 'bl-cap', 'Orchestration'); box.append(lab, seg);
     const eg = el('button', `chip${p.evergreen ? ' on' : ''}`, 'Evergreen'); eg.title = 'Evergreen projects never finish; new tickets keep flowing';
     eg.addEventListener('click', () => act('project-evergreen', p.key, !p.evergreen));
     box.append(eg, actBtn('Archive', 'project-archive', p.key, null, { confirm: true }));
@@ -383,7 +383,7 @@ function daemonBar() {
 function executorOf(t) {
   const c = t.claimed_by || '';
   if (c.startsWith('daemon:')) return ['Queue worker', 'ex-queue'];
-  if (c.startsWith('orchs:')) return ['DSO session', 'ex-orch'];
+  if (c.startsWith('orchs:')) return ['Auto orchestrator', 'ex-orch'];
   if (c.startsWith('orch:')) return ['bl run', 'ex-orch'];
   if (c.startsWith('cc:')) return ['Session', 'ex-session'];
   if (c === 'chito') return ['chito', ''];
@@ -801,7 +801,7 @@ function renderProject(root, p) {
   const subWrap = [factRow('', ...sub)];
   const right = headRight(runBadge(p));
   root.append(head(`${p.name}`, subWrap, right));
-  const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), execBadge(p), lifecycleButtons(p, false));
+  const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), lifecycleButtons(p, false));
   root.append(ctl);
   const exl = execLine(p, false); if (exl) root.append(exl);
   root.append(instructionsBox(p));
