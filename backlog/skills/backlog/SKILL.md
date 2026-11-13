@@ -77,6 +77,8 @@ Act straight away on the obvious ones (approve a merged PR, reap a stale lease).
    - **Notes**: anything the worker needs to know
 3. Add edges only for real dependencies (`--after`). Use `--lock NAME` for things that must not run at the same time. Give a size hint with `--size`. Use `--model sonnet` only for genuinely simple, mechanical tickets.
 4. Anything only the user can do (deploys, spending money, signing in, decisions) gets `--assignee human`.
+4b. **Deploy at milestones, not per ticket or per project.** Tickets merge to main and stop there; the repo's own cadence (scheduled deploys) ships merged work. Add a deploy ticket only as the gate of a milestone that has to be live (trigger `deploy`), one per milestone, assigned to `human` unless the user said otherwise. Never a "deploy X and write the recap" ticket at the end of every small project.
+4c. Guidance the user gives for a whole project ("deploy only at milestones", "always add tests") goes in its standing instructions, `bl instructions PROJ --set "…"` (or the box on the chito project page). Every orchestrator run and worker prompt gets them, and a running orchestrator re-reads them each round.
 5. Show `bl graph PROJ` and `bl run PROJ --dry-run`. The project stays in **planning**. End with "Start it?". Starting means `bl project start PROJ`, and then `/backlog-run` for session projects, or nothing more for daemon projects.
 
 ## 5. Lifecycle and executor

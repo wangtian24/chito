@@ -33,6 +33,10 @@ function blArgs(b) {
     case 'quota-clear': return ['quota', 'clear'];
     case 'ticket-reopen': case 'ticket-cancel': case 'ticket-approve': return k && [action.slice(7), k, '--reason', 'from chito'];
     case 'ticket-resolve': return k && ['resolve', k];
+    case 'project-instructions': {
+      const v = String(value ?? '').trim().slice(0, 4000);
+      return k && v !== '-' && ['instructions', k, `--set=${v}`];
+    }
     case 'ticket-move': return k && ['backlog', 'todo'].includes(value) && ['move', k, value, '--reason', 'from chito'];
     case 'ticket-priority': return k && /^[0-4]$/.test(String(value)) && ['set', k, `priority=${value}`];
     case 'ticket-model': return k && /^[a-z0-9.-]{0,40}$/.test(String(value ?? '')) && ['set', k, `model=${value || ''}`];
