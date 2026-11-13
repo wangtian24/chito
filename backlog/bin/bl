@@ -27,6 +27,8 @@ DEFAULTS = {
     "adopt_after_minutes": 10,  # an SO project with ready tickets, no live owner and no activity this long gets adopted
     "orchestrate_min_ready": 1, # executor=auto (DSO): start an orchestrator session when this many tickets are ready (fewer: queue workers)
     "orchestrator_model": "opus",
+    "brief_humans": True,       # the daemon prepares a briefing session for every unblocked human ticket
+    "brief_model": "opus",
     "quota_backoff_minutes": 30, # when a worker hits a usage limit and no reset time is given
     "quota_until": "",          # set automatically when a usage limit is hit; claims wait until then
     "max_attempts": 2,
@@ -876,6 +878,58 @@ def build_prompt(c, t, compact=False):
           "- Never deploy, spend money or push to main unless the spec says so."]
     return "\n".join(L)
 
+def brief_prompt(c, t):
+    p = project_row(c, t["project"])
+    key = t["key"]
+    return f"""{build_prompt(c, t)}
+
+# You are preparing {key} for the human
+
+{key} is assigned to the human: only they can do it (a review, a decision, a test, an answer). Your job in this
+first turn is to make that as easy as possible, then hand over. You will be resumed later in this same session with
+the human at the keyboard, so everything you learn now stays useful.
+
+Now:
+1. Gather the context: the spec above, what every upstream ticket delivered (its result, PR and branch), the design doc
+   if there is one, and the repo ({p['repo'] or 'none'}). Read enough to explain it, not to redo it.
+2. Make it easy to see: work out exactly how the human checks the work (a local preview URL and the command that starts
+   it, a PR link, a screenshot, a file to open). If the spec asks for a local preview and it is safe and cheap, start it
+   and leave it running; otherwise give the exact command.
+3. Write the briefing as your final message, short and concrete: what this is for, what changed (by ticket and PR),
+   how to see it (links and commands), what to look at closely, and then 1 to 3 numbered questions that end with a
+   clear decision (for example go / no-go, or pick A / B).
+4. Record it: `bl comment {key} "Briefing ready: <one line>"` so the board links this session as where to answer.
+
+Do not mark the ticket done and do not change other tickets in this first turn.
+
+When the human answers (in this session, later):
+- Interview briefly if their answer is ambiguous; one question at a time.
+- Turn every problem they report into a ticket: `bl add {p['key']} "<fix>" -b "<what they saw, where, what they expect>" --blocks {key}`
+  (so this decision waits for the fixes), or `--after {key}` when it can follow.
+- Record their words: `bl comment {key} "<decision and reasons>"`.
+- When they give the decision, close it: `bl resolve {key} -m "<decision, by the human, and what follows>"`.
+  If fixes were filed first, leave {key} open; it comes back to them when the fixes land."""
+
+def cmd_brief_prompt(a):
+    c = connect()
+    print(brief_prompt(c, ticket(c, a.key)))
+
+def cmd_resolve(a):
+    """Close a human ticket with the human's decision (no claim needed)."""
+    c = connect()
+    with tx(c):
+        t = ticket(c, a.key)
+        if t["state"] in FINAL:
+            die(f"{t['key']} is already {t['state']}")
+        if t["assignee"] != "human" and not a.force:
+            die(f"{t['key']} is not assigned to human; workers finish with bl done (or pass --force)")
+        new = a.state
+        c.execute("UPDATE tickets SET state=?, result=coalesce(?, result), claimed_by=NULL, lease_until=NULL, updated=?, finished=? WHERE key=?",
+                  (new, a.message, now(), now(), t["key"]))
+        event(c, "state", t["key"], body=f"{t['state']} → {new} (human decision)" + (f": {a.message}" if a.message else ""))
+        finalize_projects(c)
+    print(new)
+
 def orchestrator_prompt(c, proj, agent):
     p = project_row(c, proj)
     n = setting(c, "max_parallel", proj)
@@ -1365,6 +1419,11 @@ def cmd_daemon(a):
     print(f"[{now()}] {me} started; db {DB}", flush=True)
     children = {}
     orchs = {}   # project -> (Popen, agent, t0, logfile) for orchestrator sessions
+    briefs = {}  # ticket -> (Popen, agent, t0, logfile) for briefing sessions
+    with tx(c):
+        for t in c.execute("SELECT key, meta FROM tickets WHERE meta LIKE '%\"pending\": true%'").fetchall():
+            m = json.loads(t["meta"]); m.pop("brief", None)
+            c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(m), t["key"]))
     stopping = {"flag": False}
     def stop(*_): stopping["flag"] = True
     signal.signal(signal.SIGINT, stop); signal.signal(signal.SIGTERM, stop)
@@ -1426,6 +1485,8 @@ def cmd_daemon(a):
                     notify(c, t["project"], f"daemon started {t['key']} ({t['title']}) model {model_for(c, t)}" +
                            (" as the usage-limit probe" if probe is not None and probe["key"] == t["key"] else "") + f", log {got[1].name}")
             auto_projects(c, children, orchs, me, lambda: probe is not None)
+            if probe is None:
+                brief_humans(c, briefs, me)
             beat_children(c, children)
             with tx(c):
                 for pk, (pr, ag, t0, lf) in orchs.items():
@@ -1455,6 +1516,66 @@ def project_has_live_owner(c, p):
         return False
     hb = p["owner_heartbeat"] or ""
     return hb > (datetime.now(timezone.utc) - timedelta(minutes=setting(c, "lease_minutes"))).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def human_ready(c):
+    return c.execute("""SELECT t.* FROM tickets t JOIN projects p ON p.key=t.project
+        WHERE t.state='todo' AND t.assignee='human' AND p.status='executing'
+          AND NOT EXISTS (SELECT 1 FROM deps d JOIN tickets b ON b.key=d.blocker
+                          WHERE d.ticket=t.key AND b.state NOT IN ('done','canceled'))
+        ORDER BY t.priority, t.id""").fetchall()
+
+def brief_humans(c, briefs, me):
+    """For every unblocked human ticket without one, start a briefing session: context, how to see it, the questions."""
+    for k, (pr, ag, t0, lf) in list(briefs.items()):
+        if pr.poll() is None:
+            if time.monotonic() - t0 > 60 * 30:
+                try: os.killpg(pr.pid, signal.SIGTERM)
+                except Exception: pr.terminate()
+            continue
+        del briefs[k]; lf.close()
+        tail = log_tail(lf.name)
+        hit, _ = detect_quota(tail)
+        with tx(c):
+            t = ticket(c, k)
+            meta = json.loads(t["meta"])
+            sid = c.execute("SELECT session_id FROM events WHERE ticket=? AND actor=? AND session_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                            (k, ag)).fetchone()
+            if hit:
+                note_quota(c, k, tail, me)
+                meta.pop("brief", None)                       # try again after the pause
+            elif sid:
+                meta["brief"] = {"session": sid["session_id"], "at": now(), "log": lf.name}
+                event(c, "brief", k, body="briefing ready: resume its session to answer", actor=ag,
+                      data={"session": sid["session_id"]})
+            else:
+                meta["brief"] = {"error": f"briefing exited ({pr.returncode}) without recording a session", "at": now(), "log": lf.name}
+            c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), k))
+        notify(c, t["project"], f"{k}: " + ("briefing ready; it needs you" if sid and not hit else "briefing did not finish"))
+    if not setting(c, "brief_humans") or not setting(c, "daemon_enabled") or quota_until(c):
+        return
+    for t in human_ready(c):
+        meta = json.loads(t["meta"])
+        if t["key"] in briefs or meta.get("brief"):
+            continue
+        if len(briefs) >= 2:
+            return
+        p = project_row(c, t["project"])
+        ag = f"brief:{t['key']}"
+        cwd = p["repo"] if p["repo"] and Path(p["repo"]).exists() else str(HOME)
+        LOGS.mkdir(parents=True, exist_ok=True)
+        lf = open(LOGS / f"brief-{t['key']}-{int(time.time())}.log", "w")
+        env = {k: v for k, v in os.environ.items() if k not in ("BL_IN_ORCH", "CLAUDE_CODE_SESSION_ID", "BL_TICKET", "BL_DAEMON", "BL_OWNER", "BL_ORCH_PROJECT")}
+        env.update({"BL_AGENT": ag, "BL_DB": str(DB), "PATH": f"{Path(__file__).resolve().parent}:{os.environ.get('PATH', '')}"})
+        model = str(setting(c, "brief_model", p["key"]))
+        pr = subprocess.Popen(["claude", "-p", brief_prompt(c, t), "--model", model, "--permission-mode", "bypassPermissions",
+                               "--append-system-prompt", f"You are preparing backlog ticket {t['key']} for the human: brief them and ask; don't decide for them."],
+                              cwd=cwd, env=env, stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
+        briefs[t["key"]] = (pr, ag, time.monotonic(), lf)
+        with tx(c):
+            meta["brief"] = {"pending": True, "at": now(), "log": lf.name}
+            c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), t["key"]))
+            event(c, "brief", t["key"], body="preparing a briefing session for the human", actor=ag, data={"pid": pr.pid, "log": lf.name})
+        notify(c, t["project"], f"{t['key']}: preparing a briefing for you ({t['title']})")
 
 def auto_projects(c, children, orchs, me, probe_active=None):
     """executor=auto: 2+ ready tickets → one orchestrator session per project; 1 ready → run it as a queue worker."""
@@ -1617,6 +1738,9 @@ def main():
     p.add_argument("--lease", type=int); p.add_argument("--force", action="store_true")
     p = P("beat", cmd_beat); p.add_argument("keys", nargs="*"); p.add_argument("--lease", type=int)
     p = P("release", cmd_release); p.add_argument("key"); p.add_argument("--reason"); p.add_argument("--force", action="store_true")
+    p = P("resolve", cmd_resolve); p.add_argument("key"); p.add_argument("-m", "--message")
+    p.add_argument("--state", choices=["done", "canceled"], default="done"); p.add_argument("--force", action="store_true")
+    p = P("brief-prompt", cmd_brief_prompt); p.add_argument("key")
     p = P("done", cmd_done); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--force", action="store_true")
     p.add_argument("--final", action="store_true", help="skip review: go straight to done")
     p = P("fail", cmd_fail); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--force", action="store_true")

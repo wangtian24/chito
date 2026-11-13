@@ -102,6 +102,11 @@ Switches: `bl daemon pause|resume` (or the button in chito), `bl daemon status`,
 
 **Worker prompt** (`bl prompt KEY`): the spec, the design docs to read, each upstream ticket's `result`, recent comments, the review policy, the size hint, and the worker protocol.
 
+## 5b2. Human tickets get a briefing session
+A ticket assigned to `human` (a review, a test, a go/no-go, an answer) never runs by itself. Once it's unblocked, the daemon starts a **briefing session**: a `claude -p` that gathers the context (the spec, what each upstream ticket delivered and its PR, the design doc), works out how you can see the work (it starts a local preview when the spec asks for one and that's safe), and writes a short briefing that ends with 1 to 3 questions. The board links that session as the place to answer.
+
+You resume it (**Answer in terminal** on the board, or `o` in chito) and reply there. The session interviews you if your answer is unclear. It turns problems you report into new tickets (`--blocks` the decision, so it comes back to you once they land), records your words with `bl comment`, and closes the ticket with `bl resolve KEY -m "<decision>"`. No briefing yet? The board falls back to the worker or orchestrator session. Turn this off with `bl config global brief_humans false`.
+
 ## 5c. Milestones and showcases
 A project's roadmap is an ordered list of milestones (`bl milestone add PROJ "Title" [--trigger all|deploy|manual] [--gate KEY] [--showcase screenshot|demo|localhost|link|none] [--due DATE]`). Tickets join one with `--milestone PROJ-M1`.
 - **Triggers:**
