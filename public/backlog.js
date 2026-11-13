@@ -539,11 +539,70 @@ function nextMilestone(p) {
   return (bl.data.milestones || []).filter(m => m.project === p.key && ['planned', 'active', 'reached'].includes(m.status)).sort((a, b) => a.seq - b.seq)[0];
 }
 
+// ---- needs you: what is asked and where to answer ----
+function needReason(t) {
+  if (t.state === 'failed') return 'Failed, decide: retry, fix the spec or cancel';
+  if (t.state === 'in_review') return 'Review the PR, then approve';
+  return 'Your decision';
+}
+function answerSession(t) {
+  const b = t.meta?.brief;
+  if (b?.session) return { ...(t.sessions || []).find(s => s.id === b.session), id: b.session, kind: 'Briefing' };
+  const ws = workerSession(t);
+  if (ws) return { ...ws, kind: 'Worker session' };
+  const p = bl.data.projects.find(x => x.key === t.project);
+  const o = p?.execution?.orchestrator || p?.orchSessions?.[0] || p?.execution?.runs?.[0]?.session || p?.execution?.owner?.session;
+  return o ? { ...o, kind: 'Orchestrator session' } : null;
+}
+async function openInTerminal(id) {
+  try {
+    const r = await fetch(`/api/sessions/${id}/open`, { method: 'POST', headers: { 'x-chito': '1' } });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    ctx.toast(j.action === 'focused' ? 'Focused its terminal' : 'Opened in a terminal');
+  } catch (e) { ctx.toast(`Could not open: ${e.message}`); }
+}
+function needsYouPanel(tks) {
+  const items = tks.filter(needsYou);
+  const ms = (bl.data.milestones || []).filter(m => m.status === 'showcased' && tks.some(t => t.project === m.project));
+  if (!items.length && !ms.length) return null;
+  const box = el('div', 'bl-needs');
+  const h = el('div', 'bl-needs-head'); h.append(el('b', null, 'Waiting on you'), el('span', 'num', String(items.length + ms.length)));
+  box.append(h);
+  for (const t of items) {
+    const row = el('div', 'bl-needs-row');
+    const title = linkTo(el('a', 'bl-needs-title'), ticketPath(t));
+    title.append(el('span', 'num', t.key), el('span', null, t.title));
+    const why = el('span', 'bl-needs-why', needReason(t));
+    const act = el('div', 'bl-needs-act');
+    const b = t.meta?.brief;
+    const sess = answerSession(t);
+    if (b?.pending) act.append(el('span', 'bl-needs-pending', 'Preparing a briefing'));
+    if (sess) {
+      const open = sessionLink(sess, sess.kind === 'Briefing' ? 'Read the briefing' : sess.kind);
+      const term = el('button', `btn${sess.kind === 'Briefing' ? ' primary' : ''}`, 'Answer in terminal'); term.type = 'button';
+      term.title = `Resume ${sess.title || 'the session'} in your terminal and reply there`;
+      term.addEventListener('click', e => { e.stopPropagation(); openInTerminal(sess.id); });
+      act.append(open, term);
+    } else if (!b?.pending) act.append(el('span', 'bl-needs-pending', 'No session yet'));
+    if (b?.error) act.append(el('span', 'bl-needs-pending', 'Briefing failed; the daemon retries after a restart'));
+    row.append(title, why, act);
+    box.append(row);
+  }
+  for (const m of ms) {
+    const row = el('div', 'bl-needs-row');
+    const title = linkTo(el('a', 'bl-needs-title'), projPath(m.project)); title.append(el('span', 'num', m.key), el('span', null, m.title));
+    row.append(title, el('span', 'bl-needs-why', 'Review the showcase, then accept or reopen'), el('div', 'bl-needs-act'));
+    box.append(row);
+  }
+  return box;
+}
+
 // ---- swim lanes ----
 const LANE_COLS = ['backlog', 'todo', 'in_progress', 'in_review', 'failed', 'done'];
 
 function card(t) {
-  const c = el('a', `bl-card bl-${t.state}${isBlocked(t) ? ' blocked' : ''}`);
+  const c = el('a', `bl-card bl-${t.state}${isBlocked(t) ? ' blocked' : ''}${needsYou(t) ? ' needs-you' : ''}`);
   linkTo(c, ticketPath(t));
   const top = el('div', 'bl-card-top');
   top.append(stateIcon(t.state), el('span', 'bl-key num', t.key));
@@ -581,6 +640,7 @@ function renderLanes(root) {
   tog.title = allCollapsed ? 'Show every project\'s tickets' : 'Show projects only';
   tog.addEventListener('click', () => { if (allCollapsed) visible.forEach(k => ui.collapsed.delete(k)); else visible.forEach(k => ui.collapsed.add(k)); saveCollapsed(); renderBacklog(); });
   ctl.insertBefore(tog, ctl.querySelector('.bl-cap'));
+  const ny = needsYouPanel(all); if (ny) root.append(ny);
   root.append(el('h2', 'bl-h2', 'In flight'), inFlight(all), el('h2', 'bl-h2', 'Projects'), ctl);
   const cols = LANE_COLS.filter(st => (ui.showDone || st !== 'done') && (st === 'todo' || st === 'in_progress' || all.some(t => t.state === st)));
   const grid = el('div', 'bl-lanes');
@@ -705,13 +765,7 @@ function renderProject(root, p) {
     root.append(us);
   }
 
-  const you = tks.filter(needsYou);
-  if (you.length) {
-    const s = el('div', 'board-status');
-    s.append(el('b', null, 'Waiting on you: '));
-    you.forEach((t, i) => { if (i) s.append(', '); s.append(linkTo(el('a', null, `${t.key} (${LABEL[t.state].toLowerCase()})`), ticketPath(t))); });
-    root.append(s);
-  }
+  const nyp = needsYouPanel(tks); if (nyp) root.append(nyp);
 
   const rm = roadmap(p);
   if (rm) root.append(el('h2', 'bl-h2', 'Roadmap'), rm);
@@ -890,14 +944,14 @@ function table(tks) {
   // Tree gutter: each title has a node dot; lines run between dots, left of the text, so they never cross it.
   const STEP = 18, PAD = 8, DOT = 5, TEXT = 16, MAXD = 8;
   for (const t of rows) {
-    const r = el('tr', `bl-${t.state}${bl.ticketKey === t.key ? ' sel' : ''}`);
+    const r = el('tr', `bl-${t.state}${bl.ticketKey === t.key ? ' sel' : ''}${needsYou(t) ? ' needs-you' : ''}`);
     r.addEventListener('click', e => { if (e.target.closest('a')) return; go(ticketPath(t)); });
     const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); r.append(c); return c; };
     td('c-order num', String(bl.order.get(t.key) - Math.min(...tks.map(x => bl.order.get(x.key))) + 1));
     const kl = linkTo(el('a', null, t.key.slice(t.project.length + 1)), ticketPath(t)); kl.title = t.key;
     td('c-key num', kl);
     const ttl = el('div', 'bl-tt');
-    const wsess = workerSession(t);
+    const wsess = needsYou(t) ? answerSession(t) : workerSession(t);
     if (wsess) {
       const a = el('a', 'bl-tt-text linked'); a.href = `/s/${wsess.id}`;
       a.title = `Open the session: ${wsess.title || wsess.id}${t.sessions.length > 1 ? ` (${t.sessions.length} sessions; all in the details)` : ''}`;
@@ -924,7 +978,7 @@ function table(tks) {
       if (g.kids) { const st = el('i', 'bl-stem'); st.style.left = `${x(g.depth)}px`; tcell.append(st); }
       const dot = el('i', `bl-node-dot bl-${t.state}`); dot.style.left = `${x(g.depth) - DOT}px`; tcell.append(dot);
     }
-    td('c-state', statePill(t.state), ...(isReady(t) ? [el('span', 'bl-ready', 'ready')] : isBlocked(t) ? [el('span', 'bl-blocked', 'blocked')] : []));
+    td('c-state', statePill(t.state), ...(needsYou(t) ? [el('span', 'bl-needs-tag', 'Needs you')] : isReady(t) ? [el('span', 'bl-ready', 'ready')] : isBlocked(t) ? [el('span', 'bl-blocked', 'blocked')] : []));
     td('c-deps', ...(bl.blockers.get(t.key) || []).map(k => depChip(k, t.project)));
     td('c-blocks', ...(bl.dependents.get(t.key) || []).map(k => depChip(k, t.project)));
     td(`c-priority num p${t.priority}`, String(t.priority));
