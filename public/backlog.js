@@ -318,6 +318,17 @@ function evergreenIcon() {
   const s = el('span', 'bl-ever'); s.innerHTML = CEDAR; s.title = 'Evergreen: this project never finishes; new tickets keep flowing'; s.setAttribute('role', 'img'); s.setAttribute('aria-label', 'Evergreen');
   return s;
 }
+// Project page: a tree beside the title, filled when evergreen, hollow when not; click to switch.
+function evergreenToggle(p) {
+  const on = !!p.evergreen;
+  const b = el('button', `bl-ever-toggle${on ? ' on' : ''}`);
+  b.innerHTML = on ? CEDAR : CEDAR.replaceAll('fill="currentColor"', 'fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"');
+  b.setAttribute('aria-pressed', String(on));
+  b.setAttribute('aria-label', 'Evergreen');
+  b.title = on ? 'Evergreen: this project never finishes; new tickets keep flowing in. Click to make it a normal project.' : 'Not evergreen: the project finishes when its tickets are done. Click to make it evergreen.';
+  b.addEventListener('click', () => act('project-evergreen', p.key, !on));
+  return b;
+}
 // Lane header chips: the status only when it is news (not Executing), the mode once, evergreen as an icon.
 function laneBadges(p) {
   const out = [];
@@ -346,11 +357,7 @@ function lifecycleButtons(p, compact) {
       seg.append(b);
     }
     const lab = el('span', 'bl-cap', 'Orchestration'); box.append(lab, seg);
-    const eg = el('label', 'bl-check'); eg.title = 'Evergreen: the project never counts as finished; new tickets keep flowing in';
-    const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!p.evergreen;
-    cb.addEventListener('change', () => act('project-evergreen', p.key, cb.checked));
-    eg.append(cb, evergreenIcon(), 'Evergreen');
-    box.append(eg, actBtn('Archive', 'project-archive', p.key, null, { confirm: true }));
+    box.append(actBtn('Archive', 'project-archive', p.key, null, { confirm: true }));
   }
   return box;
 }
@@ -802,7 +809,9 @@ function renderProject(root, p) {
   }
   const subWrap = [factRow('', ...sub)];
   const right = headRight(runBadge(p));
-  root.append(head(`${p.name}`, subWrap, right));
+  const hd = head(`${p.name}`, subWrap, right);
+  hd.querySelector('h1').append(evergreenToggle(p));
+  root.append(hd);
   const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), lifecycleButtons(p, false));
   root.append(ctl);
   const exl = execLine(p, false); if (exl) root.append(exl);
