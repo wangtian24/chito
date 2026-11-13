@@ -207,6 +207,23 @@ function controls(withSearch = true) {
 const DAY_MS = 864e5, WEEK_MS = 7 * DAY_MS, SEARCH_OLD_CAP = 30;
 const ENDED = new Set(['done', 'canceled', 'failed']);
 const closedAt = t => new Date(t.finished || t.updated || 0).getTime();
+// The Updated column's moment: when an ended ticket finished; for an open one, its last state change (else its last edit).
+const shownAt = t => (ENDED.has(t.state) ? t.finished : t.changed) || t.updated || '';
+// Exact relative time: '12m ago', '1h 20m ago'; from 2 h on, the Pacific clock time ('14:35 PT', 'Nov 12, 14:35 PT', 'Nov 12 2025, 14:35 PT').
+const PT_PARTS = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const ptParts = d => Object.fromEntries(PT_PARTS.formatToParts(d).map(p => [p.type, p.value]));
+export function fmtAgo(iso, now = new Date()) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const min = Math.floor((now - d) / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  if (min < 120) return min === 60 ? '1h ago' : `1h ${min - 60}m ago`;
+  const p = ptParts(d), n = ptParts(now);
+  const clock = `${p.hour}:${p.minute} PT`;
+  if (p.year === n.year && p.month === n.month && p.day === n.day) return clock;
+  return `${p.month} ${p.day}${p.year === n.year ? '' : ' ' + p.year}, ${clock}`;
+}
 const closedRecently = t => Date.now() - closedAt(t) < DAY_MS;
 const showsClosed = () => ui.closed !== 'none' || !!ui.q.trim();
 const finishedMode = () => ui.closed === 'finished';
@@ -1017,7 +1034,7 @@ const COLS = [
   ['ms', 'Milestone', t => bl.milestones.get(t.milestone)?.seq ?? 1e9],
   ['prs', 'PRs', t => (t.prs || []).length],
   ['cost', 'Cost', t => t.usage?.cost ?? -1],
-  ['updated', 'Updated', t => t.updated || ''],
+  ['updated', 'Updated', t => new Date(shownAt(t) || 0).getTime()],
 ];
 const FIN_COLS = [
   ...COLS.filter(([id]) => ['key', 'title', 'state', 'who', 'ms', 'prs', 'cost'].includes(id)),
@@ -1138,8 +1155,11 @@ function table(tks) {
     if (on('ms')) { td('c-ms', ...(ms ? [el('span', `bl-ms-chip ms-${ms.status}`, ms.key.slice(t.project.length + 1))] : [])); if (ms) r.lastChild.title = ms.title; }
     if (on('prs')) td('c-prs', ...prChips(t, 3));
     if (on('cost')) td('c-cost num', fmtCost(t.usage)).title = usageTitle(t.usage);
-    if (fin) { const at = t.finished || t.updated; const f = td('c-updated c-finished', at ? `${ctx.fmtRel(at)} ago`.replace('now ago', 'just now') : ''); f.title = `Finished ${ctx.fmtDateTime(at)}`; }
-    else { const up = td('c-updated', t.updated ? ctx.fmtRel(t.updated) : ''); up.title = `Updated ${ctx.fmtDateTime(t.updated)}`; }
+    if (fin) { const at = t.finished || t.updated; td('c-updated c-finished', fmtAgo(at)).title = `Finished ${ctx.fmtDateTime(at)}`; }
+    else {
+      const at = shownAt(t);
+      td('c-updated', fmtAgo(at)).title = at ? `${ENDED.has(t.state) && t.finished ? 'Finished' : t.changed ? 'State changed' : 'Updated'} ${ctx.fmtDateTime(at)}` : '';
+    }
     tbody.append(r);
   }
   if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', fin ? (ui.q.trim() ? 'No ticket finished in the last 7 days matches that search.' : 'Nothing finished (done, canceled or failed) in the last 7 days.') : ui.q ? 'No tickets match that search.' : ui.closed === 'none' ? 'No open tickets. Switch to + 24h or All to see finished ones.' : 'Nothing open or closed in the last 24 hours. Switch to All, or search.'); c.colSpan = cols.length; r.append(c); tbody.append(r); }
