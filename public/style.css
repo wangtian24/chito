@@ -860,6 +860,7 @@ body:not(.has-session) .topbar { display: none; }
 .bl-table .c-key a { color: var(--color-ink-2); text-decoration: none; }
 .bl-table .c-key a:hover { color: var(--color-accent-text); }
 .bl-table td.c-title { min-width: 260px; }
+.bl-table.bl-fin td.c-title { width: 100%; }   /* Finished list: the title takes the slack */
 .bl-tt { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2xs) 6px; font: 500 13.5px/1.35 var(--font-display); color: var(--color-ink); }
 .bl-done .bl-tt, .bl-canceled .bl-tt { color: var(--color-muted); }
 .bl-canceled .bl-tt > span:not(.bl-tree):not(.bl-label) { text-decoration: line-through; }
@@ -1303,7 +1304,8 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 @media (prefers-reduced-motion: reduce) { .bl-sec > summary::before { transition: none; } }
 
 /* A finished ticket's result, one line under its title in the table */
-.bl-res { display: flex; align-items: baseline; gap: 4px 8px; margin-top: 3px; min-width: 0; font-size: 12px; line-height: 1.4; color: var(--color-muted); }
+/* Its own line, sized to the cell: width 0 keeps the long text from widening the table. */
+.bl-res { display: flex; align-items: baseline; gap: 4px 8px; margin-top: 3px; flex: 1 0 100%; width: 0; min-width: 0; font-size: 12px; line-height: 1.4; color: var(--color-muted); }
 .bl-res-link { flex: none; color: var(--color-accent); text-decoration: underline; text-decoration-color: color-mix(in oklch, var(--color-accent) 40%, transparent); text-underline-offset: 2px; }
 .bl-res-link:hover { text-decoration-color: currentColor; }
 .bl-res-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
