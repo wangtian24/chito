@@ -1230,7 +1230,22 @@ function ticketActions(t) {
   return box;
 }
 
-// ---- the handoff packet: what was done, how to see it, what to test, what is asked ----
+// A list of steps the reader ticks off as they go; ticks stay in this browser.
+function tickList(key, items, render) {
+  const ticked = store.get(key, []);
+  const ul = el('ul', 'bl-ho-tests');
+  items.forEach((x, i) => {
+    const li = el('li');
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = ticked.includes(i); cb.id = `${key}-${i}`.replace(/[^\w-]/g, '-');
+    cb.addEventListener('change', () => { const now = store.get(key, []).filter(v => v !== i); if (cb.checked) now.push(i); store.set(key, now); li.classList.toggle('ticked', cb.checked); });
+    const lab = el('label'); lab.htmlFor = cb.id; lab.append(...render(x).filter(Boolean));
+    li.append(cb, lab); if (cb.checked) li.classList.add('ticked');
+    ul.append(li);
+  });
+  return ul;
+}
+
+// ---- the handoff packet: a short doc shaped to the ticket, plus what is asked ----
 function handoffView(t) {
   const h = t.meta?.handoff;
   if (!h || (!h.packet && h.phase !== 'preparing')) return null;
@@ -1253,6 +1268,8 @@ function handoffView(t) {
     for (const x0 of pk.links) { const x = typeof x0 === 'string' ? { url: (x0.match(/https?:\/\/[^\s)]+/) || [])[0], label: x0 } : x0; if (!x.url) continue; const a = el('a', null, x.label || x.url); a.href = x.url; a.target = '_blank'; a.rel = 'noopener'; l.append(a); }
     box.append(l);
   }
+  if (pk.body) box.append(Object.assign(md(pk.body), { className: 'md bl-ho-body' }));
+  if (pk.checklist?.length) box.append(el('h4', 'bl-d-h', pk.checklist_title || 'Checklist'), tickList(`handoff.${t.key}.check`, pk.checklist.map(x => typeof x === 'string' ? { item: x } : x), x => [el('span', 'bl-ho-step', x.item), x.detail ? el('span', 'bl-ho-detail', x.detail) : null]));
   if (pk.done?.length) {
     box.append(el('h4', 'bl-d-h', "What's done and new"));
     const ol = el('ol', 'bl-ho-done');
@@ -1285,10 +1302,39 @@ function handoffView(t) {
     box.append(el('h4', 'bl-d-h', 'Asked of you'));
     const ol = el('ol', 'bl-ho-questions'); for (const q of pk.questions) ol.append(el('li', null, q)); box.append(ol);
   }
+  const asks = (pk.asks || []).map(a => typeof a === 'string' ? { q: a } : a);
   const sess = answerSession(bl.byKey.get(t.key) || t);
+  if (asks.length && !(sess && t.state !== 'done')) {
+    box.append(el('h4', 'bl-d-h', 'Asked of you'));
+    const ol = el('ol', 'bl-ho-questions'); for (const a of asks) ol.append(el('li', null, a.q)); box.append(ol);
+  }
   if (sess && t.state !== 'done') {
     const form = el('form', 'bl-ho-reply');
-    const ta = el('textarea'); ta.rows = 4; ta.placeholder = 'Your feedback, answers or "go". It goes to the handoff session, which files fixes and closes the ticket.';
+    const answers = asks.map(() => ({ v: '' }));
+    if (asks.length) {
+      form.append(el('h4', 'bl-d-h', 'Asked of you'));
+      asks.forEach((a, i) => {
+        const f = el('fieldset', 'bl-ask');
+        f.append(el('legend', null, `${i + 1}. ${a.q}`));
+        if (a.note) f.append(el('div', 'bl-ask-note', a.note));
+        if (a.options?.length) {
+          const g = el('div', 'bl-ask-opts'); g.setAttribute('role', 'radiogroup'); g.setAttribute('aria-label', a.q);
+          a.options.forEach(o => {
+            const b = el('button', 'bl-ask-opt', o); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', 'false');
+            b.addEventListener('click', () => { const on = answers[i].v !== o; answers[i].v = on ? o : ''; for (const x of g.children) x.setAttribute('aria-checked', String(on && x === b)); });
+            g.append(b);
+          });
+          f.append(g);
+        } else {
+          const inp = el('input', 'bl-ask-text'); inp.type = 'text'; inp.placeholder = 'Your answer';
+          inp.addEventListener('input', () => { answers[i].v = inp.value.trim(); });
+          inp.addEventListener('keydown', e => e.stopPropagation());
+          f.append(inp);
+        }
+        form.append(f);
+      });
+    }
+    const ta = el('textarea'); ta.rows = 4; ta.placeholder = asks.length ? 'Anything else, in your own words (optional when the choices above say it all).' : 'Your feedback, answers or "go". It goes to the handoff session, which files fixes and closes the ticket.';
     const row = el('div', 'bl-ho-reply-row');
     const send = el('button', 'btn primary', 'Send to the session'); send.type = 'submit';
     const term = el('button', 'btn', 'Answer in terminal'); term.type = 'button';
@@ -1297,13 +1343,15 @@ function handoffView(t) {
     form.append(ta, row);
     form.addEventListener('submit', async e => {
       e.preventDefault();
-      const text = ta.value.trim(); if (!text) return;
+      const picked = asks.map((a, i) => answers[i].v ? `${i + 1}. ${a.q} -> ${answers[i].v}` : null).filter(Boolean);
+      const free = ta.value.trim();
+      const text = [...picked, free].filter(Boolean).join('\n'); if (!text) return;
       send.disabled = true;
       try {
         const r = await fetch(`/api/sessions/${sess.id}/send`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-chito': '1' }, body: JSON.stringify({ text: `[${t.key} handoff feedback] ${text}` }) });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || r.statusText);
-        ta.value = '';
+        ta.value = ''; for (const a of answers) a.v = '';
         ctx.toast(j.action === 'typed' ? 'Typed into the live session' : 'Resumed the session in your terminal with your message');
         act('ticket-handoff', t.key, 'discussing');
       } catch (err) { ctx.toast(`Not sent: ${err.message}`); }
