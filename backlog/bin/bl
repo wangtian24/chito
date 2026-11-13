@@ -901,18 +901,22 @@ Now:
 2. Make it easy to see: work out exactly how the human checks the work (a local preview URL and the command that starts
    it, a PR link, a screenshot, a file to open). If the spec asks for a local preview and it is safe and cheap, start it
    and leave it running; otherwise give the exact command.
-3. Compile the handoff packet and record it. It is what the human reads on the board, so every field is required:
-   - summary: what this is and what they decide, one or two sentences
-   - see: {{"url": ..., "how": ...}}: exactly how to see it (the preview URL and the command that starts it)
-   - links: PRs, the design doc, screenshots, each as {{"label": ..., "url": ...}}
-   - done: EVERY ticket and PR delivered (workers' included), each as {{"title": ..., "ref": "#PR", "what": "what the human will see"}}.
-     If nothing is built yet, say so in one item.
-   - tests: concrete steps, each as {{"step": ..., "good": ..., "bad": ...}}
-   - gaps: known gaps or limitations (may be empty)
-   - questions: 1 to 3, the last one the decision (go / no-go, pick A / B), saying what each answer triggers
+3. Compile the handoff packet and record it. It is a short document the human reads on the board, shaped to THIS
+   ticket: a decision, a review of built work, or an errand only they can do (a form, an account, a call) all read
+   differently, so pick the sections that fit and name them yourself. Fields:
+   - summary (required): what this is and what they decide or do, one or two sentences
+   - body (required): Markdown. Use the headings this task needs, for example "How to see it", "What's built",
+     "Steps", "What to check", "Known gaps", "Background". No empty or forced sections; skip what doesn't apply.
+   - see (optional): {{"url": ..., "how": ...}} when there is something to open (a preview, a page)
+   - links (optional): [{{"label": ..., "url": ...}}]: PRs, docs, the official page
+   - checklist (optional): [{{"item": ..., "detail": ...}}] steps they can tick off as they go, titled by
+     checklist_title (for example "Steps", "Before you merge"; default "Checklist")
+   - asks (required, 1 to 3): what you need from them, the last one the decision. Each is
+     {{"q": "...", "options": ["A: ...", "B: ..."], "note": "what each answer triggers"}}, or {{"q": "...", "kind": "text"}} for a
+     free answer (a name, a number). The board shows options as choices next to a free-text box.
    Record it with a heredoc: `bl handoff {key} --packet - <<'EOF'` + the JSON + `EOF`. That moves the ticket to
    "awaiting" and notifies the human.
-4. Your final message repeats the packet in readable form (preview, done and new, what to test, questions).
+4. Your final message repeats the packet in readable form (the summary, the body and the asks).
 
 Do not mark the ticket done and do not change other tickets in this first turn.
 
@@ -926,7 +930,11 @@ When the human answers (in this session, later):
   If fixes were filed first, leave {key} open; it comes back to them when the fixes land."""
 
 HANDOFF_FIELDS = {
-    "summary": "one or two sentences: what this is and what you decide",
+    "summary": "one or two sentences: what this is and what you decide or do",
+    "body": "Markdown shaped to this ticket, with the headings it needs (How to see it, Steps, What's built, Known gaps ...)",
+    "checklist": "optional: [{\"item\": \"Apply on irs.gov/ein\", \"detail\": \"...\"}] steps to tick off; checklist_title names them",
+    "asks": "[{\"q\": \"Trade name?\", \"options\": [\"Mapcouch\", \"Leave blank\"], \"note\": \"...\"}, {\"q\": \"...\", \"kind\": \"text\"}]: 1 to 3, the last the decision",
+    "legacy (still accepted)": "done, tests, gaps, questions",
     "see": "how to see it: {\"url\": \"http://localhost:4810\", \"how\": \"the command that starts it, sign-in notes\"}",
     "links": "[{\"label\": \"PR #213\", \"url\": \"https://...\"}] (PRs, design doc, screenshots)",
     "done": "[{\"title\": \"Brush levels\", \"ref\": \"#194\", \"what\": \"what the human will see\"}]: every ticket and PR delivered, workers' too",
@@ -958,6 +966,13 @@ def normalize_packet(pk):
     out["tests"] = [_obj(x, "step") for x in pk.get("tests") or []]
     out["gaps"] = [str(x) for x in pk.get("gaps") or []]
     out["questions"] = [str(x) for x in pk.get("questions") or []]
+    out["checklist"] = [_obj(x, "item") for x in pk.get("checklist") or []]
+    asks = []
+    for x in pk.get("asks") or []:
+        a = _obj(x, "q")
+        a["options"] = [str(o) for o in a.get("options") or []]
+        asks.append(a)
+    out["asks"] = asks
     return out
 
 def handoff_of(t):
@@ -999,7 +1014,10 @@ def cmd_handoff(a):
             except Exception as e:
                 die(f"packet is not JSON: {e}")
             pk = normalize_packet(pk) if isinstance(pk, dict) else pk
-            missing = [k for k in ("summary", "see", "done", "tests", "questions") if not pk.get(k)]
+            if pk.get("body") or pk.get("asks"):   # the flexible packet
+                missing = [k for k in ("summary", "body", "asks") if not pk.get(k)]
+            else:                                   # the older fixed packet
+                missing = [k for k in ("summary", "see", "done", "tests", "questions") if not pk.get(k)]
             if missing:
                 die("packet is missing " + ", ".join(missing) + ". Fields:\n" + "\n".join(f"  {k}: {v}" for k, v in HANDOFF_FIELDS.items()))
             sid = session_id()

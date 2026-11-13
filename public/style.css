@@ -1256,3 +1256,17 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-lane-namerow { position: relative; }
 .bl-lane-namerow .bl-chev { position: absolute; left: -28px; top: -2px; margin: 0; }
 .bl-compact-head .bl-lane-namerow .bl-chev { top: 50%; transform: translateY(-50%); }
+
+/* Flexible handoff: a Markdown body, and asks answered with choices beside free text */
+.bl-ho-body { margin: var(--space-sm) 0; font-size: 13.5px; }
+.bl-ho-body h1, .bl-ho-body h2, .bl-ho-body h3, .bl-ho-body h4 { font: 600 13.5px var(--font-display); margin: var(--space-md) 0 var(--space-xs); }
+.bl-ask { border: 0; margin: 0 0 var(--space-md); padding: 0; min-width: 0; }
+.bl-ask legend { font: 600 13px/1.4 var(--font-display); color: var(--color-ink); padding: 0; margin-bottom: var(--space-xs); }
+.bl-ask-note { font: 400 12px/1.4 var(--font-body); color: var(--color-muted); margin-bottom: var(--space-xs); }
+.bl-ask-opts { display: flex; flex-direction: column; gap: var(--space-xs); }
+.bl-ask-opt { text-align: left; padding: 6px 10px; border: 1px solid var(--color-rule-2); border-radius: var(--radius-ctl); background: var(--color-sheet); color: var(--color-ink); font: 400 13px/1.4 var(--font-body); cursor: pointer; }
+.bl-ask-opt:hover { border-color: var(--color-accent); }
+.bl-ask-opt[aria-checked="true"] { border-color: var(--color-accent); background: var(--color-accent-wash); color: var(--color-accent-text); font-weight: 600; }
+.bl-ask-opt:focus-visible, .bl-ask-text:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.bl-ask-text { width: 100%; box-sizing: border-box; padding: 6px 10px; border: 1px solid var(--color-rule-2); border-radius: var(--radius-ctl); background: var(--color-sheet); color: var(--color-ink); font: 400 13px var(--font-body); }
+.bl-ho-detail { display: block; font: 400 12.5px/1.45 var(--font-body); color: var(--color-muted); }
