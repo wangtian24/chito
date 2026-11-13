@@ -1074,7 +1074,8 @@ body:not(.has-session) .topbar { display: none; }
 /* graph v2: edges over translucent nodes, expand modal */
 .bl-graph > svg { position: absolute; inset: 0 auto auto 0; pointer-events: none; z-index: 0; }
 .bl-nodes { position: relative; }
-.bl-node { background: var(--color-sheet); padding: 7px 10px; z-index: 1; }
+.bl-node { background: color-mix(in oklch, var(--color-sheet) 72%, transparent); padding: 7px 10px; z-index: 1; }
+.bl-node:hover, .bl-node.sel { background: color-mix(in oklch, var(--color-sheet) 92%, transparent); }
 .bl-graph-box { cursor: zoom-in; }
 .bl-graph-box .bl-node { cursor: pointer; }
 .bl-modal-card { width: 96vw; }
