@@ -680,6 +680,7 @@ function renderLanes(root) {
       const lane2 = el('div', 'bl-lane'); 
       const row = el('div', 'bl-lane-compact');
       const head = el('div', 'bl-compact-head');
+      name.title = `${p.key} ${p.name}`;
       head.append(nameRow);
       const b2 = el('div', 'bl-lane-badges'); b2.append(projState(p), execBadge(p)); head.append(b2);
       const counts = el('div', 'bl-compact-counts');
