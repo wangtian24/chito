@@ -1276,3 +1276,8 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-lane-side { padding-top: var(--space-lg); padding-bottom: var(--space-lg); }
 .bl-col { padding-top: var(--space-lg); padding-bottom: var(--space-lg); }
 .bl-lane-compact { padding: var(--space-md) 0; }
+
+/* Evergreen on the project page: a labelled checkbox, not a link-styled chip */
+.bl-check { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: 1px solid var(--color-rule-sheet); border-radius: var(--radius-ctl); font-size: 12.5px; color: var(--color-ink); cursor: pointer; }
+.bl-check input { margin: 0; accent-color: var(--color-accent); }
+.bl-check .bl-ever { display: inline-flex; }
