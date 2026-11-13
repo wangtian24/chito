@@ -27,7 +27,7 @@ const SESSION_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><pa
 
 let ctx = null;          // { openSession, toast, fmtRel, fmtDateTime }
 const bl = { data: null, byKey: new Map(), blockers: new Map(), dependents: new Map(), depth: new Map(), order: new Map(), error: null, timer: null, ticket: null, ticketKey: null };
-const ui = { showDone: store.get('blShowDone', false), q: '', sort: store.get('blSort', { col: 'order', dir: 1 }), milestone: null,
+const ui = { closed: store.get('blClosed', store.get('blShowDone', false) ? 'recent' : 'none'), q: '', sort: store.get('blSort', { col: 'order', dir: 1 }), milestone: null,
   collapsed: new Set(store.get('blCollapsed', [])) };
 const saveCollapsed = () => store.set('blCollapsed', [...ui.collapsed]);
 ui.refresh = store.get('blRefresh', 60);
@@ -192,15 +192,29 @@ function controls(withSearch = true) {
     row.append(box);
   }
   const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup');
-  for (const [v, label] of [[false, 'Open'], [true, 'All']]) {
-    const b = el('button', null, label); b.setAttribute('aria-checked', String(ui.showDone === v));
-    b.addEventListener('click', () => { ui.showDone = v; store.set('blShowDone', v); renderBacklog(); });
+  for (const [v, label, tip] of [['none', 'Open', 'Open tickets only'], ['recent', '+ 24h', 'Open, plus tickets closed in the last 24 hours'], ['all', 'All', 'Every ticket, however old']]) {
+    const b = el('button', null, label); b.setAttribute('aria-checked', String(ui.closed === v)); b.title = tip;
+    b.addEventListener('click', () => { ui.closed = v; store.set('blClosed', v); renderBacklog(); });
     seg.append(b);
   }
   const cap = el('span', 'bl-cap', 'Tickets'); row.append(cap, seg);
   return row;
 }
 
+// Closed tickets: shown by the Open / + 24h / All toggle; a search also digs up older ones (the newest few).
+const DAY_MS = 864e5, SEARCH_OLD_CAP = 30;
+const closedAt = t => new Date(t.finished || t.updated || 0).getTime();
+const closedRecently = t => Date.now() - closedAt(t) < DAY_MS;
+const showsClosed = () => ui.closed !== 'none' || !!ui.q.trim();
+function visibleTickets(list) {
+  const out = [], old = [];
+  for (const t of list) {
+    if (!FINAL.has(t.state) || ui.closed === 'all' || (ui.closed === 'recent' && closedRecently(t))) out.push(t);
+    else if (ui.q.trim() && matches(t)) old.push(t);
+  }
+  old.sort((a, b) => closedAt(b) - closedAt(a));
+  return out.concat(old.slice(0, SEARCH_OLD_CAP));
+}
 const matches = t => {
   if (!ui.q.trim()) return true;
   const hay = `${t.key} ${t.title} ${(t.labels || []).join(' ')} ${t.assignee || ''} ${t.claimed_by || ''}`.toLowerCase();
@@ -299,10 +313,22 @@ const MODES = {
   auto: { short: 'DSO', kind: 'Orchestrated', title: 'Daemon session orchestrator: the daemon starts an orchestrator session whenever tickets are ready, and again when more arrive' },
   daemon: { short: 'DQ', kind: 'Queue', title: 'Daemon queue: one Claude per ready ticket, no coordinating session' },
 };
+const CEDAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l4.5 6h-2.5l4 5h-2.5l4 5.5H4.5l4-5.5H6l4-5H7.5z" fill="currentColor"/><path d="M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+function evergreenIcon() {
+  const s = el('span', 'bl-ever'); s.innerHTML = CEDAR; s.title = 'Evergreen: this project never finishes; new tickets keep flowing'; s.setAttribute('role', 'img'); s.setAttribute('aria-label', 'Evergreen');
+  return s;
+}
+// Lane header chips: the status only when it is news (not Executing), the mode once, evergreen as an icon.
+function laneBadges(p) {
+  const out = [];
+  if (p.status !== 'executing' || isOrphan(p)) out.push(projState(p));
+  out.push(execBadge(p));
+  if (p.evergreen) out.push(evergreenIcon());
+  return out;
+}
 function execBadge(p) {
   const m = MODES[p.executor] || MODES.session;
-  const s = el('span', `bl-exec ex-${p.executor === 'daemon' ? 'queue' : 'orch'}`);
-  s.append(el('b', null, m.kind), el('span', 'bl-exec-mode', m.short));
+  const s = el('span', 'bl-mode', m.short);
   s.title = m.title;
   return s;
 }
@@ -330,16 +356,17 @@ function lifecycleButtons(p, compact) {
 function daemonBar() {
   const d = bl.data.daemon;
   const bar = el('div', 'bl-daemon');
-  const inFlight = bl.data.tickets.filter(t => t.state === 'in_progress').length;
   const cap = setting(null, 'global_max_parallel', 6);
   const dot = el('span', 'live-dot' + (d?.alive && d.enabled ? ' busy' : ''));
   const label = !d || !d.alive ? 'Daemon not running' : d.enabled ? 'Daemon running' : 'Daemon paused';
   const t = el('b', null, label);
   const facts = el('span', 'bl-daemon-facts');
   const workers = bl.data.tickets.filter(x => x.state === 'in_progress' && (x.claimed_by || '').startsWith('daemon:')).length;
-  const hb = d?.heartbeat ? el('span', null, `heartbeat ${ctx.fmtRel(d.heartbeat)} ago`) : null;
+  const rel = d?.heartbeat ? ctx.fmtRel(d.heartbeat) : '';
+  const hb = d?.heartbeat ? el('span', null, rel === 'now' ? 'heartbeat just now' : `heartbeat ${rel} ago`) : null;
   if (hb) hb.title = ctx.fmtDateTime(d.heartbeat);
-  facts.append(factRow('', `${workers} working`, `${d?.runsToday ?? 0} runs today`, `${inFlight} of ${cap} in flight`, hb));
+  const runs = d?.runsToday ?? 0;
+  facts.append(factRow('', workers ? `${workers} queue worker${workers === 1 ? '' : 's'}` : null, `${runs} run${runs === 1 ? '' : 's'} today`, `up to ${cap} at once`, hb));
   bar.append(dot, t, facts);
   if (d?.quota?.until) {
     const q = el('div', 'bl-quota');
@@ -376,10 +403,10 @@ function inFlight(tks) {
     const since = t.spawn?.at || t.started;
     const sess = workerSession(t);
     r.append(stateIcon('in_progress'), el('span', 'num bl-flight-key', t.key), el('span', 'bl-flight-title', t.title),
-      el('span', `bl-exec ${cls}`, ex), el('span', 'bl-flight-model', t.spawn?.model || ''),
+      el('span', 'bl-flight-model', t.spawn?.model || ''),
       el('span', 'num bl-flight-since', since ? ctx.fmtRel(since) : ''));
     r.lastChild.title = since ? `Started ${ctx.fmtDateTime(since)}${t.attempts > 1 ? ` · attempt ${t.attempts}` : ''}` : '';
-    r.title = `${t.claimed_by || ''}`;
+    r.title = `${ex}${t.claimed_by ? ` (${t.claimed_by})` : ''}`;
     if (sess) { const a = sessionLink(sess, 'Session'); a.classList.add('bl-flight-sess'); r.append(a); }
     else r.append(el('span', 'bl-flight-sess none', 'no session yet'));
     wrap.append(r);
@@ -407,8 +434,7 @@ function execLine(p, compact) {
       row.append(el('span', 'live-dot busy'), el('span', null, 'Orchestrator running'), orchLink(o, compact));
       box.append(row);
     } else {
-      box.append(el('span', 'bl-exec ex-orch', 'DSO'));
-      box.append(el('span', null, !d?.alive ? 'daemon not running' : !d.enabled ? 'daemon paused' : d.quota?.until ? 'waiting for the usage limit to reset' : 'idle; the daemon starts a session when tickets are ready'));
+      box.append(el('span', null, !d?.alive ? 'Daemon not running' : !d.enabled ? 'Daemon paused' : d.quota?.until ? 'Waiting for the usage limit to reset' : compact ? 'Idle' : 'Idle; the daemon starts an orchestrator when tickets are ready'));
       if (!d?.alive || !d?.enabled || d?.quota?.until) box.classList.add('warn');
       const last = (p.orchSessions || [])[0];
       if (last) box.append(orchLink(last, compact, true));
@@ -418,8 +444,7 @@ function execLine(p, compact) {
   if (p.executor === 'daemon') {
     const d = bl.data.daemon;
     const n = (ex.workers || []).length;
-    box.append(el('span', 'bl-exec ex-queue', 'DQ'));
-    box.append(el('span', null, !d?.alive ? 'daemon not running' : !d.enabled ? 'daemon paused' : n ? `${n} working` : 'idle, waiting for tickets'));
+    box.append(el('span', null, !d?.alive ? 'Daemon not running' : !d.enabled ? 'Daemon paused' : n ? `${n} working` : 'Idle'));
     if (!d?.alive || !d?.enabled) box.classList.add('warn');
     return box;
   }
@@ -509,7 +534,7 @@ function showcaseItems(m, big) {
   return box;
 }
 function roadmap(p) {
-  const ms = (bl.data.milestones || []).filter(m => m.project === p.key && (ui.showDone || m.status !== 'canceled'));
+  const ms = (bl.data.milestones || []).filter(m => m.project === p.key && (ui.closed === 'all' || m.status !== 'canceled'));
   if (!ms.length) return null;
   const wrap = el('div', 'bl-roadmap');
   for (const m of ms) {
@@ -619,17 +644,18 @@ function card(t) {
   const c = el('a', `bl-card bl-${t.state}${isBlocked(t) ? ' blocked' : ''}${needsYou(t) ? ' needs-you' : ''}`);
   linkTo(c, ticketPath(t));
   const top = el('div', 'bl-card-top');
-  top.append(stateIcon(t.state), el('span', 'bl-key num', t.key));
+  const kk = el('span', 'bl-key num', t.key.slice(t.project.length + 1)); kk.title = t.key;
+  top.append(stateIcon(t.state), kk);
   if (t.priority <= 1) top.append(el('span', `bl-prio p${t.priority}`, t.priority === 0 ? 'Urgent' : 'High'));
   c.append(top, el('div', 'bl-card-title', t.title));
   const meta = el('div', 'bl-card-meta');
   const bs = (bl.blockers.get(t.key) || []).filter(b => !FINAL.has(bl.byKey.get(b)?.state ?? 'done'));
   if (t.state === 'todo') {
-    if (bs.length) meta.append(el('span', 'wait', `Waits on ${bs.join(', ')}`));
+    if (bs.length) meta.append(el('span', 'wait', `Waits on ${bs.map(b => b.startsWith(t.project + '-') ? b.slice(t.project.length + 1) : b).join(', ')}`));
     else if (t.assignee === 'human') meta.append(el('span', 'bad', 'Needs you'));
     else meta.append(el('span', 'ok', 'Ready'));
   }
-  if (t.state === 'in_progress' && t.claimed_by) meta.append(el('span', null, t.claimed_by.startsWith('orch:') ? `worker, try ${t.attempts}` : t.claimed_by));
+  if (t.state === 'in_progress' && t.attempts > 1) meta.append(el('span', null, `try ${t.attempts}`));
   if (t.state === 'failed') meta.append(el('span', 'bad', `${t.attempts} attempt${t.attempts === 1 ? '' : 's'}`));
   if (t.state === 'in_review') meta.append(el('span', 'wait', 'Waiting for approval'));
   if (t.assignee === 'human' && t.state !== 'todo') meta.append(el('span', null, 'human'));
@@ -656,23 +682,23 @@ function renderLanes(root) {
   ctl.insertBefore(tog, ctl.querySelector('.bl-cap'));
   const ny = needsYouPanel(all); if (ny) root.append(ny);
   root.append(el('h2', 'bl-h2', 'In flight'), inFlight(all), el('h2', 'bl-h2', 'Projects'), ctl);
-  const cols = LANE_COLS.filter(st => (ui.showDone || st !== 'done') && (st === 'todo' || st === 'in_progress' || all.some(t => t.state === st)));
+  const cols = LANE_COLS.filter(st => (showsClosed() || st !== 'done') && (st === 'todo' || st === 'in_progress' || all.some(t => t.state === st)));
   const grid = el('div', 'bl-lanes');
   grid.style.setProperty('--cols', String(cols.length));
   const hdr = el('div', 'bl-lane-head');
   hdr.append(el('div', 'bl-lane-corner'));
   for (const st of cols) {
     const h = el('div', 'bl-col-head'); h.append(stateIcon(st), el('span', null, LABEL[st]));
-    const n = all.filter(t => t.state === st && matches(t)).length; if (n) h.append(el('span', 'num', String(n)));
+    const n = visibleTickets(all).filter(t => t.state === st && matches(t)).length; if (n) h.append(el('span', 'num', String(n)));
     hdr.append(h);
   }
   if (!(visible.length && visible.every(k => ui.collapsed.has(k)))) grid.append(hdr);
   if (!projects.length) grid.append(el('div', 'prs-empty', 'No projects yet. Create one with bl project add.'));
   for (const p of projects) {
     const tks = all.filter(t => t.project === p.key);
-    const shown = tks.filter(matches);
+    const shown = visibleTickets(tks).filter(matches);
     if (ui.q.trim() && !shown.length) continue;
-    if (!ui.showDone && tks.length && tks.every(t => FINAL.has(t.state))) continue;
+    if (tks.length && !visibleTickets(tks).length) continue;
     const lane = el('div', 'bl-lane');
     const side = el('div', 'bl-lane-side');
     const collapsed = ui.collapsed.has(p.key);
@@ -689,7 +715,7 @@ function renderLanes(root) {
       const head = el('div', 'bl-compact-head');
       name.title = `${p.key} ${p.name}`;
       head.append(nameRow);
-      const b2 = el('div', 'bl-lane-badges'); b2.append(projState(p), execBadge(p)); head.append(b2);
+      const b2 = el('div', 'bl-lane-badges'); b2.append(...laneBadges(p)); head.append(b2);
       const counts = el('div', 'bl-compact-counts');
       for (const st of LANE_COLS) { const n = shown.filter(t => t.state === st).length; if (n) { const x = statePill(st); x.append(el('span', 'num', String(n))); counts.append(x); } }
       const you = tks.filter(needsYou).length; if (you) counts.append(el('span', 'bl-compact-you', `${you} need${you === 1 ? 's' : ''} you`));
@@ -713,8 +739,7 @@ function renderLanes(root) {
       grid.append(lane2);
       continue;
     }
-    const badges = el('div', 'bl-lane-badges'); badges.append(projState(p), execBadge(p));
-    if (p.evergreen) badges.append(el('span', 'bl-exec ex-ever', 'Evergreen'));
+    const badges = el('div', 'bl-lane-badges'); badges.append(...laneBadges(p));
     side.append(nameRow, badges, progress(tks));
     const nm = nextMilestone(p);
     if (nm) {
@@ -728,7 +753,6 @@ function renderLanes(root) {
     side.append(lifecycleButtons(p, true));
     const facts = el('div', 'bl-lane-facts');
     const you = tks.filter(needsYou).length; if (you) facts.append(el('span', 'bad', `${you} need${you === 1 ? 's' : ''} you`));
-    facts.append(el('span', null, `review ${setting(p.key, 'review', 'ask')}`));
     side.append(facts);
     lane.append(side);
     for (const st of cols) {
@@ -789,12 +813,12 @@ function renderProject(root, p) {
   const msOk = t => !ui.milestone || (ui.milestone === '-' ? !t.milestone && !t.meta?.showcase_for : t.milestone === ui.milestone);
   const th = el('h2', 'bl-h2', 'Tickets');
   if (ui.milestone) { const x = el('button', 'chip on', `${ui.milestone === '-' ? 'No milestone' : ui.milestone} ×`); x.addEventListener('click', () => { ui.milestone = null; renderBacklog(); }); th.append(' ', x); }
-  root.append(th, controls(), table(tks.filter(t => (ui.showDone || !FINAL.has(t.state)) && matches(t) && msOk(t))));
+  root.append(th, controls(), table(visibleTickets(tks).filter(t => matches(t) && msOk(t))));
 }
 
 function graph(tks, big = false) {
   const wrap = el('div', 'bl-graph' + (big ? ' big' : ''));
-  const shown = tks.filter(t => t.state !== 'canceled' || ui.showDone);
+  const shown = tks.filter(t => t.state !== 'canceled' || ui.closed === 'all');
   if (!shown.length) { wrap.append(el('div', 'prs-empty', 'No tickets.')); return wrap; }
   const W = big ? 250 : 200, H = big ? 86 : 58, GX = big ? 80 : 64, GY = big ? 26 : 20, PAD = 12;
   const cols = new Map();
@@ -1006,7 +1030,7 @@ function table(tks) {
     const up = td('c-updated', t.updated ? ctx.fmtRel(t.updated) : ''); up.title = `Updated ${ctx.fmtDateTime(t.updated)}`;
     tbody.append(r);
   }
-  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', ui.q ? 'No tickets match that search.' : 'No open tickets. Switch to All to see finished ones.'); c.colSpan = cols.length; r.append(c); tbody.append(r); }
+  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', ui.q ? 'No tickets match that search.' : ui.closed === 'none' ? 'No open tickets. Switch to + 24h or All to see finished ones.' : 'Nothing open or closed in the last 24 hours. Switch to All, or search.'); c.colSpan = cols.length; r.append(c); tbody.append(r); }
   tbl.append(tbody); wrap.append(tbl);
   return wrap;
 }
