@@ -27,7 +27,7 @@ const SESSION_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><pa
 
 let ctx = null;          // { openSession, toast, fmtRel, fmtDateTime }
 const bl = { data: null, byKey: new Map(), blockers: new Map(), dependents: new Map(), depth: new Map(), order: new Map(), error: null, timer: null, ticket: null, ticketKey: null };
-const ui = { closed: store.get('blClosed', store.get('blShowDone', false) ? 'recent' : 'none'), q: '', sort: store.get('blSort', { col: 'order', dir: 1 }), milestone: null,
+const ui = { closed: store.get('blClosed2', 'recent'), q: '', sort: store.get('blSort', { col: 'order', dir: 1 }), milestone: null,
   collapsed: new Set(store.get('blCollapsed', [])) };
 const saveCollapsed = () => store.set('blCollapsed', [...ui.collapsed]);
 ui.refresh = store.get('blRefresh', 60);
@@ -194,7 +194,7 @@ function controls(withSearch = true) {
   const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup');
   for (const [v, label, tip] of [['none', 'Open', 'Open tickets only'], ['recent', '+ 24h', 'Open, plus tickets closed in the last 24 hours'], ['all', 'All', 'Every ticket, however old']]) {
     const b = el('button', null, label); b.setAttribute('aria-checked', String(ui.closed === v)); b.title = tip;
-    b.addEventListener('click', () => { ui.closed = v; store.set('blClosed', v); renderBacklog(); });
+    b.addEventListener('click', () => { ui.closed = v; store.set('blClosed2', v); renderBacklog(); });
     seg.append(b);
   }
   const cap = el('span', 'bl-cap', 'Tickets'); row.append(cap, seg);
@@ -529,6 +529,36 @@ function usageStat(label, u) {
   s.append(el('span', null, label), el('b', 'num', fmtCost(u)), factRow('num', `${u.turns} turns`, `${fmtTok(u.tokens)} tokens`));
   s.title = usageTitle(u);
   return s;
+}
+
+// ---- results ----
+// Under a finished ticket's title: links to what it made (arti docs, other pages; PRs have their own column) and one line of what it did.
+const URL_RE = /https?:\/\/[^\s)\]>,'"]+/g;
+const BOILER_RE = /^(pr \d+ merged|merged|squash|db:|not deployed|deployed|pr #|pr https|arti:|local main|live |where the code is)/i;
+function resultLine(t) {
+  if (t.state !== 'done' || !t.result) return null;
+  const urls = [...new Set((t.result.match(URL_RE) || []).map(u => u.replace(/[.;:]+$/, '')))];
+  const links = [];
+  for (const u of urls) {
+    if (/github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(u)) continue;      // PRs come from t.prs below
+    let label;
+    try { const x = new URL(u); label = /arti\./.test(x.host) ? `doc: ${x.pathname.split('/')[2] || x.host}` : x.host.replace(/^www\./, ''); } catch { continue; }
+    if (/^localhost|^127\./.test(label)) continue;
+    const a = el('a', 'bl-res-link', label); a.href = u; a.target = '_blank'; a.rel = 'noopener'; a.title = u;
+    a.addEventListener('click', e => e.stopPropagation());
+    links.push(a);
+    if (links.length >= 2) break;
+  }
+  const text = t.result.replace(URL_RE, '').replace(/[*_`#>]/g, '').replace(/\(\s*\)/g, '').replace(/\s+/g, ' ').trim();
+  const sentences = text.split(/(?<=[.!?])\s+|\s\|\s/).map(x => x.trim()).filter(Boolean);
+  let one = sentences.find(x => !BOILER_RE.test(x) && x.length > 12) || '';
+  if (one.length > 140) one = one.slice(0, 137).replace(/\s\S*$/, '') + '…';
+  if (!links.length && !one) return null;
+  const row = el('div', 'bl-res');
+  row.append(...links);
+  if (one) row.append(el('span', 'bl-res-text', one));
+  row.title = 'Result: the full text is in the details';
+  return row;
 }
 
 // ---- PRs ----
@@ -994,6 +1024,8 @@ function depChip(k, proj = bl.byKey.get(bl.ticketKey || '')?.project) {
 }
 
 function table(tks) {
+  bl.rowOrder = [];
+  const openKey = parseBacklogPath(location.pathname)?.ticket || null;   // the route, not bl.ticketKey, which the drawer sets after the table renders
   const wrap = el('div', 'bl-table-wrap');
   const tbl = el('table', 'bl-table');
   const thead = el('thead'); const tr = el('tr');
@@ -1033,8 +1065,9 @@ function table(tks) {
   // Tree gutter: each title has a node dot; lines run between dots, left of the text, so they never cross it.
   const STEP = 18, PAD = 8, DOT = 5, TEXT = 16, MAXD = 8;
   for (const t of rows) {
-    const r = el('tr', `bl-${t.state}${bl.ticketKey === t.key ? ' sel' : ''}${needsYou(t) ? ' needs-you' : ''}`);
+    const r = el('tr', `bl-${t.state}${openKey === t.key ? ' sel' : ''}${needsYou(t) ? ' needs-you' : ''}`); r.dataset.key = t.key;
     r.addEventListener('click', e => { if (e.target.closest('a')) return; go(ticketPath(t)); });
+    bl.rowOrder.push(t);
     const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); r.append(c); return c; };
     td('c-order num', String(bl.order.get(t.key) - Math.min(...tks.map(x => bl.order.get(x.key))) + 1));
     const kl = linkTo(el('a', null, t.key.slice(t.project.length + 1)), ticketPath(t)); kl.title = t.key;
@@ -1054,6 +1087,7 @@ function table(tks) {
       ttl.append(a);
     } else ttl.append(el('span', 'bl-tt-text', t.title));
     if (t.labels?.length) for (const l of t.labels) ttl.append(el('span', 'bl-label', l));
+    const rl = resultLine(t); if (rl) ttl.append(rl);
     if (t.usage) { const u = el('div', 'bl-tt-usage num'); u.append(factRow('', `${t.usage.turns} turns`, `${fmtTok(t.usage.tokens)} tokens`, fmtCost(t.usage))); u.title = usageTitle(t.usage); ttl.append(u); }
     const tcell = td('c-title', ttl);
     const g = geo.get(t.key);
@@ -1191,7 +1225,12 @@ function drawDrawer(box, t) {
     box.append(list);
   }
 
-  if (t.result) { box.append(el('h4', 'bl-d-h', t.result.startsWith('FAILED') ? 'Last failure' : 'Result')); box.append(md(t.result)); }
+  if (t.result) {
+    const failed = t.result.startsWith('FAILED');
+    const rb = el('section', `bl-d-result${failed ? ' failed' : ''}`);
+    rb.append(el('h4', 'bl-d-h', failed ? 'Last failure' : 'Result'), md(t.result));
+    box.append(rb);
+  }
   box.append(el('h4', 'bl-d-h', 'Spec'));
   box.append(t.body ? md(t.body) : el('p', 'bl-d-empty', 'No body. The title is the spec.'));
 
@@ -1217,6 +1256,20 @@ function drawDrawer(box, t) {
 // ---------- lifecycle ----------
 export function initBacklog(c) {
   ctx = c;
+  // With a ticket open, Left / Right step through the tickets in the table's order.
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.defaultPrevented) return;
+    if (e.target.closest?.('input, textarea, select, [contenteditable="true"]') || document.querySelector('.modal:not([hidden])')) return;
+    const d = $('#bl-drawer'); const order = bl.rowOrder || [];
+    if (!d || d.hidden || !bl.ticketKey || $('#backlog')?.hidden) return;
+    const i = order.findIndex(t => t.key === bl.ticketKey);
+    const next = order[i < 0 ? 0 : i + (e.key === 'ArrowRight' ? 1 : -1)];
+    if (!next) return;
+    e.preventDefault();
+    go(ticketPath(next));
+    document.querySelector(`.bl-table tr[data-key="${CSS.escape(next.key)}"]`)?.scrollIntoView({ block: 'nearest' });
+  });
   document.addEventListener('click', e => {
     const d = $('#bl-drawer');
     if (!d || d.hidden || !e.isTrusted) return;
