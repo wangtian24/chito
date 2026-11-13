@@ -1243,6 +1243,12 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input, textarea')) return;
+  // A focused control keeps Enter / Space for its own activation. Session list rows are links
+  // too, but there Enter still opens the cursor row and Space still scrolls the conversation.
+  if (e.key === 'Enter' || e.key === ' ') {
+    const ctl = e.target.closest('button, a, summary, [role=button]');
+    if (ctl && !ctl.matches('#list a.item')) return;
+  }
   const convo = $('#convo');
   const keys = {
     '/': () => { const box = state.view === 'artifacts' ? $('#bq') : state.view === 'backlog' ? ($('#blq') || $('#q')) : $('#q'); box.focus(); box.select(); },
