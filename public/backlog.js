@@ -31,6 +31,7 @@ const ui = { closed: store.get('blClosed2', 'recent'), q: '', sort: store.get('b
   collapsed: new Set(store.get('blCollapsed', [])) };
 const saveCollapsed = () => store.set('blCollapsed', [...ui.collapsed]);
 ui.refresh = store.get('blRefresh', 60);
+ui.finSort = { col: 'finished', dir: -1 };
 
 export function statePill(st) {
   const s = el('span', `bl-pill bl-${st}`);
@@ -192,7 +193,7 @@ function controls(withSearch = true) {
     row.append(box);
   }
   const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup');
-  for (const [v, label, tip] of [['none', 'Open', 'Open tickets only'], ['recent', '+ 24h', 'Open, plus tickets closed in the last 24 hours'], ['all', 'All', 'Every ticket, however old']]) {
+  for (const [v, label, tip] of [['none', 'Open', 'Open tickets only'], ['recent', '+ 24h', 'Open, plus tickets closed in the last 24 hours'], ['all', 'All', 'Every ticket, however old'], ['finished', 'Finished', 'Only tickets finished (done, canceled or failed) in the last 7 days, across all projects, newest first']]) {
     const b = el('button', null, label); b.setAttribute('aria-checked', String(ui.closed === v)); b.title = tip;
     b.addEventListener('click', () => { ui.closed = v; store.set('blClosed2', v); renderBacklog(); });
     seg.append(b);
@@ -202,11 +203,15 @@ function controls(withSearch = true) {
 }
 
 // Closed tickets: shown by the Open / + 24h / All toggle; a search also digs up older ones (the newest few).
-const DAY_MS = 864e5, SEARCH_OLD_CAP = 30;
+// Finished: only tickets that ended (done, canceled, failed) in the last 7 days, newest first.
+const DAY_MS = 864e5, WEEK_MS = 7 * DAY_MS, SEARCH_OLD_CAP = 30;
+const ENDED = new Set(['done', 'canceled', 'failed']);
 const closedAt = t => new Date(t.finished || t.updated || 0).getTime();
 const closedRecently = t => Date.now() - closedAt(t) < DAY_MS;
 const showsClosed = () => ui.closed !== 'none' || !!ui.q.trim();
+const finishedMode = () => ui.closed === 'finished';
 function visibleTickets(list) {
+  if (finishedMode()) return list.filter(t => ENDED.has(t.state) && Date.now() - closedAt(t) < WEEK_MS).sort((a, b) => closedAt(b) - closedAt(a));
   const out = [], old = [];
   for (const t of list) {
     if (!FINAL.has(t.state) || ui.closed === 'all' || (ui.closed === 'recent' && closedRecently(t))) out.push(t);
@@ -753,6 +758,12 @@ function renderLanes(root) {
   ctl.insertBefore(tog, ctl.querySelector('.bl-cap'));
   const ny = needsYouPanel(all); if (ny) root.append(ny);
   root.append(el('h2', 'bl-h2', 'In flight'), inFlight(all), el('h2', 'bl-h2', 'Projects'), ctl);
+  if (finishedMode()) {   // one flat list across projects, newest finished first
+    tog.remove();
+    const live = new Set(projects.map(p => p.key));
+    root.append(table(visibleTickets(all).filter(t => live.has(t.project) && matches(t))));
+    return;
+  }
   const cols = LANE_COLS.filter(st => (showsClosed() || st !== 'done') && (st === 'todo' || st === 'in_progress' || all.some(t => t.state === st)));
   const grid = el('div', 'bl-lanes');
   grid.style.setProperty('--cols', String(cols.length));
@@ -1008,6 +1019,10 @@ const COLS = [
   ['cost', 'Cost', t => t.usage?.cost ?? -1],
   ['updated', 'Updated', t => t.updated || ''],
 ];
+const FIN_COLS = [
+  ...COLS.filter(([id]) => ['key', 'title', 'state', 'who', 'ms', 'prs', 'cost'].includes(id)),
+  ['finished', 'Finished', closedAt],
+];
 
 function cmp(a, b) {
   if (Array.isArray(a)) { for (let i = 0; i < a.length; i++) { const c = cmp(a[i], b[i]); if (c) return c; } return 0; }
@@ -1035,19 +1050,27 @@ function table(tks) {
     usage: tks.some(t => t.usage),
     who: tks.some(t => t.claimed_by || t.assignee),
   };
-  const cols = COLS.filter(([id]) => !(id === 'ms' && !has.ms) && !(id === 'prs' && !has.prs) && !(id === 'cost' && !has.usage) && !(id === 'who' && !has.who));
+  // Finished mode: no graph columns; the last column is when the ticket finished; its own sort, newest first by default.
+  const fin = finishedMode();
+  if (fin) tbl.classList.add('bl-fin');
+  const sort = fin ? ui.finSort : ui.sort;
+  const cols = (fin ? FIN_COLS : COLS).filter(([id]) => !(id === 'ms' && !has.ms) && !(id === 'prs' && !has.prs) && !(id === 'cost' && !has.usage) && !(id === 'who' && !has.who));
   const on = id => cols.some(c => c[0] === id);
   for (const [id, label] of cols) {
     const th = el('th', `c-${id}`); const b = el('button', null, label);
-    if (ui.sort.col === id) { th.setAttribute('aria-sort', ui.sort.dir > 0 ? 'ascending' : 'descending'); b.append(el('span', 'bl-sort', ui.sort.dir > 0 ? '↑' : '↓')); }
-    b.addEventListener('click', () => { ui.sort = { col: id, dir: ui.sort.col === id ? -ui.sort.dir : (id === 'updated' ? -1 : 1) }; store.set('blSort', ui.sort); renderBacklog(); });
+    if (sort.col === id) { th.setAttribute('aria-sort', sort.dir > 0 ? 'ascending' : 'descending'); b.append(el('span', 'bl-sort', sort.dir > 0 ? '↑' : '↓')); }
+    b.addEventListener('click', () => {
+      const next = { col: id, dir: sort.col === id ? -sort.dir : (id === 'updated' || id === 'finished' ? -1 : 1) };
+      if (fin) ui.finSort = next; else { ui.sort = next; store.set('blSort', ui.sort); }
+      renderBacklog();
+    });
     th.append(b); tr.append(th);
   }
   thead.append(tr); tbl.append(thead);
-  const key = cols.find(c => c[0] === ui.sort.col)?.[2] || COLS[0][2];
-  const rows = [...tks].sort((a, b) => ui.sort.dir * cmp(key(a), key(b)) || bl.order.get(a.key) - bl.order.get(b.key));
+  const key = cols.find(c => c[0] === sort.col)?.[2] || cols[0][2];
+  const rows = [...tks].sort((a, b) => sort.dir * cmp(key(a), key(b)) || bl.order.get(a.key) - bl.order.get(b.key));
   const tbody = el('tbody');
-  const treeMode = ui.sort.col === 'order' && ui.sort.dir > 0;
+  const treeMode = !fin && sort.col === 'order' && sort.dir > 0;
   // Tree geometry over the visible rows: depth, and which ancestor levels continue below this row.
   const geo = new Map();
   if (treeMode) {
@@ -1069,8 +1092,8 @@ function table(tks) {
     r.addEventListener('click', e => { if (e.target.closest('a')) return; go(ticketPath(t)); });
     bl.rowOrder.push(t);
     const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); r.append(c); return c; };
-    td('c-order num', String(bl.order.get(t.key) - Math.min(...tks.map(x => bl.order.get(x.key))) + 1));
-    const kl = linkTo(el('a', null, t.key.slice(t.project.length + 1)), ticketPath(t)); kl.title = t.key;
+    if (on('order')) td('c-order num', String(bl.order.get(t.key) - Math.min(...tks.map(x => bl.order.get(x.key))) + 1));
+    const kl = linkTo(el('a', null, fin ? t.key : t.key.slice(t.project.length + 1)), ticketPath(t)); kl.title = t.key;
     td('c-key num', kl);
     const ttl = el('div', 'bl-tt');
     // A blocked ticket has nothing to open yet: its title is plain text.
@@ -1106,19 +1129,20 @@ function table(tks) {
       const dot = el('i', `bl-node-dot bl-${t.state}`); dot.style.left = `${x(g.depth) - DOT}px`; tcell.append(dot);
     }
     td('c-state', statePill(t.state), ...(needsYou(t) ? [el('span', 'bl-needs-tag', 'Needs you')] : isReady(t) ? [el('span', 'bl-ready', 'ready')] : isBlocked(t) ? [el('span', 'bl-blocked', 'blocked')] : []));
-    td('c-deps', ...(bl.blockers.get(t.key) || []).map(k => depChip(k, t.project)));
-    td('c-blocks', ...(bl.dependents.get(t.key) || []).map(k => depChip(k, t.project)));
-    td(`c-priority num p${t.priority}`, String(t.priority));
-    td('c-attempts num', t.attempts ? `${t.attempts}${t.max_attempts ? '/' + t.max_attempts : ''}` : '');
+    if (on('deps')) td('c-deps', ...(bl.blockers.get(t.key) || []).map(k => depChip(k, t.project)));
+    if (on('blocks')) td('c-blocks', ...(bl.dependents.get(t.key) || []).map(k => depChip(k, t.project)));
+    if (on('priority')) td(`c-priority num p${t.priority}`, String(t.priority));
+    if (on('attempts')) td('c-attempts num', t.attempts ? `${t.attempts}${t.max_attempts ? '/' + t.max_attempts : ''}` : '');
     if (on('who')) td('c-who', el('span', 'bl-who', t.claimed_by ? executorOf(t)[0] : (t.assignee || '')));
     const ms = bl.milestones.get(t.milestone);
     if (on('ms')) { td('c-ms', ...(ms ? [el('span', `bl-ms-chip ms-${ms.status}`, ms.key.slice(t.project.length + 1))] : [])); if (ms) r.lastChild.title = ms.title; }
     if (on('prs')) td('c-prs', ...prChips(t, 3));
     if (on('cost')) td('c-cost num', fmtCost(t.usage)).title = usageTitle(t.usage);
-    const up = td('c-updated', t.updated ? ctx.fmtRel(t.updated) : ''); up.title = `Updated ${ctx.fmtDateTime(t.updated)}`;
+    if (fin) { const at = t.finished || t.updated; const f = td('c-updated c-finished', at ? `${ctx.fmtRel(at)} ago`.replace('now ago', 'just now') : ''); f.title = `Finished ${ctx.fmtDateTime(at)}`; }
+    else { const up = td('c-updated', t.updated ? ctx.fmtRel(t.updated) : ''); up.title = `Updated ${ctx.fmtDateTime(t.updated)}`; }
     tbody.append(r);
   }
-  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', ui.q ? 'No tickets match that search.' : ui.closed === 'none' ? 'No open tickets. Switch to + 24h or All to see finished ones.' : 'Nothing open or closed in the last 24 hours. Switch to All, or search.'); c.colSpan = cols.length; r.append(c); tbody.append(r); }
+  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', fin ? (ui.q.trim() ? 'No ticket finished in the last 7 days matches that search.' : 'Nothing finished (done, canceled or failed) in the last 7 days.') : ui.q ? 'No tickets match that search.' : ui.closed === 'none' ? 'No open tickets. Switch to + 24h or All to see finished ones.' : 'Nothing open or closed in the last 24 hours. Switch to All, or search.'); c.colSpan = cols.length; r.append(c); tbody.append(r); }
   tbl.append(tbody); wrap.append(tbl);
   return wrap;
 }
