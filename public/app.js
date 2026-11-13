@@ -1,5 +1,6 @@
 import { marked } from '/vendor/marked.js';
 import DOMPurify from '/vendor/purify.js';
+import { initBacklog, renderBacklog, parseBacklogPath, startBacklogPolling, stopBacklogPolling, closeDrawer } from '/backlog.js';
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -22,7 +23,11 @@ const state = {
   infoOpen: false,
   infoTab: 'general',
   renderToken: 0,
+  pins: (store.get('pins', []) || []).filter(x => typeof x === 'string'),
+  showOlder: false,
 };
+const RECENT_MS = 48 * 3600e3;
+const isRecent = s => s.lastTime && Date.now() - new Date(s.lastTime).getTime() < RECENT_MS;
 
 // ---------- formatting ----------
 const pad = n => String(n).padStart(2, '0');
@@ -129,6 +134,17 @@ function applyFilter(resetCursor = true, follow = true) {
     scored.sort((a, b) => b[0] - a[0] || (b[1].lastTime || '').localeCompare(a[1].lastTime || ''));
     list = scored.map(x => x[1]);
   }
+  if (!terms.length && !proj) {
+    const byId = new Map(list.map(s => [s.id, s]));
+    const pinned = state.pins.map(id => byId.get(id)).filter(Boolean);
+    const pinSet = new Set(pinned.map(s => s.id));
+    const rest = list.filter(s => !pinSet.has(s.id));
+    const recent = rest.filter(s => isRecent(s) || s.id === state.activeId);
+    const older = rest.filter(s => !isRecent(s) && s.id !== state.activeId);
+    state.pinnedCount = pinned.length;
+    state.olderCount = older.length;
+    list = [...pinned, ...recent, ...(state.showOlder ? older : [])];
+  } else { state.pinnedCount = 0; state.olderCount = 0; }
   state.filtered = list;
   if (resetCursor) state.cursor = list.length ? 0 : -1;
   else {
@@ -171,20 +187,84 @@ function highlight(text, terms) {
   return frag;
 }
 
+// ---------- pins ----------
+function setPins(pins, msg) {
+  state.pins = [...new Set(pins)];
+  store.set('pins', state.pins);
+  applyFilter(false, false);
+  if (state.active) updatePinButton();
+  if (msg) toast(msg);
+}
+function togglePin(id = state.activeId) {
+  if (!id) return;
+  const on = state.pins.includes(id);
+  setPins(on ? state.pins.filter(x => x !== id) : [id, ...state.pins], on ? 'Unpinned' : 'Pinned to top');
+}
+function updatePinButton() {
+  const b = $('#b-pin'); if (!b) return;
+  const on = state.pins.includes(state.activeId);
+  b.classList.toggle('on', on);
+  b.title = on ? 'Unpin from the top of the list (f)' : 'Pin to the top of the list (f)';
+  b.setAttribute('aria-pressed', String(on));
+}
+function pinZone() {
+  const z = el('div', 'pin-zone' + (state.pinnedCount ? '' : ' empty'));
+  const h = el('div', 'group pin-head');
+  h.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z"/><path d="M12 15v5"/></svg>';
+  h.append(el('span', null, 'Pinned'));
+  z.append(h, el('div', 'pin-items'), el('div', 'pin-hint', 'Drag a session here to pin it'));
+  z.addEventListener('dragover', e => { if (!e.dataTransfer.types.includes('text/x-chito-session')) return; e.preventDefault(); z.classList.add('over'); });
+  z.addEventListener('dragleave', e => { if (!z.contains(e.relatedTarget)) z.classList.remove('over'); });
+  z.addEventListener('drop', e => {
+    e.preventDefault(); z.classList.remove('over');
+    const id = e.dataTransfer.getData('text/x-chito-session');
+    if (id && !state.pins.includes(id)) setPins([...state.pins, id], 'Pinned to top');
+  });
+  return z;
+}
+function olderDivider() {
+  const d = el('button', 'older-divider');
+  d.type = 'button';
+  d.append(el('span', null, state.showOlder ? 'Older than 48 hours' : `${state.olderCount} older session${state.olderCount === 1 ? '' : 's'}`));
+  if (!state.showOlder) d.append(el('span', 'older-hint', 'scroll or click to show'));
+  d.addEventListener('click', () => { state.showOlder = !state.showOlder; applyFilter(false, false); });
+  return d;
+}
+// Dropping a pinned session anywhere else in the list unpins it.
+$('#list').addEventListener('dragover', e => { if (e.dataTransfer.types.includes('text/x-chito-session') && !e.target.closest('.pin-zone')) e.preventDefault(); });
+$('#list').addEventListener('drop', e => {
+  if (e.target.closest('.pin-zone')) return;
+  const id = e.dataTransfer.getData('text/x-chito-session');
+  if (id && state.pins.includes(id)) { e.preventDefault(); setPins(state.pins.filter(x => x !== id), 'Unpinned'); }
+});
+// Scrolling to the bottom reveals sessions older than 48 hours.
+$('#list').addEventListener('scroll', () => {
+  const l = $('#list');
+  if (!state.showOlder && state.olderCount && l.scrollTop + l.clientHeight > l.scrollHeight - 40) { state.showOlder = true; applyFilter(false, false); }
+}, { passive: true });
+
 function renderList(searching, follow = true) {
   const list = $('#list');
   const { terms } = parseQuery($('#q').value);
   list.textContent = '';
   const shown = state.sessions.filter(s => state.showAgents || !s.agent).length;
   $('#count').textContent = searching ? `${state.filtered.length} / ${shown}` : `${shown}`;
-  if (!state.filtered.length) { list.append(el('div', 'list-empty', 'No sessions match.')); return; }
+  if (!searching) list.append(pinZone());
+  if (!state.filtered.length && !state.olderCount) { list.append(el('div', 'list-empty', 'No sessions match.')); return; }
   let lastGroup = null;
+  let olderShown = false;
   state.filtered.forEach((s, i) => {
-    if (!searching) {
+    const pinned = !searching && i < state.pinnedCount;
+    if (pinned) { /* rendered into the pin zone below */ }
+    else if (!searching) {
+      if (!olderShown && !isRecent(s) && s.id !== state.activeId) { list.append(olderDivider()); olderShown = true; lastGroup = null; }
       const g = groupLabel(s.lastTime);
       if (g !== lastGroup) { list.append(el('div', 'group', g)); lastGroup = g; }
     }
-    const a = el('a', 'item');
+    const a = el('a', 'item' + (pinned ? ' pinned' : ''));
+    a.draggable = !searching;
+    a.addEventListener('dragstart', e => { e.dataTransfer.setData('text/x-chito-session', s.id); e.dataTransfer.effectAllowed = 'move'; document.body.classList.add('dragging-session'); });
+    a.addEventListener('dragend', () => document.body.classList.remove('dragging-session'));
     a.href = `/s/${s.id}`;
     a.dataset.idx = i;
     if (s.id === state.activeId) a.classList.add('active');
@@ -227,8 +307,21 @@ function renderList(searching, follow = true) {
       state.cursor = i;
       openSession(s.id);
     });
-    list.append(a);
+    if (pinned) {
+      a.addEventListener('dragover', e => { if (!e.dataTransfer.types.includes('text/x-chito-session')) return; e.preventDefault(); const r = a.getBoundingClientRect(); a.classList.toggle('drop-before', e.clientY < r.top + r.height / 2); a.classList.toggle('drop-after', e.clientY >= r.top + r.height / 2); });
+      a.addEventListener('dragleave', () => a.classList.remove('drop-before', 'drop-after'));
+      a.addEventListener('drop', e => {
+        e.preventDefault(); e.stopPropagation();
+        const before = a.classList.contains('drop-before'); a.classList.remove('drop-before', 'drop-after');
+        const id = e.dataTransfer.getData('text/x-chito-session'); if (!id || id === s.id) return;
+        const pins = state.pins.filter(x => x !== id);
+        const at = pins.indexOf(s.id); pins.splice(before ? at : at + 1, 0, id);
+        setPins(pins);
+      });
+      list.querySelector('.pin-zone .pin-items').append(a);
+    } else list.append(a);
   });
+  if (!searching && state.olderCount && !olderShown) list.append(olderDivider());
   if (follow) scrollCursorIntoView();
 }
 
@@ -248,6 +341,7 @@ function scrollCursorIntoView() {
 }
 
 function moveCursor(delta) {
+  if (delta > 0 && !state.showOlder && state.olderCount && state.cursor >= state.filtered.length - 1 && !parseQuery($('#q').value).terms.length) { state.showOlder = true; applyFilter(false, false); }
   if (!state.filtered.length) return;
   state.cursor = Math.max(0, Math.min(state.filtered.length - 1, state.cursor + delta));
   state.cursorId = state.filtered[state.cursor].id;
@@ -258,7 +352,7 @@ function moveCursor(delta) {
 // ---------- session ----------
 async function openSession(id, { push = true, hash = '' } = {}) {
   if (push) history.pushState({}, '', `/s/${id}${hash}`);
-  if (state.view === 'artifacts') setView('sessions');
+  if (state.view !== 'sessions') setView('sessions');
   state.activeId = id;
   state.cursorId = id;
   document.querySelectorAll('#list .item').forEach(n => n.classList.toggle('active', state.filtered[n.dataset.idx]?.id === id));
@@ -310,6 +404,7 @@ function setHeader(meta) {
   n.append(el('span', 'num', String(meta.userTurns)), ' prompts');
   sub.append(n);
   updateToolsButton();
+  updatePinButton();
   const live = meta.live ?? state.sessions.find(s => s.id === meta.id)?.live;
   $('#b-open span').textContent = live ? 'Focus terminal' : 'Open in terminal';
   $('#b-open').title = live ? `Running now (pid ${live.pid}): focus its terminal (o)` : 'Reopen in terminal (o)';
@@ -1027,7 +1122,10 @@ function renderBoard() {
 function setView(view) {
   state.view = view;
   document.body.classList.toggle('view-artifacts', view === 'artifacts');
+  document.body.classList.toggle('view-backlog', view === 'backlog');
   $('#board').hidden = view !== 'artifacts';
+  $('#backlog').hidden = view !== 'backlog';
+  if (view === 'backlog') { renderBacklog(); startBacklogPolling(); } else stopBacklogPolling();
   document.querySelectorAll('.views .view-tab').forEach(t => {
     if (t.dataset.view === view) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
   });
@@ -1041,7 +1139,7 @@ $('#board-refresh').addEventListener('click', async () => { toast('Refreshing fr
 document.querySelectorAll('.views .view-tab').forEach(t => t.addEventListener('click', e => {
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
-  const path = t.dataset.view === 'artifacts' ? '/artifacts' : '/';
+  const path = { artifacts: '/artifacts', backlog: '/backlog' }[t.dataset.view] || '/';
   if (location.pathname !== path) history.pushState({}, '', path);
   route();
 }));
@@ -1126,6 +1224,7 @@ document.addEventListener('keydown', e => {
   const settingsOpen = !$('#settings').hidden;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#q').focus(); $('#q').select(); return; }
   if (e.key === 'Escape') {
+    if (state.view === 'backlog' && !settingsOpen && closeDrawer()) return;
     if (document.querySelector('.lightbox')) { document.querySelector('.lightbox').remove(); return; }
     if (settingsOpen) { closeSettings(); return; }
     if (state.infoOpen) { toggleInfo(false); return; }
@@ -1146,10 +1245,12 @@ document.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input, textarea')) return;
   const convo = $('#convo');
   const keys = {
-    '/': () => { const box = state.view === 'artifacts' ? $('#bq') : $('#q'); box.focus(); box.select(); },
+    '/': () => { const box = state.view === 'artifacts' ? $('#bq') : state.view === 'backlog' ? ($('#blq') || $('#q')) : $('#q'); box.focus(); box.select(); },
     '?': () => openSettings('keyboard'),
     ',': () => openSettings(),
     P: () => { const path = state.view === 'artifacts' ? '/' : '/artifacts'; history.pushState({}, '', path); route(); },
+    B: () => { const path = state.view === 'backlog' ? '/' : '/backlog'; history.pushState({}, '', path); route(); },
+    f: () => togglePin(),
     j: () => moveCursor(1),
     k: () => moveCursor(-1),
     ArrowDown: () => convo.scrollBy({ top: 80 }),
@@ -1217,6 +1318,8 @@ const qTheme = new URL(location.href).searchParams.get('theme');
 if (qTheme && PRESETS.some(p => p.id === qTheme)) document.documentElement.dataset.theme = qTheme;
 updateWorkButton();
 $('#b-open').addEventListener('click', reopen);
+$('#b-pin').addEventListener('click', () => togglePin());
+initBacklog({ openSession: id => openSession(id), toast, fmtRel, fmtDateTime });
 $('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, 'resume command'));
 $('#b-link').addEventListener('click', () => copy(`${location.origin}/s/${state.activeId}`, 'permalink'));
 document.addEventListener('click', e => {
@@ -1226,7 +1329,8 @@ document.addEventListener('click', e => {
 function route() {
   const m = location.pathname.match(/^\/s\/([0-9a-f-]{36})/i);
   const artifacts = location.pathname === '/artifacts';
-  setView(artifacts ? 'artifacts' : 'sessions');
+  const backlog = !!parseBacklogPath(location.pathname);
+  setView(artifacts ? 'artifacts' : backlog ? 'backlog' : 'sessions');
   if (m) {
     if (m[1] !== state.activeId) openSession(m[1], { push: false });
     else if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) scrollWithin($('#convo'), t); }
@@ -1236,7 +1340,7 @@ function route() {
     document.body.classList.remove('has-session');
     $('#thread').textContent = '';
     setHeader(null);
-    if (!artifacts) { document.title = 'chito'; renderLanding(); }
+    if (!artifacts && !backlog) { document.title = 'chito'; renderLanding(); }
   }
 }
 window.addEventListener('popstate', route);

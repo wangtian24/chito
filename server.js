@@ -7,17 +7,43 @@ import { fileURLToPath } from 'node:url';
 import { scan, getMeta, HOME, PROJECTS_DIR } from './lib/index.js';
 import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
+import { backlogSummary, backlogTicket } from './lib/backlog.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CHITO_PORT || 8791);
 const HOST = process.env.CHITO_HOST || '127.0.0.1';
 const TERMINAL = process.env.CHITO_TERMINAL || (fs.existsSync('/Applications/iTerm.app') ? 'iterm' : 'terminal');
 const CLAUDE_FLAGS = process.env.CHITO_CLAUDE_FLAGS ?? '--allow-dangerously-skip-permissions';
+// Optional local config (not in the repo): ~/.config/chito/config.json, e.g. { "artiBase": "https://arti.example.com" }.
+const CONFIG = (() => { try { return JSON.parse(fs.readFileSync(path.join(process.env.HOME || '', '.config', 'chito', 'config.json'), 'utf8')); } catch { return {}; } })();
+const ARTI_BASE = process.env.CHITO_ARTI_BASE || CONFIG.artiBase || null;
+const BL = process.env.CHITO_BL || CONFIG.blPath || 'bl';
+
+// Backlog controls: a fixed allowlist of `bl` commands (bl stays the only writer of the database).
+const KEY_RE = /^[A-Za-z0-9_.-]{1,80}$/;
+function blArgs(b) {
+  const { action, key, value } = b || {};
+  const k = typeof key === 'string' && KEY_RE.test(key) ? key : null;
+  switch (action) {
+    case 'project-start': case 'project-pause': case 'project-resume': case 'project-plan': case 'project-archive':
+      return k && ['project', action.slice(8), k];
+    case 'project-executor': return k && ['daemon', 'session'].includes(value) && ['project', 'set', k, `executor=${value}`];
+    case 'project-evergreen': return k && ['project', 'set', k, `evergreen=${value ? 1 : 0}`];
+    case 'daemon-pause': case 'daemon-resume': return ['daemon', action.slice(7)];
+    case 'ticket-reopen': case 'ticket-cancel': case 'ticket-approve': return k && [action.slice(7), k, '--reason', 'from chito'];
+    case 'ticket-move': return k && ['backlog', 'todo'].includes(value) && ['move', k, value, '--reason', 'from chito'];
+    case 'ticket-priority': return k && /^[0-4]$/.test(String(value)) && ['set', k, `priority=${value}`];
+    case 'ticket-model': return k && /^[a-z0-9.-]{0,40}$/.test(String(value ?? '')) && ['set', k, `model=${value || ''}`];
+    case 'ticket-assignee': return k && ['', 'human'].includes(value) && ['set', k, `assignee=${value}`];
+    default: return null;
+  }
+}
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const STATIC = {
   '/app.js': ['public/app.js', 'text/javascript'],
   '/style.css': ['public/style.css', 'text/css'],
+  '/backlog.js': ['public/backlog.js', 'text/javascript'],
   '/favicon.svg': ['public/favicon.svg', 'image/svg+xml'],
   '/vendor/marked.js': ['node_modules/marked/lib/marked.esm.js', 'text/javascript'],
   '/vendor/purify.js': ['node_modules/dompurify/dist/purify.es.mjs', 'text/javascript'],
@@ -144,7 +170,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   try {
-    if (p === '/' || p.startsWith('/s/') || p === '/artifacts') {
+    if (p === '/' || p.startsWith('/s/') || p === '/artifacts' || p === '/backlog' || p.startsWith('/backlog/')) {
       return send(res, 200, fs.readFileSync(path.join(ROOT, 'public/index.html')), 'text/html; charset=utf-8');
     }
     if (STATIC[p]) {
@@ -175,6 +201,20 @@ const server = http.createServer(async (req, res) => {
       for (const pr of prs) { const st = states.get(pr.url); pr.gh = st?.data || null; pr.ghError = st?.error || null; }
       prs.sort((a, b) => ((b.gh?.updatedAt || b.firstAt || '') > (a.gh?.updatedAt || a.firstAt || '') ? 1 : -1));
       return send(res, 200, { prs, github: { ok: !error, error } });
+    }
+    if (p === '/api/backlog' && req.method === 'GET') return send(res, 200, { ...(await backlogSummary()), artiBase: ARTI_BASE });
+    if (p === '/api/backlog/action') {
+      if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
+      let body; try { body = JSON.parse(await readBody(req)); } catch { return send(res, 400, { error: 'bad body' }); }
+      const args = blArgs(body);
+      if (!args) return send(res, 400, { error: 'action not allowed' });
+      return execFile(BL, args, { env: { ...process.env, BL_AGENT: 'chito', CLAUDE_CODE_SESSION_ID: '' }, timeout: 20000 }, (err, stdout, stderr) =>
+        err ? send(res, 400, { error: (stderr || err.message).trim().replace(/^bl: /, '') }) : send(res, 200, { ok: true, out: stdout.trim() }));
+    }
+    let bm = p.match(/^\/api\/backlog\/ticket\/([A-Za-z0-9_.-]{1,80})$/);
+    if (bm && req.method === 'GET') {
+      const t = await backlogTicket(decodeURIComponent(bm[1]).toUpperCase());
+      return t ? send(res, 200, t) : send(res, 404, { error: 'no such ticket' });
     }
     if (p === '/api/outcomes' && req.method === 'GET') {
       const ids = (url.searchParams.get('ids') || '').split(',').filter(x => UUID_RE.test(x)).slice(0, 50);

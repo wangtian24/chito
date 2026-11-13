@@ -1,0 +1,718 @@
+// Backlog view: swim lanes by project, a project page (dependency graph + table), and a ticket drawer.
+// Reads /api/backlog (the local `bl` SQLite database). Read-only.
+import { marked } from '/vendor/marked.js';
+import DOMPurify from '/vendor/purify.js';
+
+const $ = s => document.querySelector(s);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const md = text => { const d = el('div', 'md'); d.innerHTML = DOMPurify.sanitize(marked.parse(text || '')); return d; };
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('chito.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('chito.' + k, JSON.stringify(v)); } catch { } },
+};
+
+export const STATES = ['backlog', 'todo', 'in_progress', 'in_review', 'failed', 'done', 'canceled'];
+const LABEL = { backlog: 'Backlog', todo: 'Todo', in_progress: 'In progress', in_review: 'In review', failed: 'Failed', done: 'Done', canceled: 'Canceled' };
+const FINAL = new Set(['done', 'canceled']);
+const ICON = {
+  backlog: '<circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/>',
+  todo: '<circle cx="12" cy="12" r="8"/>',
+  in_progress: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/>',
+  in_review: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 1 1-8 8h8z" fill="currentColor" stroke="none"/>',
+  done: '<circle cx="12" cy="12" r="9" fill="currentColor" stroke="none"/><path d="M8 12.5l2.7 2.7L16 9.8" stroke="var(--color-sheet)" stroke-width="2.4"/>',
+  failed: '<circle cx="12" cy="12" r="9" fill="currentColor" stroke="none"/><path d="M9 9l6 6M15 9l-6 6" stroke="var(--color-sheet)" stroke-width="2.4"/>',
+  canceled: '<circle cx="12" cy="12" r="8"/><path d="M8 16L16 8"/>',
+};
+const SESSION_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5h14a2 2 0 0 1 2 2V15a2 2 0 0 1-2 2h-6l-4 3.5V17H5a2 2 0 0 1-2-2V8.5a2 2 0 0 1 2-2z"/></svg>';
+
+let ctx = null;          // { openSession, toast, fmtRel, fmtDateTime }
+const bl = { data: null, byKey: new Map(), blockers: new Map(), dependents: new Map(), depth: new Map(), order: new Map(), error: null, timer: null, ticket: null, ticketKey: null };
+const ui = { showDone: store.get('blShowDone', false), q: '', sort: store.get('blSort', { col: 'order', dir: 1 }) };
+
+export function statePill(st) {
+  const s = el('span', `bl-pill bl-${st}`);
+  s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[st] || ICON.todo}</svg>`;
+  s.append(LABEL[st] || st);
+  return s;
+}
+const stateIcon = st => { const s = el('span', `bl-ico bl-${st}`); s.title = LABEL[st] || st; s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[st] || ICON.todo}</svg>`; return s; };
+
+// ---------- data ----------
+function index(d) {
+  bl.byKey = new Map(d.tickets.map(t => [t.key, t]));
+  bl.blockers = new Map(); bl.dependents = new Map();
+  for (const t of d.tickets) { bl.blockers.set(t.key, []); bl.dependents.set(t.key, []); }
+  for (const e of d.deps) {
+    if (bl.blockers.has(e.ticket)) bl.blockers.get(e.ticket).push(e.blocker);
+    if (bl.dependents.has(e.blocker)) bl.dependents.get(e.blocker).push(e.ticket);
+  }
+  // Depth = longest chain of blockers inside the graph; order = topological, then priority, then id.
+  bl.depth = new Map();
+  const visit = (k, seen = new Set()) => {
+    if (bl.depth.has(k)) return bl.depth.get(k);
+    if (seen.has(k)) return 0; seen.add(k);
+    const bs = (bl.blockers.get(k) || []).filter(b => bl.byKey.has(b));
+    const d = bs.length ? 1 + Math.max(...bs.map(b => visit(b, seen))) : 0;
+    bl.depth.set(k, d); return d;
+  };
+  d.tickets.forEach(t => visit(t.key));
+  const sorted = [...d.tickets].sort((a, b) => a.project.localeCompare(b.project) || bl.depth.get(a.key) - bl.depth.get(b.key) || a.priority - b.priority || a.id - b.id);
+  bl.order = new Map(sorted.map((t, i) => [t.key, i]));
+}
+
+const isBlocked = t => t.state === 'todo' && (bl.blockers.get(t.key) || []).some(b => !FINAL.has(bl.byKey.get(b)?.state ?? 'done'));
+const isReady = t => t.state === 'todo' && !isBlocked(t) && t.assignee !== 'human';
+const needsYou = t => t.state === 'failed' || t.state === 'in_review' || (t.state === 'todo' && t.assignee === 'human' && !isBlocked(t));
+
+export async function loadBacklog() {
+  try {
+    const r = await fetch('/api/backlog');
+    const d = await r.json();
+    bl.error = null;
+    bl.data = d;
+    if (d.available) index(d);
+  } catch (e) { bl.error = e.message; }
+  updateCount();
+}
+
+function updateCount() {
+  const n = bl.data?.available ? bl.data.tickets.filter(t => t.state === 'in_progress' || needsYou(t)).length : 0;
+  const c = $('#bl-count'); if (c) c.textContent = n ? String(n) : '';
+}
+
+function setting(project, key, def) {
+  const s = bl.data.settings;
+  const pick = scope => s.find(x => x.scope === scope && x.key === key);
+  return (pick(`project:${project}`) || pick('global'))?.value ?? def;
+}
+
+const liveRun = project => (bl.data.runs || []).find(r => r.project === project && r.status === 'running' && r.alive);
+
+// ---------- routing ----------
+export function parseBacklogPath(pathname) {
+  const m = pathname.match(/^\/backlog(?:\/([^/]+))?(?:\/([^/]+))?\/?$/);
+  if (!m) return null;
+  return { project: m[1] ? decodeURIComponent(m[1]) : null, ticket: m[2] ? decodeURIComponent(m[2]) : null };
+}
+
+function go(path) {
+  if (location.pathname !== path) history.pushState({}, '', path);
+  renderBacklog();
+}
+
+function linkTo(a, path) {
+  a.href = path;
+  a.addEventListener('click', e => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation(); go(path);
+  });
+  return a;
+}
+const projPath = p => `/backlog/${encodeURIComponent(p)}`;
+const ticketPath = t => `/backlog/${encodeURIComponent(t.project)}/${encodeURIComponent(t.key)}`;
+
+function sessionLink(s, label) {
+  const a = el('a', 'bl-sess');
+  a.href = `/s/${s.id}`;
+  a.title = `${s.title || s.id}${s.role ? ` (${s.role})` : ''}`;
+  a.innerHTML = SESSION_ICON;
+  if (label) a.append(el('span', null, label));
+  a.addEventListener('click', e => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation(); ctx.openSession(s.id);
+  });
+  return a;
+}
+
+// ---------- render ----------
+export function renderBacklog() {
+  const root = $('#backlog-inner');
+  if (!root) return;
+  const route = parseBacklogPath(location.pathname) || {};
+  root.textContent = '';
+  if (bl.error) { root.append(el('div', 'board-status', `Could not load the backlog: ${bl.error}`)); return; }
+  if (!bl.data) { root.append(el('div', 'prs-empty', 'Loading…')); return; }
+  if (!bl.data.available) {
+    const s = el('div', 'board-status');
+    s.append('No backlog database found at ', el('code', null, bl.data.db), '. Create one with ', el('code', null, 'bl init'), ', or set ', el('code', null, 'CHITO_BACKLOG_DB'), '.');
+    root.append(head('Backlog', ''), s);
+    return;
+  }
+  const project = route.project && bl.data.projects.find(p => p.key === route.project.toUpperCase());
+  if (route.project && !project) { root.append(head('Backlog', ''), el('div', 'prs-empty', `No project ${route.project}.`)); }
+  else if (project) { document.title = `${project.key} · Backlog · chito`; renderProject(root, project); }
+  else { document.title = 'Backlog · chito'; renderLanes(root); }
+  renderDrawer(route.ticket ? route.ticket.toUpperCase() : null);
+}
+
+function head(title, sub, extra) {
+  const h = el('div', 'board-head');
+  const left = el('div');
+  left.append(el('h1', null, title));
+  if (sub) { const p = el('p'); if (typeof sub === 'string') p.textContent = sub; else p.append(...sub); left.append(p); }
+  h.append(left);
+  if (extra) h.append(extra);
+  return h;
+}
+
+function controls(withSearch = true) {
+  const row = el('div', 'board-controls');
+  if (withSearch) {
+    const box = el('div', 'search board-search');
+    box.innerHTML = '<svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+    const inp = el('input'); inp.type = 'search'; inp.placeholder = 'Search key, title or label'; inp.id = 'blq'; inp.value = ui.q; inp.autocomplete = 'off'; inp.spellcheck = false;
+    inp.addEventListener('input', () => { ui.q = inp.value; const pos = inp.selectionStart; renderBacklog(); const n = $('#blq'); n.focus(); n.setSelectionRange(pos, pos); });
+    inp.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); if (inp.value) { ui.q = ''; renderBacklog(); } else inp.blur(); } });
+    box.append(inp);
+    row.append(box);
+  }
+  const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup');
+  for (const [v, label] of [[false, 'Open'], [true, 'All']]) {
+    const b = el('button', null, label); b.setAttribute('aria-checked', String(ui.showDone === v));
+    b.addEventListener('click', () => { ui.showDone = v; store.set('blShowDone', v); renderBacklog(); });
+    seg.append(b);
+  }
+  const cap = el('span', 'bl-cap', 'Tickets'); row.append(cap, seg);
+  return row;
+}
+
+const matches = t => {
+  if (!ui.q.trim()) return true;
+  const hay = `${t.key} ${t.title} ${(t.labels || []).join(' ')} ${t.assignee || ''} ${t.claimed_by || ''}`.toLowerCase();
+  return ui.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+};
+
+function refreshBtn() {
+  const b = el('button', 'btn'); b.title = 'Reload from the database';
+  b.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 5v4h4M4 13a8 8 0 0 0 14.9 3.9M20 19v-4h-4"/></svg><span>Refresh</span>';
+  b.addEventListener('click', async () => { await loadBacklog(); renderBacklog(); ctx.toast('Up to date'); });
+  return b;
+}
+
+function progress(tks) {
+  const total = tks.filter(t => t.state !== 'canceled').length;
+  const done = tks.filter(t => t.state === 'done').length;
+  const bar = el('div', 'bl-progress'); bar.title = `${done} of ${total} done`;
+  for (const st of ['done', 'in_review', 'in_progress', 'failed', 'todo', 'backlog']) {
+    const n = tks.filter(t => t.state === st).length;
+    if (!n || !total) continue;
+    const seg = el('i', `bl-${st}`); seg.style.flexGrow = String(n); bar.append(seg);
+  }
+  const wrap = el('div', 'bl-prog-wrap');
+  wrap.append(bar, el('span', 'num', `${done}/${total}`));
+  return wrap;
+}
+
+function runBadge(project) {
+  const r = liveRun(project.key);
+  if (!r) return null;
+  const s = el('span', 'bl-run'); s.title = `Orchestrator pid ${r.pid}, started ${ctx.fmtDateTime(r.started)}, last heartbeat ${ctx.fmtRel(r.heartbeat)} ago`;
+  s.append(el('span', 'live-dot busy'), 'Running');
+  return s;
+}
+
+// ---- controls (each one runs an allowlisted `bl` command on the server) ----
+async function act(action, key, value) {
+  try {
+    const r = await fetch('/api/backlog/action', { method: 'POST', headers: { 'content-type': 'application/json', 'x-chito': '1' }, body: JSON.stringify({ action, key, value }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    ctx.toast(j.out ? `${key ? key + ': ' : ''}${j.out.split('\n')[0]}` : 'Done');
+  } catch (e) { ctx.toast(`Failed: ${e.message}`); }
+  await loadBacklog();
+  if (bl.ticketKey) bl.ticket = null;
+  renderBacklog();
+}
+
+function actBtn(label, action, key, value, { confirm = false, primary = false, title } = {}) {
+  const b = el('button', `btn${primary ? ' primary' : ''} bl-act`, label);
+  b.type = 'button'; if (title) b.title = title;
+  let armed = null;
+  b.addEventListener('click', e => {
+    e.preventDefault(); e.stopPropagation();
+    if (confirm && !armed) {
+      b.textContent = `Confirm ${label.toLowerCase()}?`; b.classList.add('armed');
+      armed = setTimeout(() => { armed = null; b.textContent = label; b.classList.remove('armed'); }, 3000);
+      return;
+    }
+    clearTimeout(armed); b.disabled = true; act(action, key, value);
+  });
+  return b;
+}
+
+const PSTATE = { planning: 'Planning', executing: 'Executing', paused: 'Paused', done: 'Done', archived: 'Archived', active: 'Executing' };
+function projState(p) {
+  const orphan = isOrphan(p);
+  const s = el('span', `bl-pstate ps-${p.status}${orphan ? ' orphan' : ''}`, orphan ? 'Orphaned' : PSTATE[p.status] || p.status);
+  s.title = orphan ? `Executing, but its owner (${p.owner}) stopped responding. Resume it with /backlog-run, or let the daemon adopt it.` : `Project is ${p.status}`;
+  return s;
+}
+function isOrphan(p) {
+  if (p.status !== 'executing' || p.executor !== 'session' || !p.owner || p.owner === 'daemon') return false;
+  if ((bl.data.runs || []).some(r => r.project === p.key && r.status === 'running' && r.alive)) return false;
+  const lease = setting(p.key, 'lease_minutes', 30);
+  return !p.owner_heartbeat || Date.now() - new Date(p.owner_heartbeat).getTime() > lease * 60e3;
+}
+function execBadge(p) {
+  const s = el('span', `bl-exec ex-${p.executor}`, p.executor === 'daemon' ? 'Daemon' : 'Session');
+  s.title = p.executor === 'daemon' ? 'Run by the background daemon as a queue' : 'Run by a Claude Code session (/backlog-run)';
+  return s;
+}
+function lifecycleButtons(p, compact) {
+  const box = el('div', 'bl-ctl');
+  if (p.status === 'planning') box.append(actBtn('Start', 'project-start', p.key, null, { primary: true, title: 'Move to executing so its executor picks up ready tickets' }));
+  if (p.status === 'executing') box.append(actBtn('Pause', 'project-pause', p.key, null, { title: 'Running work finishes; nothing new is claimed' }));
+  if (p.status === 'paused') box.append(actBtn('Resume', 'project-resume', p.key, null, { primary: true }));
+  if (!compact) {
+    if (p.status !== 'planning') box.append(actBtn('Back to planning', 'project-plan', p.key));
+    const seg = el('div', 'seg bl-seg'); seg.title = 'Executor: who runs this project';
+    for (const ex of ['session', 'daemon']) {
+      const b = el('button', null, ex === 'daemon' ? 'Daemon' : 'Session'); b.setAttribute('aria-checked', String(p.executor === ex));
+      b.addEventListener('click', () => { if (p.executor !== ex) act('project-executor', p.key, ex); });
+      seg.append(b);
+    }
+    const lab = el('span', 'bl-cap', 'Executor'); box.append(lab, seg);
+    const eg = el('button', `chip${p.evergreen ? ' on' : ''}`, 'Evergreen'); eg.title = 'Evergreen projects never finish; new tickets keep flowing';
+    eg.addEventListener('click', () => act('project-evergreen', p.key, !p.evergreen));
+    box.append(eg, actBtn('Archive', 'project-archive', p.key, null, { confirm: true }));
+  }
+  return box;
+}
+
+function daemonBar() {
+  const d = bl.data.daemon;
+  const bar = el('div', 'bl-daemon');
+  const inFlight = bl.data.tickets.filter(t => t.state === 'in_progress').length;
+  const cap = setting(null, 'global_max_parallel', 6);
+  const dot = el('span', 'live-dot' + (d?.alive && d.enabled ? ' busy' : ''));
+  const label = !d || !d.alive ? 'Daemon not running' : d.enabled ? 'Daemon running' : 'Daemon paused';
+  const t = el('b', null, label);
+  const facts = el('span', 'bl-daemon-facts');
+  const workers = bl.data.tickets.filter(x => x.state === 'in_progress' && (x.claimed_by || '').startsWith('daemon:')).length;
+  facts.append(`${workers} working · ${d?.runsToday ?? 0} runs today · ${inFlight}/${cap} in flight`);
+  if (d?.heartbeat) { const h = el('span', null, ` · heartbeat ${ctx.fmtRel(d.heartbeat)} ago`); h.title = ctx.fmtDateTime(d.heartbeat); facts.append(h); }
+  bar.append(dot, t, facts);
+  if (d?.alive) bar.append(d.enabled ? actBtn('Pause daemon', 'daemon-pause', null, null, { title: 'Workers already running finish; nothing new starts' }) : actBtn('Resume daemon', 'daemon-resume', null, null, { primary: true }));
+  else { const hint = el('span', 'bl-daemon-hint'); hint.append('Start it with ', el('code', null, 'bl daemon install')); bar.append(hint); }
+  return bar;
+}
+
+function executorOf(t) {
+  const c = t.claimed_by || '';
+  if (c.startsWith('daemon:')) return ['Daemon', 'ex-daemon'];
+  if (c.startsWith('orch:')) return ['Orchestrator', 'ex-orch'];
+  if (c.startsWith('cc:')) return ['Session', 'ex-session'];
+  return [c || '—', ''];
+}
+function workerSession(t) {
+  const ws = (t.sessions || []).filter(s => !s.missing);
+  return ws.find(s => s.role === 'worker') || ws[0] || null;
+}
+function inFlight(tks) {
+  const rows = tks.filter(t => t.state === 'in_progress').sort((a, b) => (a.started || '') < (b.started || '') ? -1 : 1);
+  const wrap = el('div', 'bl-flight');
+  if (!rows.length) { wrap.append(el('div', 'bl-flight-empty', 'Nothing running right now.')); return wrap; }
+  for (const t of rows) {
+    const r = linkTo(el('a', 'bl-flight-row'), ticketPath(t));
+    const [ex, cls] = executorOf(t);
+    const since = t.spawn?.at || t.started;
+    const sess = workerSession(t);
+    r.append(stateIcon('in_progress'), el('span', 'num bl-flight-key', t.key), el('span', 'bl-flight-title', t.title),
+      el('span', `bl-exec ${cls}`, ex), el('span', 'bl-flight-model', t.spawn?.model || ''),
+      el('span', 'num bl-flight-since', since ? ctx.fmtRel(since) : ''));
+    r.lastChild.title = since ? `Started ${ctx.fmtDateTime(since)}${t.attempts > 1 ? ` · attempt ${t.attempts}` : ''}` : '';
+    r.title = `${t.claimed_by || ''}`;
+    if (sess) { const a = sessionLink(sess, 'Session'); a.classList.add('bl-flight-sess'); r.append(a); }
+    else r.append(el('span', 'bl-flight-sess none', 'no session yet'));
+    wrap.append(r);
+  }
+  return wrap;
+}
+
+// ---- swim lanes ----
+const LANE_COLS = ['backlog', 'todo', 'in_progress', 'in_review', 'failed', 'done'];
+
+function card(t) {
+  const c = el('a', `bl-card bl-${t.state}${isBlocked(t) ? ' blocked' : ''}`);
+  linkTo(c, ticketPath(t));
+  const top = el('div', 'bl-card-top');
+  top.append(stateIcon(t.state), el('span', 'bl-key num', t.key));
+  if (t.priority <= 1) top.append(el('span', `bl-prio p${t.priority}`, t.priority === 0 ? 'Urgent' : 'High'));
+  c.append(top, el('div', 'bl-card-title', t.title));
+  const meta = el('div', 'bl-card-meta');
+  const bs = (bl.blockers.get(t.key) || []).filter(b => !FINAL.has(bl.byKey.get(b)?.state ?? 'done'));
+  if (t.state === 'todo') {
+    if (bs.length) meta.append(el('span', 'wait', `Waits on ${bs.join(', ')}`));
+    else if (t.assignee === 'human') meta.append(el('span', 'bad', 'Needs you'));
+    else meta.append(el('span', 'ok', 'Ready'));
+  }
+  if (t.state === 'in_progress' && t.claimed_by) meta.append(el('span', null, t.claimed_by.startsWith('orch:') ? `worker, try ${t.attempts}` : t.claimed_by));
+  if (t.state === 'failed') meta.append(el('span', 'bad', `${t.attempts} attempt${t.attempts === 1 ? '' : 's'}`));
+  if (t.state === 'in_review') meta.append(el('span', 'wait', 'Waiting for approval'));
+  if (t.assignee === 'human' && t.state !== 'todo') meta.append(el('span', null, 'human'));
+  if (t.sessions?.length) meta.append(sessionLink(t.sessions[0], t.sessions.length > 1 ? String(t.sessions.length) : null));
+  if (meta.childNodes.length) c.append(meta);
+  return c;
+}
+
+function renderLanes(root) {
+  const d = bl.data;
+  const projects = d.projects.filter(p => p.status !== 'archived');
+  const all = d.tickets;
+  const running = all.filter(t => t.state === 'in_progress').length;
+  const you = all.filter(needsYou).length;
+  const sub = `${projects.length} project${projects.length === 1 ? '' : 's'} · ${running} in progress · ${you ? `${you} waiting on you` : 'nothing waiting on you'}`;
+  root.append(head('Backlog', sub, refreshBtn()), daemonBar());
+  root.append(el('h2', 'bl-h2', 'In flight'), inFlight(all), el('h2', 'bl-h2', 'Projects'), controls());
+  const cols = LANE_COLS.filter(st => (ui.showDone || st !== 'done') && (st === 'todo' || st === 'in_progress' || all.some(t => t.state === st)));
+  const grid = el('div', 'bl-lanes');
+  grid.style.setProperty('--cols', String(cols.length));
+  const hdr = el('div', 'bl-lane-head');
+  hdr.append(el('div', 'bl-lane-corner'));
+  for (const st of cols) {
+    const h = el('div', 'bl-col-head'); h.append(stateIcon(st), el('span', null, LABEL[st]));
+    const n = all.filter(t => t.state === st && matches(t)).length; if (n) h.append(el('span', 'num', String(n)));
+    hdr.append(h);
+  }
+  grid.append(hdr);
+  if (!projects.length) grid.append(el('div', 'prs-empty', 'No projects yet. Create one with bl project add.'));
+  for (const p of projects) {
+    const tks = all.filter(t => t.project === p.key);
+    const shown = tks.filter(matches);
+    if (ui.q.trim() && !shown.length) continue;
+    if (!ui.showDone && tks.length && tks.every(t => FINAL.has(t.state))) continue;
+    const lane = el('div', 'bl-lane');
+    const side = el('div', 'bl-lane-side');
+    const name = linkTo(el('a', 'bl-lane-name'), projPath(p.key));
+    name.append(el('span', 'bl-lane-key num', p.key), el('span', 'bl-lane-title', p.name));
+    const badges = el('div', 'bl-lane-badges'); badges.append(projState(p), execBadge(p));
+    if (p.evergreen) badges.append(el('span', 'bl-exec ex-ever', 'Evergreen'));
+    side.append(name, badges, progress(tks), lifecycleButtons(p, true));
+    const facts = el('div', 'bl-lane-facts');
+    const rb = runBadge(p); if (rb) facts.append(rb);
+    const you = tks.filter(needsYou).length; if (you) facts.append(el('span', 'bad', `${you} need${you === 1 ? 's' : ''} you`));
+    facts.append(el('span', null, `review ${setting(p.key, 'review', 'ask')}`));
+    side.append(facts);
+    lane.append(side);
+    for (const st of cols) {
+      const col = el('div', `bl-col bl-col-${st}`);
+      let list = shown.filter(t => t.state === st).sort((a, b) => bl.order.get(a.key) - bl.order.get(b.key));
+      if (st === 'done') list = list.sort((a, b) => ((b.finished || '') > (a.finished || '') ? 1 : -1));
+      const cap = st === 'done' ? 4 : 50;
+      for (const t of list.slice(0, cap)) col.append(card(t));
+      if (list.length > cap) col.append(linkTo(el('a', 'bl-more', `${list.length - cap} more`), projPath(p.key)));
+      lane.append(col);
+    }
+    grid.append(lane);
+  }
+  root.append(grid);
+}
+
+// ---- project page ----
+function renderProject(root, p) {
+  const tks = bl.data.tickets.filter(t => t.project === p.key);
+  const back = linkTo(el('a', 'bl-back', '← All projects'), '/backlog');
+  root.append(back);
+  const sub = [];
+  if (p.repo) sub.push(el('span', 'num', p.repo.replace(/^\/Users\/[^/]+/, '~')));
+  sub.push(el('span', null, `review ${setting(p.key, 'review', 'ask')}`), el('span', null, `parallel ${setting(p.key, 'max_parallel', 3)}`));
+  if (p.doc_slug) {
+    const base = bl.data.artiBase;
+    if (base) { const a = el('a', null, `doc: ${p.doc_slug}`); a.href = `${base.replace(/\/$/, '')}/s/${encodeURIComponent(p.doc_slug)}`; a.target = '_blank'; a.rel = 'noopener'; sub.push(a); }
+    else sub.push(el('span', null, `doc: ${p.doc_slug}`));
+  }
+  const subWrap = sub.flatMap((n, i) => (i ? [' · ', n] : [n]));
+  const right = el('div', 'bl-head-right');
+  const rb = runBadge(p); if (rb) right.append(rb);
+  right.append(refreshBtn());
+  root.append(head(`${p.name}`, subWrap, right));
+  const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), execBadge(p), lifecycleButtons(p, false));
+  root.append(ctl);
+  if (tks.some(t => t.state === 'in_progress')) root.append(el('h2', 'bl-h2', 'In flight'), inFlight(tks));
+
+  const stats = el('div', 'bl-stats');
+  stats.append(progress(tks));
+  for (const st of STATES) { const n = tks.filter(t => t.state === st).length; if (n) { const x = statePill(st); x.append(el('span', 'num', String(n))); stats.append(x); } }
+  root.append(stats);
+
+  const you = tks.filter(needsYou);
+  if (you.length) {
+    const s = el('div', 'board-status');
+    s.append(el('b', null, 'Waiting on you: '));
+    you.forEach((t, i) => { if (i) s.append(', '); s.append(linkTo(el('a', null, `${t.key} (${LABEL[t.state].toLowerCase()})`), ticketPath(t))); });
+    root.append(s);
+  }
+
+  root.append(el('h2', 'bl-h2', 'Dependency graph'), graph(tks));
+  root.append(el('h2', 'bl-h2', 'Tickets'), controls(), table(tks.filter(t => (ui.showDone || !FINAL.has(t.state)) && matches(t))));
+}
+
+function graph(tks) {
+  const wrap = el('div', 'bl-graph');
+  const shown = tks.filter(t => t.state !== 'canceled' || ui.showDone);
+  if (!shown.length) { wrap.append(el('div', 'prs-empty', 'No tickets.')); return wrap; }
+  const W = 188, H = 46, GX = 54, GY = 14, PAD = 8;
+  const cols = new Map();
+  for (const t of [...shown].sort((a, b) => bl.order.get(a.key) - bl.order.get(b.key))) {
+    const d = bl.depth.get(t.key) || 0;
+    if (!cols.has(d)) cols.set(d, []);
+    cols.get(d).push(t);
+  }
+  const pos = new Map();
+  const depths = [...cols.keys()].sort((a, b) => a - b);
+  depths.forEach((d, ci) => cols.get(d).forEach((t, ri) => pos.set(t.key, { x: PAD + ci * (W + GX), y: PAD + ri * (H + GY) })));
+  const width = PAD * 2 + depths.length * W + (depths.length - 1) * GX;
+  const height = PAD * 2 + Math.max(...[...cols.values()].map(c => c.length)) * (H + GY) - GY;
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.setAttribute('width', width); svg.setAttribute('height', height);
+  for (const t of shown) {
+    for (const b of bl.blockers.get(t.key) || []) {
+      const a = pos.get(b), z = pos.get(t.key); if (!a || !z) continue;
+      const x1 = a.x + W, y1 = a.y + H / 2, x2 = z.x, y2 = z.y + H / 2, mx = (x1 + x2) / 2;
+      const path = document.createElementNS(NS, 'path');
+      path.setAttribute('d', `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2 - 4},${y2}`);
+      path.setAttribute('class', `bl-edge${FINAL.has(bl.byKey.get(b)?.state) ? ' met' : ''}`);
+      svg.append(path);
+      const tip = document.createElementNS(NS, 'path');
+      tip.setAttribute('d', `M${x2 - 8},${y2 - 4} L${x2 - 2},${y2} L${x2 - 8},${y2 + 4}`);
+      tip.setAttribute('class', `bl-edge${FINAL.has(bl.byKey.get(b)?.state) ? ' met' : ''}`);
+      svg.append(tip);
+    }
+  }
+  wrap.append(svg);
+  // Nodes are HTML so they can use the same pill styles and links.
+  const layer = el('div', 'bl-nodes'); layer.style.width = width + 'px'; layer.style.height = height + 'px';
+  for (const t of shown) {
+    const p = pos.get(t.key);
+    const n = linkTo(el('a', `bl-node bl-${t.state}${isReady(t) ? ' ready' : ''}${bl.ticketKey === t.key ? ' sel' : ''}`), ticketPath(t));
+    n.style.left = p.x + 'px'; n.style.top = p.y + 'px'; n.style.width = W + 'px'; n.style.height = H + 'px';
+    n.title = `${t.key} · ${LABEL[t.state]}${isReady(t) ? ' · ready' : ''}\n${t.title}`;
+    const top = el('div', 'bl-node-top'); top.append(stateIcon(t.state), el('span', 'num', t.key));
+    if (t.assignee === 'human') top.append(el('span', 'bl-node-tag', 'human'));
+    else if (isReady(t)) top.append(el('span', 'bl-node-tag ok', 'ready'));
+    n.append(top, el('div', 'bl-node-title', t.title));
+    layer.append(n);
+  }
+  wrap.append(layer);
+  const scroller = el('div', 'bl-graph-scroll'); scroller.append(wrap);
+  return scroller;
+}
+
+const COLS = [
+  ['order', '#', t => bl.order.get(t.key)],
+  ['key', 'Ticket', t => [t.project, t.id]],
+  ['title', 'Title', t => t.title.toLowerCase()],
+  ['state', 'State', t => STATES.indexOf(t.state)],
+  ['deps', 'Waits on', t => (bl.blockers.get(t.key) || []).length],
+  ['blocks', 'Blocks', t => (bl.dependents.get(t.key) || []).length],
+  ['priority', 'P', t => t.priority],
+  ['attempts', 'Tries', t => t.attempts],
+  ['who', 'Agent', t => t.claimed_by || t.assignee || ''],
+  ['sessions', 'Sessions', t => (t.sessions || []).length],
+  ['updated', 'Updated', t => t.updated || ''],
+];
+
+function cmp(a, b) {
+  if (Array.isArray(a)) { for (let i = 0; i < a.length; i++) { const c = cmp(a[i], b[i]); if (c) return c; } return 0; }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function depChip(k, proj = bl.byKey.get(bl.ticketKey || '')?.project) {
+  const t = bl.byKey.get(k);
+  if (!t) return el('span', 'bl-chip', k);
+  const c = linkTo(el('a', `bl-chip bl-${t.state}`), ticketPath(t)); c.title = `${t.title} · ${LABEL[t.state]}`;
+  c.append(stateIcon(t.state), el('span', 'num', t.project === proj ? k.slice(t.project.length + 1) : k));
+  return c;
+}
+
+function table(tks) {
+  const wrap = el('div', 'bl-table-wrap');
+  const tbl = el('table', 'bl-table');
+  const thead = el('thead'); const tr = el('tr');
+  for (const [id, label] of COLS) {
+    const th = el('th', `c-${id}`); const b = el('button', null, label);
+    if (ui.sort.col === id) { th.setAttribute('aria-sort', ui.sort.dir > 0 ? 'ascending' : 'descending'); b.append(el('span', 'bl-sort', ui.sort.dir > 0 ? '↑' : '↓')); }
+    b.addEventListener('click', () => { ui.sort = { col: id, dir: ui.sort.col === id ? -ui.sort.dir : (id === 'updated' ? -1 : 1) }; store.set('blSort', ui.sort); renderBacklog(); });
+    th.append(b); tr.append(th);
+  }
+  thead.append(tr); tbl.append(thead);
+  const key = COLS.find(c => c[0] === ui.sort.col)?.[2] || COLS[0][2];
+  const rows = [...tks].sort((a, b) => ui.sort.dir * cmp(key(a), key(b)) || bl.order.get(a.key) - bl.order.get(b.key));
+  const tbody = el('tbody');
+  const treeMode = ui.sort.col === 'order';
+  for (const t of rows) {
+    const r = el('tr', `bl-${t.state}${bl.ticketKey === t.key ? ' sel' : ''}`);
+    r.addEventListener('click', e => { if (e.target.closest('a')) return; go(ticketPath(t)); });
+    const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); r.append(c); return c; };
+    td('c-order num', String(bl.order.get(t.key) - Math.min(...tks.map(x => bl.order.get(x.key))) + 1));
+    td('c-key num', linkTo(el('a', null, t.key), ticketPath(t)));
+    const ttl = el('div', 'bl-tt');
+    if (treeMode) { const dpt = bl.depth.get(t.key) || 0; ttl.style.paddingLeft = `${dpt * 18}px`; if (dpt) ttl.append(el('span', 'bl-tree', '└')); }
+    ttl.append(el('span', null, t.title));
+    if (t.labels?.length) for (const l of t.labels) ttl.append(el('span', 'bl-label', l));
+    td('c-title', ttl);
+    td('c-state', statePill(t.state), ...(isReady(t) ? [el('span', 'bl-ready', 'ready')] : isBlocked(t) ? [el('span', 'bl-blocked', 'blocked')] : []));
+    td('c-deps', ...(bl.blockers.get(t.key) || []).map(k => depChip(k, t.project)));
+    td('c-blocks', ...(bl.dependents.get(t.key) || []).map(k => depChip(k, t.project)));
+    td(`c-priority num p${t.priority}`, String(t.priority));
+    td('c-attempts num', t.attempts ? `${t.attempts}${t.max_attempts ? '/' + t.max_attempts : ''}` : '');
+    td('c-who', el('span', 'bl-who', t.claimed_by ? (t.claimed_by.startsWith('orch:') ? 'worker' : t.claimed_by) : (t.assignee || '')));
+    td('c-sessions', ...(t.sessions || []).slice(0, 4).map(s => sessionLink(s)), ...((t.sessions || []).length > 4 ? [el('span', 'num', `+${t.sessions.length - 4}`)] : []));
+    const up = td('c-updated', t.updated ? `${ctx.fmtRel(t.updated)} ago` : ''); up.title = ctx.fmtDateTime(t.updated);
+    tbody.append(r);
+  }
+  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', ui.q ? 'No tickets match that search.' : 'No open tickets. Switch to All to see finished ones.'); c.colSpan = COLS.length; r.append(c); tbody.append(r); }
+  tbl.append(tbody); wrap.append(tbl);
+  return wrap;
+}
+
+// ---- ticket drawer ----
+async function renderDrawer(key) {
+  const box = $('#bl-drawer');
+  bl.ticketKey = key;
+  if (!key) { box.hidden = true; box.textContent = ''; return; }
+  box.hidden = false;
+  if (!bl.ticket || bl.ticket.key !== key) {
+    box.textContent = '';
+    box.append(el('div', 'prs-empty', 'Loading…'));
+  } else drawDrawer(box, bl.ticket);
+  try {
+    const r = await fetch(`/api/backlog/ticket/${encodeURIComponent(key)}`);
+    if (!r.ok) throw new Error(r.status === 404 ? `No ticket ${key}` : `HTTP ${r.status}`);
+    const t = await r.json();
+    if (bl.ticketKey !== key) return;
+    bl.ticket = t;
+    drawDrawer(box, t);
+  } catch (e) { if (bl.ticketKey === key) { box.textContent = ''; box.append(closeBtn(), el('div', 'board-status', e.message)); } }
+}
+
+function closeBtn() {
+  const b = el('button', 'btn icon bl-close'); b.title = 'Close (Esc)'; b.setAttribute('aria-label', 'Close');
+  b.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  b.addEventListener('click', closeDrawer);
+  return b;
+}
+
+export function closeDrawer() {
+  const r = parseBacklogPath(location.pathname);
+  if (r?.ticket) { go(projPath(r.project)); return true; }
+  return false;
+}
+
+function drawDrawer(box, t) {
+  const keepScroll = box.dataset.key === t.key ? box.scrollTop : 0;
+  box.dataset.key = t.key;
+  box.textContent = '';
+  const top = el('div', 'bl-d-top');
+  top.append(el('span', 'num bl-d-key', t.key), statePill(t.state), closeBtn());
+  box.append(top, el('h3', 'bl-d-title', t.title), ticketActions(t));
+
+  const dl = el('dl', 'bl-d-meta');
+  const row = (k, ...v) => { if (!v.length || v.every(x => x == null || x === '')) return; dl.append(el('dt', null, k)); const dd = el('dd'); dd.append(...v.filter(x => x != null)); dl.append(dd); };
+  const prio = ['Urgent', 'High', 'Normal', 'Low', 'None'][t.priority] ?? String(t.priority);
+  row('Priority', `${t.priority} · ${prio}`);
+  if (t.state === 'todo') row('Status', isBlocked(bl.byKey.get(t.key) || t) ? 'Blocked by open tickets' : t.assignee === 'human' ? 'Ready, waiting on you' : 'Ready to run');
+  row('Assignee', t.assignee || null);
+  row('Claimed by', t.claimed_by || null);
+  if (t.lease_until && t.state === 'in_progress') row('Lease until', ctx.fmtDateTime(t.lease_until));
+  row('Attempts', t.attempts ? `${t.attempts}${t.max_attempts ? ' of ' + t.max_attempts : ''}` : null);
+  row('Labels', t.labels?.length ? t.labels.join(', ') : null);
+  row('Locks', t.locks?.length ? t.locks.join(', ') : null);
+  const meta = { ...t.meta }; delete meta.sessions;
+  if (meta.review) { row('Review', meta.review); delete meta.review; }
+  if (meta.size) { row('Size', meta.size); delete meta.size; }
+  for (const [k, v] of Object.entries(meta)) row(k, typeof v === 'string' ? v : JSON.stringify(v));
+  if (t.doc_slug) {
+    const base = bl.data?.artiBase;
+    if (base) { const a = el('a', null, t.doc_slug); a.href = `${base.replace(/\/$/, '')}/s/${encodeURIComponent(t.doc_slug)}`; a.target = '_blank'; a.rel = 'noopener'; row('Design doc', a); }
+    else row('Design doc', t.doc_slug);
+  }
+  row('Created', ctx.fmtDateTime(t.created));
+  if (t.started) row('Started', ctx.fmtDateTime(t.started));
+  if (t.finished) row('Finished', ctx.fmtDateTime(t.finished));
+  box.append(dl);
+
+  if (t.blockers.length || t.dependents.length) {
+    const deps = el('div', 'bl-d-deps');
+    if (t.blockers.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', 'Waits on'), ...t.blockers.map(b => depChip(b.key))); deps.append(r); }
+    if (t.dependents.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', 'Blocks'), ...t.dependents.map(b => depChip(b.key))); deps.append(r); }
+    box.append(deps);
+  }
+
+  if (t.sessions.length) {
+    box.append(el('h4', 'bl-d-h', 'Sessions'));
+    const list = el('div', 'bl-d-sessions');
+    for (const s of t.sessions) {
+      const a = el('a', 'bl-d-sess');
+      a.href = `/s/${s.id}`;
+      a.addEventListener('click', e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); ctx.openSession(s.id); });
+      a.innerHTML = SESSION_ICON;
+      a.append(el('span', 'bl-d-sess-title', s.title || (s.missing ? 'Transcript not found' : s.id.slice(0, 8))), el('span', 'bl-d-sess-meta', `${s.role}${s.lastTime ? ' · ' + ctx.fmtRel(s.lastTime) + ' ago' : ''}`));
+      list.append(a);
+    }
+    box.append(list);
+  }
+
+  if (t.result) { box.append(el('h4', 'bl-d-h', t.result.startsWith('FAILED') ? 'Last failure' : 'Result')); box.append(md(t.result)); }
+  box.append(el('h4', 'bl-d-h', 'Spec'));
+  box.append(t.body ? md(t.body) : el('p', 'bl-d-empty', 'No body. The title is the spec.'));
+
+  if (t.events.length) {
+    box.append(el('h4', 'bl-d-h', 'Activity'));
+    const ev = el('ol', 'bl-d-events');
+    for (const e of [...t.events].reverse()) {
+      const li = el('li', `ev-${e.kind}`);
+      const head = el('div', 'bl-ev-head');
+      const when = el('span', 'num', ctx.fmtRel(e.at) + ' ago'); when.title = ctx.fmtDateTime(e.at);
+      head.append(el('b', null, e.kind), el('span', null, e.actor || ''), when);
+      if (e.session_id) head.append(sessionLink({ id: e.session_id, title: 'Open the session that wrote this' }));
+      if (e.data?.log) { const lg = el('span', 'num bl-ev-log', e.data.log.split('/').pop()); lg.title = e.data.log; head.append(lg); }
+      li.append(head);
+      if (e.body) li.append(e.kind === 'comment' ? md(e.body) : el('div', 'bl-ev-body', e.body));
+      ev.append(li);
+    }
+    box.append(ev);
+  }
+  box.scrollTop = keepScroll;
+}
+
+// ---------- lifecycle ----------
+export function initBacklog(c) {
+  ctx = c;
+  loadBacklog().then(() => { if (!$('#backlog').hidden) renderBacklog(); });
+}
+
+export function startBacklogPolling() {
+  stopBacklogPolling();
+  bl.timer = setInterval(async () => {
+    if (document.hidden) return;
+    await loadBacklog();
+    if (document.activeElement?.id === 'blq') return; // don't steal focus mid-typing
+    const scroller = $('#backlog'); const y = scroller.scrollTop;
+    renderBacklog();
+    scroller.scrollTop = y;
+  }, 5000);
+}
+export function stopBacklogPolling() { clearInterval(bl.timer); bl.timer = null; }
+export function backlogRefreshCount() { return loadBacklog(); }
+
+function ticketActions(t) {
+  const box = el('div', 'bl-d-actions');
+  if (['failed', 'canceled', 'done'].includes(t.state)) box.append(actBtn('Reopen', 'ticket-reopen', t.key, null, { primary: t.state === 'failed', title: 'Back to todo with attempts reset' }));
+  if (t.state === 'in_review') box.append(actBtn('Approve', 'ticket-approve', t.key, null, { primary: true, title: 'Mark done (after the PR is merged)' }));
+  if (t.state === 'backlog') box.append(actBtn('Move to todo', 'ticket-move', t.key, 'todo', { primary: true }));
+  if (t.state === 'todo') box.append(actBtn('Move to backlog', 'ticket-move', t.key, 'backlog'));
+  if (!['done', 'canceled'].includes(t.state)) box.append(actBtn('Cancel', 'ticket-cancel', t.key, null, { confirm: true, title: 'Cancel: dependents become unblocked' }));
+  const sel = (label, action, options, cur) => {
+    const wrap = el('label', 'bl-sel'); wrap.append(el('span', null, label));
+    const s = el('select');
+    for (const [v, txt] of options) { const o = el('option', null, txt); o.value = v; if (String(v) === String(cur)) o.selected = true; s.append(o); }
+    s.addEventListener('change', () => act(action, t.key, s.value));
+    wrap.append(s); return wrap;
+  };
+  box.append(sel('Priority', 'ticket-priority', [[0, 'Urgent'], [1, 'High'], [2, 'Normal'], [3, 'Low'], [4, 'None']], t.priority));
+  box.append(sel('Model', 'ticket-model', [['', 'Default (opus)'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']], t.meta?.model || ''));
+  box.append(sel('Assignee', 'ticket-assignee', [['', 'Agents'], ['human', 'Human']], t.assignee === 'human' ? 'human' : ''));
+  return box;
+}
