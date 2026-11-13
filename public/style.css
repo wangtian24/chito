@@ -1060,12 +1060,22 @@ body:not(.has-session) .topbar { display: none; }
 .board-controls .bl-collapse-all + .bl-cap { margin-left: var(--space-sm); }
 .bl-lane-title { font: 700 16px/1.25 var(--font-display); letter-spacing: -0.015em; }
 .bl-lane-compact { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 10px 0 10px; border-bottom: 1px solid var(--color-rule-sheet); }
-.bl-compact-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--space-md); }
-.bl-compact-head .bl-lane-namerow { min-width: 220px; }
-.bl-compact-head .bl-lane-name { flex-direction: row; align-items: baseline; gap: var(--space-sm); }
-.bl-compact-counts { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
-.bl-compact-head .bl-prog-wrap { width: 160px; margin-left: auto; }
-.bl-compact-you { font: 600 12px var(--font-body); color: var(--bl-failed); align-self: center; }
+/* Collapsed rows: fixed columns (name, state, counts, progress) so every project lines up with the next */
+.bl-compact-head { display: grid; grid-template-columns: minmax(0, 23rem) 10.5rem minmax(0, 1fr) 200px; align-items: center; gap: 6px var(--space-md); }
+.bl-compact-head .bl-lane-namerow { align-items: center; }
+.bl-compact-head .bl-chev { margin-top: 0; }
+.bl-compact-head .bl-lane-name { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); align-items: baseline; column-gap: var(--space-sm); flex: 1; }
+.bl-compact-head .bl-lane-key { white-space: nowrap; }
+.bl-compact-head .bl-lane-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bl-compact-head .bl-lane-badges { flex-wrap: nowrap; align-items: baseline; }
+.bl-compact-counts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-sm); min-width: 0; }
+.bl-compact-head .bl-prog-wrap { width: 100%; }
+.bl-compact-you { font: 600 12px var(--font-body); color: var(--bl-failed); align-self: center; margin-left: var(--space-xs); }
+@media (max-width: 900px) {
+  .bl-compact-head { grid-template-columns: minmax(0, 1fr); }
+  .bl-compact-head .bl-lane-badges { flex-wrap: wrap; }
+  .bl-compact-head .bl-prog-wrap { width: 160px; }
+}
 .bl-compact-run { display: grid; grid-template-columns: auto max-content minmax(0, 1fr) max-content max-content; margin-left: 20px; }
 .bl-compact-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; gap: var(--space-sm); padding: 3px 6px; text-decoration: none; color: inherit; border-radius: 3px; --c: var(--bl-in_progress); }
 .bl-compact-row:hover { background: var(--color-well); }
