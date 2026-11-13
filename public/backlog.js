@@ -388,6 +388,13 @@ function inFlight(tks) {
 }
 
 // ---- who is executing a project ----
+// The orchestrator session is where general instructions for a project go, so its link is a button, not a footnote.
+function orchLink(s, compact, last = false) {
+  const a = sessionLink(s, compact ? (last ? 'Last orchestrator' : 'Orchestrator') : (last ? 'Open the last orchestrator session' : 'Open the orchestrator session'));
+  a.classList.add('btn', 'bl-orch-link');
+  a.title = `${s.title || s.id}: give the orchestrator general instructions for this project here`;
+  return a;
+}
 function execLine(p, compact) {
   const ex = p.execution || {};
   const box = el('div', 'bl-execline');
@@ -397,14 +404,14 @@ function execLine(p, compact) {
     const o = ex.orchestrator;
     if (o) {
       const row = el('span', 'bl-execrun');
-      row.append(el('span', 'live-dot busy'), el('span', null, 'Daemon orchestrator session'), sessionLink(o, compact ? 'Session' : (o.title || 'Session')));
+      row.append(el('span', 'live-dot busy'), el('span', null, 'Orchestrator running'), orchLink(o, compact));
       box.append(row);
     } else {
       box.append(el('span', 'bl-exec ex-orch', 'DSO'));
       box.append(el('span', null, !d?.alive ? 'daemon not running' : !d.enabled ? 'daemon paused' : d.quota?.until ? 'waiting for the usage limit to reset' : 'idle; the daemon starts a session when tickets are ready'));
       if (!d?.alive || !d?.enabled || d?.quota?.until) box.classList.add('warn');
       const last = (p.orchSessions || [])[0];
-      if (last && !compact) box.append(sessionLink(last, 'Last session'));
+      if (last) box.append(orchLink(last, compact, true));
     }
     return box;
   }
@@ -420,7 +427,7 @@ function execLine(p, compact) {
     for (const r of ex.runs) {
       const row = el('span', 'bl-execrun');
       row.append(el('span', 'live-dot busy'), el('span', null, `Orchestrator pid ${r.pid}`));
-      if (r.session) row.append(sessionLink(r.session, compact ? 'Session' : (r.session.title || 'Launching session')));
+      if (r.session) row.append(orchLink(r.session, compact)); else row.append(el('span', null, 'launching its session'));
       row.title = `bl run started ${ctx.fmtDateTime(r.started)}; heartbeat ${ctx.fmtRel(r.heartbeat)} ago`;
       box.append(row);
     }
@@ -429,7 +436,7 @@ function execLine(p, compact) {
   if (ex.owner?.session) {
     const row = el('span', 'bl-execrun');
     row.append(el('span', 'live-dot' + (isOrphan(p) ? '' : ' busy')), el('span', null, isOrphan(p) ? 'Owner session went quiet' : 'Run by session'),
-      sessionLink(ex.owner.session, compact ? 'Session' : (ex.owner.session.title || 'Session')));
+      orchLink(ex.owner.session, compact));
     box.append(row);
     if (isOrphan(p)) box.classList.add('warn');
     return box;

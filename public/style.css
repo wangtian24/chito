@@ -1219,3 +1219,9 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-ico.bl-in_progress svg { animation: bl-spin 2.4s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .bl-ico.bl-in_progress svg { animation: none; } }
 .bl-flight-row .bl-exec { background: none; padding: 0; color: var(--color-muted); font-weight: 500; }
+
+/* Orchestrator session: a real button, since general instructions for the project go there */
+.bl-sess.bl-orch-link { margin-left: 0; gap: 6px; padding: 4px 10px; border: 1px solid var(--color-accent); color: var(--color-accent-text); background: var(--color-sheet); border-radius: var(--radius-ctl); }
+.bl-sess.bl-orch-link span { font: 600 12.5px var(--font-display); }
+.bl-sess.bl-orch-link:hover { background: var(--color-accent-wash); }
+.bl-sess.bl-orch-link:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
