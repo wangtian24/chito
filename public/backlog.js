@@ -696,8 +696,17 @@ function needsYouPanel(tks) {
   const items = tks.filter(needsYou);
   const ms = (bl.data.milestones || []).filter(m => m.status === 'showcased' && tks.some(t => t.project === m.project));
   if (!items.length && !ms.length) return null;
-  const box = el('div', 'bl-needs');
-  const h = el('div', 'bl-needs-head'); h.append(el('b', null, 'Waiting on you'), el('span', 'num', String(items.length + ms.length)));
+  const open = store.get('blNeedsOpen', true);
+  const box = el('div', `bl-needs${open ? '' : ' folded'}`);
+  // The header is the toggle: folding keeps the count in view, so nothing hides silently.
+  const h = el('button', 'bl-needs-head'); h.type = 'button';
+  h.innerHTML = '<svg class="bl-needs-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+  h.append(el('b', null, 'Waiting on you'), el('span', 'num', String(items.length + ms.length)));
+  const sync = o => { box.classList.toggle('folded', !o); h.setAttribute('aria-expanded', String(o)); h.title = o ? 'Fold this list' : 'Show what is waiting on you'; };
+  sync(open);
+  h.addEventListener('click', () => { const o = box.classList.contains('folded'); store.set('blNeedsOpen', o); sync(o); });
+  // app.js's global shortcuts claim Enter and Space; keep them for the button's own activation.
+  h.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); });
   box.append(h);
   for (const t of items) {
     const row = el('div', 'bl-needs-row');
