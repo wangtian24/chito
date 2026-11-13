@@ -40,6 +40,9 @@ export function statePill(st) {
 }
 const stateIcon = st => { const s = el('span', `bl-ico bl-${st}`); s.title = LABEL[st] || st; s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[st] || ICON.todo}</svg>`; return s; };
 
+// A row of facts separated by space, not punctuation.
+const meta = (cls, ...parts) => { const m = el('span', `bl-meta${cls ? ' ' + cls : ''}`); for (const x of parts.filter(v => v != null && v !== '')) m.append(typeof x === 'string' ? el('span', null, x) : x); return m; };
+
 // ---------- data ----------
 function index(d) {
   bl.byKey = new Map(d.tickets.map(t => [t.key, t]));
@@ -299,7 +302,7 @@ const MODES = {
 function execBadge(p) {
   const m = MODES[p.executor] || MODES.session;
   const s = el('span', `bl-exec ex-${p.executor === 'daemon' ? 'queue' : 'orch'}`);
-  s.append(el('b', null, m.kind), ` · ${m.short}`);
+  s.append(el('b', null, m.kind), el('span', 'bl-exec-mode', m.short));
   s.title = m.title;
   return s;
 }
@@ -334,8 +337,9 @@ function daemonBar() {
   const t = el('b', null, label);
   const facts = el('span', 'bl-daemon-facts');
   const workers = bl.data.tickets.filter(x => x.state === 'in_progress' && (x.claimed_by || '').startsWith('daemon:')).length;
-  facts.append(`${workers} working · ${d?.runsToday ?? 0} runs today · ${inFlight}/${cap} in flight`);
-  if (d?.heartbeat) { const h = el('span', null, ` · heartbeat ${ctx.fmtRel(d.heartbeat)} ago`); h.title = ctx.fmtDateTime(d.heartbeat); facts.append(h); }
+  const hb = d?.heartbeat ? el('span', null, `heartbeat ${ctx.fmtRel(d.heartbeat)} ago`) : null;
+  if (hb) hb.title = ctx.fmtDateTime(d.heartbeat);
+  facts.append(meta('', `${workers} working`, `${d?.runsToday ?? 0} runs today`, `${inFlight} of ${cap} in flight`, hb));
   bar.append(dot, t, facts);
   if (d?.quota?.until) {
     const q = el('div', 'bl-quota');
@@ -356,7 +360,7 @@ function executorOf(t) {
   if (c.startsWith('orch:')) return ['bl run', 'ex-orch'];
   if (c.startsWith('cc:')) return ['Session', 'ex-session'];
   if (c === 'chito') return ['chito', ''];
-  return [c || '—', ''];
+  return [c || '', ''];
 }
 function workerSession(t) {
   const ws = (t.sessions || []).filter(s => !s.missing);
@@ -449,7 +453,7 @@ function usageTitle(u) {
 }
 function usageStat(label, u) {
   const s = el('span', 'bl-usage');
-  s.append(el('span', null, label), el('b', 'num', fmtCost(u)), el('span', 'num', `${u.turns} turns · ${fmtTok(u.tokens)} tok`));
+  s.append(el('span', null, label), el('b', 'num', fmtCost(u)), meta('num', `${u.turns} turns`, `${fmtTok(u.tokens)} tokens`));
   s.title = usageTitle(u);
   return s;
 }
@@ -568,7 +572,7 @@ function renderLanes(root) {
   const all = d.tickets;
   const running = all.filter(t => t.state === 'in_progress').length;
   const you = all.filter(needsYou).length;
-  const sub = `${projects.length} project${projects.length === 1 ? '' : 's'} · ${running} in progress · ${you ? `${you} waiting on you` : 'nothing waiting on you'}`;
+  const sub = [meta('', `${projects.length} project${projects.length === 1 ? '' : 's'}`, `${running} in progress`, you ? `${you} waiting on you` : 'nothing waiting on you')];
   root.append(head('Backlog', sub, headRight()), daemonBar());
   const ctl = controls();
   const visible = projects.map(p => p.key);
@@ -669,7 +673,9 @@ function renderLanes(root) {
 // ---- project page ----
 function renderProject(root, p) {
   const tks = bl.data.tickets.filter(t => t.project === p.key);
-  const back = linkTo(el('a', 'bl-back', '← All projects'), '/backlog');
+  const back = linkTo(el('a', 'bl-back'), '/backlog');
+  back.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>';
+  back.append('All projects');
   root.append(back);
   const sub = [];
   if (p.repo) sub.push(el('span', 'num', p.repo.replace(/^\/Users\/[^/]+/, '~')));
@@ -679,7 +685,7 @@ function renderProject(root, p) {
     if (base) { const a = el('a', null, `doc: ${p.doc_slug}`); a.href = `${base.replace(/\/$/, '')}/s/${encodeURIComponent(p.doc_slug)}`; a.target = '_blank'; a.rel = 'noopener'; sub.push(a); }
     else sub.push(el('span', null, `doc: ${p.doc_slug}`));
   }
-  const subWrap = sub.flatMap((n, i) => (i ? [' · ', n] : [n]));
+  const subWrap = [meta('', ...sub)];
   const right = headRight(runBadge(p));
   root.append(head(`${p.name}`, subWrap, right));
   const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), execBadge(p), lifecycleButtons(p, false));
@@ -901,7 +907,7 @@ function table(tks) {
       ttl.append(a);
     } else ttl.append(el('span', 'bl-tt-text', t.title));
     if (t.labels?.length) for (const l of t.labels) ttl.append(el('span', 'bl-label', l));
-    if (t.usage) { const u = el('div', 'bl-tt-usage num', `${t.usage.turns} turns · ${fmtTok(t.usage.tokens)} tokens · ${fmtCost(t.usage)}`); u.title = usageTitle(t.usage); ttl.append(u); }
+    if (t.usage) { const u = el('div', 'bl-tt-usage num'); u.append(meta('', `${t.usage.turns} turns`, `${fmtTok(t.usage.tokens)} tokens`, fmtCost(t.usage))); u.title = usageTitle(t.usage); ttl.append(u); }
     const tcell = td('c-title', ttl);
     const g = geo.get(t.key);
     if (g) {
@@ -980,7 +986,7 @@ function drawDrawer(box, t) {
   const dl = el('dl', 'bl-d-meta');
   const row = (k, ...v) => { if (!v.length || v.every(x => x == null || x === '')) return; dl.append(el('dt', null, k)); const dd = el('dd'); dd.append(...v.filter(x => x != null)); dl.append(dd); };
   const prio = ['Urgent', 'High', 'Normal', 'Low', 'None'][t.priority] ?? String(t.priority);
-  row('Priority', `${t.priority} · ${prio}`);
+  row('Priority', `${prio} (${t.priority})`);
   if (t.state === 'todo') row('Status', isBlocked(bl.byKey.get(t.key) || t) ? 'Blocked by open tickets' : t.assignee === 'human' ? 'Ready, waiting on you' : 'Ready to run');
   row('Assignee', t.assignee || null);
   row('Claimed by', t.claimed_by || null);
@@ -998,7 +1004,7 @@ function drawDrawer(box, t) {
     else row('Design doc', t.doc_slug);
   }
   const tu = bl.byKey.get(t.key)?.usage;
-  if (tu) { const x = el('span', null, `${fmtCost(tu)} · ${tu.turns} turns · ${fmtTok(tu.tokens)} tokens`); x.title = usageTitle(tu); row('Usage', x); }
+  if (tu) { const x = meta('', fmtCost(tu), `${tu.turns} turns`, `${fmtTok(tu.tokens)} tokens`); x.title = usageTitle(tu); row('Usage', x); }
   row('Created', ctx.fmtDateTime(t.created));
   if (t.started) row('Started', ctx.fmtDateTime(t.started));
   if (t.finished) row('Finished', ctx.fmtDateTime(t.finished));
@@ -1030,7 +1036,7 @@ function drawDrawer(box, t) {
       a.href = `/s/${s.id}`;
       a.addEventListener('click', e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); ctx.openSession(s.id); });
       a.innerHTML = SESSION_ICON;
-      a.append(el('span', 'bl-d-sess-title', s.title || (s.missing ? 'Transcript not found' : s.id.slice(0, 8))), el('span', 'bl-d-sess-meta', `${s.role}${s.lastTime ? ' · ' + ctx.fmtRel(s.lastTime) + ' ago' : ''}`));
+      a.append(el('span', 'bl-d-sess-title', s.title || (s.missing ? 'Transcript not found' : s.id.slice(0, 8))), meta('bl-d-sess-meta', s.role, s.lastTime ? `${ctx.fmtRel(s.lastTime)} ago` : ''));
       list.append(a);
     }
     box.append(list);
