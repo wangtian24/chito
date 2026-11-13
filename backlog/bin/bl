@@ -126,7 +126,7 @@ def connect():
             pass  # another process added it first
     c.execute("CREATE INDEX IF NOT EXISTS events_session ON events(session_id)")
     migrate(c, "projects", {"executor": "TEXT NOT NULL DEFAULT 'session'", "owner": "TEXT", "owner_heartbeat": "TEXT",
-                            "evergreen": "INTEGER NOT NULL DEFAULT 0"})
+                            "evergreen": "INTEGER NOT NULL DEFAULT 0", "instructions": "TEXT"})
     migrate(c, "runs", {"kind": "TEXT"})
     migrate(c, "tickets", {"milestone": "TEXT"})
     if c.execute("SELECT 1 FROM projects WHERE status='active' LIMIT 1").fetchone():
@@ -397,7 +397,7 @@ def release_ticket(c, t, reason, count_failure=False, actor=None):
     event(c, "state", t["key"], body=f"in_progress → {new}: {reason}", actor=actor)
     return new
 
-QUOTA_RE = re.compile(r"(usage limit|limit reached|hit your (?:\w+ )?limit|rate.?limit|quota|too many requests|\b429\b|overloaded_error|out of (?:extra )?usage)", re.I)
+QUOTA_RE = re.compile(r"(usage limit (?:reached|hit)|limit reached\||hit your (?:\w+ )?limit|out of (?:extra )?usage|rate_limit_error|overloaded_error|too many requests|\bstatus(?: code)?:? ?429\b|\b429 too many)", re.I)
 
 def quota_until(c):
     q = setting(c, "quota_until") or ""
@@ -526,14 +526,16 @@ def cmd_project(a):
         with tx(c):
             for kv in fields:
                 k, v = kv.split("=", 1)
-                if k not in ("name", "repo", "doc_slug", "status", "executor", "evergreen"):
+                if k not in ("name", "repo", "doc_slug", "status", "executor", "evergreen", "instructions"):
                     die(f"unknown project field {k}")
                 if k == "executor" and v not in ("daemon", "session", "auto"):
                     die("executor must be session (SO: you start an orchestrator), auto (DSO: the daemon starts orchestrator sessions) or daemon (DQ: queue)")
+                if k == "instructions" and v == "-":
+                    v = sys.stdin.read().strip()
                 if k == "evergreen":
                     v = 1 if v.lower() in ("1", "true", "yes", "on") else 0
                 c.execute(f"UPDATE projects SET {k}=?, updated=? WHERE key=?", (v if v != "" else None, now(), p["key"]))
-                event(c, "project", project=p["key"], body=f"{k}={v}")
+                event(c, "project", project=p["key"], body=f"{k}={v}" if k != "instructions" else f"instructions updated: {(v or '(cleared)')[:200]}")
         print("ok")
 
 def cmd_add(a):
@@ -839,6 +841,8 @@ def build_prompt(c, t, compact=False):
     L = [f"# Backlog ticket {t['key']}: {t['title']}", "",
          f"Project {p['key']} ({p['name']}), repo: {p['repo'] or 'n/a'}. Attempt {t['attempts']}. "
          f"Review policy: {review_policy(c, t)}. Size hint: {meta.get('size', 'unspecified')}.", ""]
+    if (p["instructions"] or "").strip():
+        L += ["## Standing instructions for this project", p["instructions"].strip(), ""]
     docs = [d for d in (p["doc_slug"], t["doc_slug"]) if d]
     if docs:
         L.append(f"{setting(c, 'doc_hint', p['key'])}: " + ", ".join(docs)); L.append("")
@@ -1009,20 +1013,35 @@ def orchestrator_prompt(c, proj, agent):
     p = project_row(c, proj)
     n = setting(c, "max_parallel", proj)
     docs = f"\nDesign doc: {p['doc_slug']} ({setting(c, 'doc_hint', proj)})." if p["doc_slug"] else ""
+    ins = (p["instructions"] or "").strip()
+    standing = (f"\n\n## Standing instructions from the user\nFollow these over the defaults below (the safety rule at the end still holds). Pass the ones that matter to each subagent.\n{ins}\n"
+                if ins else "")
     return f"""# Backlog orchestrator for {proj}: {p['name']}
 
 You are the orchestrator session for backlog project {proj} (repo: {p['repo'] or 'n/a'}). Nobody is watching; do not ask questions.{docs}
-Your bl identity is {agent}; you own the project while you run. Read ~/.backlog/LOCAL.md first if it exists.
+Your bl identity is {agent}; you own the project while you run. Read ~/.backlog/LOCAL.md first if it exists.{standing}
+The user can change standing instructions while you run: `bl instructions {proj}` prints the current ones; check it at the start of every round.
 
 Loop until nothing is ready and none of your tickets are in progress:
 1. `bl next {proj} --json` lists ready tickets. `bl status` shows the rest.
 2. Claim up to {n} at a time: `bl claim {proj} KEY --json` (exit 3 = cap reached or nothing ready; that's fine).
 3. For every claimed ticket, dispatch one subagent (Agent tool), all in the same message so they run in parallel. Brief = the full output of `bl prompt KEY`, plus: "Follow the backlog-worker contract. Work in the repo's conventions. Finish with `bl done KEY -m ...`, `bl fail KEY -m ...` or `bl release KEY --reason ...` yourself." Use the ticket's `model` if it sets one (bl show KEY --json → meta.model), else opus. A ticket that is size xl may get its own subagents.
 4. When subagents return, check each ticket (`bl show KEY --json`). If one is still in_progress, record the outcome from its report with bl done/fail.
-5. Between rounds, use judgment: read what finished tickets delivered, tighten specs of downstream tickets (`bl set KEY body=...`, `bl comment`), add missing tickets (`bl add {proj} ... --after KEY`), and leave anything that needs a human to them (`--assignee human`).
+5. Between rounds, use judgment: read what finished tickets delivered, tighten specs of downstream tickets (`bl set KEY body=...`, `bl comment`), add missing tickets (`bl add {proj} ... --after KEY`; no deploy tickets: deploys happen at milestones), and leave anything that needs a human to them (`--assignee human`).
 6. Repeat. If claims stop with "paused for usage limit", stop: the daemon resumes the project later.
 
 Never deploy, spend money or push to main unless a ticket says so and isn't assigned to human. End with a short summary of what got done and what is left."""
+
+def cmd_instructions(a):
+    c = connect()
+    p = project_row(c, a.project)
+    if a.set is not None:
+        v = sys.stdin.read().strip() if a.set == "-" else a.set.strip()
+        with tx(c):
+            c.execute("UPDATE projects SET instructions=?, updated=? WHERE key=?", (v or None, now(), p["key"]))
+            event(c, "project", project=p["key"], body=f"instructions updated: {(v or '(cleared)')[:200]}")
+        print("ok"); return
+    print((p["instructions"] or "").strip() or "(no standing instructions)")
 
 def cmd_orchestrate_prompt(a):
     c = connect()
@@ -1661,6 +1680,9 @@ def brief_humans(c, briefs, me):
             event(c, "brief", t["key"], body="preparing a briefing session for the human", actor=ag, data={"pid": pr.pid, "log": lf.name})
         notify(c, t["project"], f"{t['key']}: preparing a briefing for you ({t['title']})")
 
+ORCH_QUICK_SECONDS = 60   # an orchestrator that fails faster than this did not get to work (login, flags, API errors)
+ORCH_BACKOFF = {}          # project -> (crashes in a row, monotonic time before which no new orchestrator starts)
+
 def auto_projects(c, children, orchs, me, probe_active=None):
     """executor=auto: 2+ ready tickets → one orchestrator session per project; 1 ready → run it as a queue worker."""
     # finished orchestrators
@@ -1673,7 +1695,10 @@ def auto_projects(c, children, orchs, me, probe_active=None):
             continue
         del orchs[pk]; lf.close()
         tail = log_tail(lf.name)
-        hit, _ = detect_quota(tail)
+        hit, _ = detect_quota(tail) if pr.returncode != 0 else (False, None)
+        # Quick and fruitless: failed fast, or exited fast while its tickets are still ready (it did no work).
+        quick = not hit and time.monotonic() - t0 < ORCH_QUICK_SECONDS and \
+            (pr.returncode != 0 or bool(ready(c, pk, me, None, "auto1")))
         with tx(c):
             left = c.execute("SELECT * FROM tickets WHERE state='in_progress' AND claimed_by=?", (ag,)).fetchall()
             until = note_quota(c, None, tail, me) if hit else None
@@ -1681,6 +1706,16 @@ def auto_projects(c, children, orchs, me, probe_active=None):
                 release_ticket(c, t, "usage limit" if hit else f"orchestrator exited ({pr.returncode})", count_failure=not hit, actor=me)
             c.execute("UPDATE projects SET owner=NULL WHERE key=? AND owner=?", (pk, ag))
             event(c, "run", project=pk, body=f"orchestrator session ended ({pr.returncode})" + (f"; usage limit until {until}" if hit else ""), actor=ag)
+        if quick:
+            n = ORCH_BACKOFF.get(pk, (0, 0))[0] + 1
+            wait = min(60, 2 ** (n - 1))
+            ORCH_BACKOFF[pk] = (n, time.monotonic() + wait * 60)
+            last = " / ".join(l.strip() for l in tail.strip().splitlines()[-3:])[:300] or "no output"
+            with tx(c):
+                event(c, "run", project=pk, body=f"orchestrator ended after under a minute ({pr.returncode}) with tickets still ready, {n} in a row; next try in {wait} min: {last}", actor=me)
+            notify(c, pk, f"{pk}: orchestrator ended ({pr.returncode}) within a minute without working the ready tickets, {n} in a row; retrying in {wait} min. Log: {lf.name}. Last output: {last}")
+            continue
+        ORCH_BACKOFF.pop(pk, None)
         notify(c, pk, f"{pk} orchestrator session finished" + (f" (usage limit, paused until {until})" if hit else ""))
     if not setting(c, "daemon_enabled") or quota_until(c) or (probe_active and probe_active()):
         return
@@ -1688,6 +1723,8 @@ def auto_projects(c, children, orchs, me, probe_active=None):
     quiet_since = (datetime.now(timezone.utc) - timedelta(minutes=setting(c, "adopt_after_minutes"))).strftime("%Y-%m-%dT%H:%M:%SZ")
     for p in c.execute("SELECT * FROM projects WHERE status='executing' AND executor IN ('auto','session') ORDER BY key").fetchall():
         if p["key"] in orchs or project_has_live_owner(c, p):
+            continue
+        if ORCH_BACKOFF.get(p["key"], (0, 0))[1] > time.monotonic():
             continue
         adopting = p["executor"] == "session"
         if adopting:
@@ -1854,6 +1891,7 @@ def main():
     p.add_argument("--due"); p.add_argument("--seq", type=int)
     p.add_argument("--kind", choices=["screenshot", "demo", "localhost", "link", "note"]); p.add_argument("--file"); p.add_argument("--url"); p.add_argument("--note")
     p = P("orchestrate-prompt", cmd_orchestrate_prompt); p.add_argument("project")
+    p = P("instructions", cmd_instructions); p.add_argument("project"); p.add_argument("--set", help="new text, or - for stdin; empty clears")
     p = P("quota", cmd_quota); p.add_argument("action", nargs="?", default="status", choices=["status", "clear", "set"])
     p.add_argument("minutes", nargs="?", type=int)
     p = P("daemon", cmd_daemon); p.add_argument("action", choices=["run", "status", "pause", "resume", "install", "uninstall"])

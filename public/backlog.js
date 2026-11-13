@@ -422,6 +422,20 @@ function orchLink(s, compact, last = false) {
   a.title = `${s.title || s.id}: give the orchestrator general instructions for this project here`;
   return a;
 }
+// Standing instructions: every orchestrator run and every worker prompt in this project gets them, and a running
+// orchestrator re-reads them each round (bl instructions KEY).
+function instructionsBox(p) {
+  const box = el('details', 'bl-instr'); if (p.instructions) box.open = true;
+  const sum = el('summary', null, 'Standing instructions');
+  sum.append(el('span', 'bl-instr-hint', p.instructions ? ' every orchestrator and worker in this project follows these' : ' none yet: guidance every orchestrator and worker here should follow'));
+  const ta = el('textarea'); ta.value = p.instructions || ''; ta.rows = 4; ta.placeholder = 'For example: deploy only at milestones. Always add a unit test. Leave the billing code alone.';
+  ta.addEventListener('keydown', e => e.stopPropagation());
+  const save = el('button', 'btn primary', 'Save'); save.type = 'button';
+  save.addEventListener('click', () => { save.disabled = true; act('project-instructions', p.key, ta.value); });
+  const row = el('div', 'bl-instr-row'); row.append(save, el('span', 'bl-instr-hint', 'A running orchestrator picks changes up at its next round.'));
+  box.append(sum, ta, row);
+  return box;
+}
 function execLine(p, compact) {
   const ex = p.execution || {};
   const box = el('div', 'bl-execline');
@@ -790,6 +804,7 @@ function renderProject(root, p) {
   const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), execBadge(p), lifecycleButtons(p, false));
   root.append(ctl);
   const exl = execLine(p, false); if (exl) root.append(exl);
+  root.append(instructionsBox(p));
   if (tks.some(t => t.state === 'in_progress')) root.append(el('h2', 'bl-h2', 'In flight'), inFlight(tks));
 
   const stats = el('div', 'bl-stats');
