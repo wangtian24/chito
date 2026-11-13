@@ -321,8 +321,8 @@ function evergreenIcon() {
 // Lane header chips: the status only when it is news (not Executing), the mode once, evergreen as an icon.
 function laneBadges(p) {
   const out = [];
+  out.push(execBadge(p));   // the mode chip first, so chips line up across rows; the status word follows it
   if (p.status !== 'executing' || isOrphan(p)) out.push(projState(p));
-  out.push(execBadge(p));
   if (p.evergreen) out.push(evergreenIcon());
   return out;
 }
