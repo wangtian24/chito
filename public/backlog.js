@@ -1005,7 +1005,11 @@ function table(tks) {
     const kl = linkTo(el('a', null, t.key.slice(t.project.length + 1)), ticketPath(t)); kl.title = t.key;
     td('c-key num', kl);
     const ttl = el('div', 'bl-tt');
-    const wsess = needsYou(t) ? answerSession(t) : workerSession(t);
+    // A blocked ticket has nothing to open yet: its title is plain text.
+    // The title links only to a session that is the ticket's own (its worker, briefing or handoff), never an orchestrator's.
+    const own = (t.sessions || []).find(s => s.own && !s.missing) || null;
+    const ho = t.meta?.handoff?.session || t.meta?.brief?.session;
+    const wsess = needsYou(t) && ho ? { ...(t.sessions || []).find(s => s.id === ho), id: ho } : own;
     if (wsess) {
       const a = el('a', 'bl-tt-text linked'); a.href = `/s/${wsess.id}`;
       a.title = `Open the session: ${wsess.title || wsess.id}${t.sessions.length > 1 ? ` (${t.sessions.length} sessions; all in the details)` : ''}`;
