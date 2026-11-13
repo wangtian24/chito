@@ -904,9 +904,10 @@ Now:
 3. Compile the handoff packet and record it. It is what the human reads on the board, so every field is required:
    - summary: what this is and what they decide, one or two sentences
    - see: {{"url": ..., "how": ...}}: exactly how to see it (the preview URL and the command that starts it)
-   - links: PRs, the design doc, screenshots
-   - done: EVERY ticket and PR delivered (workers' included), each as what the human will see, with its PR
-   - tests: concrete steps, each with what good looks like and what bad looks like
+   - links: PRs, the design doc, screenshots, each as {{"label": ..., "url": ...}}
+   - done: EVERY ticket and PR delivered (workers' included), each as {{"title": ..., "ref": "#PR", "what": "what the human will see"}}.
+     If nothing is built yet, say so in one item.
+   - tests: concrete steps, each as {{"step": ..., "good": ..., "bad": ...}}
    - gaps: known gaps or limitations (may be empty)
    - questions: 1 to 3, the last one the decision (go / no-go, pick A / B), saying what each answer triggers
    Record it with a heredoc: `bl handoff {key} --packet - <<'EOF'` + the JSON + `EOF`. That moves the ticket to
@@ -933,6 +934,31 @@ HANDOFF_FIELDS = {
     "gaps": "[\"known gap or limitation\"] (may be empty)",
     "questions": "[\"Go / no-go to merge PR #213 (merging deploys)?\", ...]: 1 to 3, the last one the decision",
 }
+
+def _obj(x, key, **extra):
+    """A plain string becomes {key: string}; a dict passes through."""
+    return x if isinstance(x, dict) else {key: str(x), **extra}
+
+def normalize_packet(pk):
+    """Briefing sessions often write links, done and tests as plain strings. The board needs objects."""
+    out = dict(pk)
+    links = []
+    for x in pk.get("links") or []:
+        if isinstance(x, dict):
+            links.append(x)
+        else:
+            m = re.search(r"https?://\S+", str(x))
+            if m:   # "https://x (what it is)" or "what it is: https://x"
+                url = m.group(0).rstrip(").,;")
+                label = (str(x).replace(m.group(0), "").strip(" -:()") or url)
+                links.append({"label": label, "url": url})
+            # a link with no URL (like "MC-PAYMENT-2 is waiting on this") is dropped
+    out["links"] = links
+    out["done"] = [_obj(x, "title") for x in pk.get("done") or []]
+    out["tests"] = [_obj(x, "step") for x in pk.get("tests") or []]
+    out["gaps"] = [str(x) for x in pk.get("gaps") or []]
+    out["questions"] = [str(x) for x in pk.get("questions") or []]
+    return out
 
 def handoff_of(t):
     return json.loads(t["meta"]).get("handoff") or {}
@@ -972,6 +998,7 @@ def cmd_handoff(a):
                 pk = json.loads(raw)
             except Exception as e:
                 die(f"packet is not JSON: {e}")
+            pk = normalize_packet(pk) if isinstance(pk, dict) else pk
             missing = [k for k in ("summary", "see", "done", "tests", "questions") if not pk.get(k)]
             if missing:
                 die("packet is missing " + ", ".join(missing) + ". Fields:\n" + "\n".join(f"  {k}: {v}" for k, v in HANDOFF_FIELDS.items()))
