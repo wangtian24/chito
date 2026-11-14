@@ -23,4 +23,6 @@ bl status                     # or open http://localhost:8791/projects
 
 Data lives in `~/.backlog` (`BL_HOME`): `backlog.db`, `logs/`, `work/`. Put machine-specific conventions (where design docs go, per-repo review policy, how to notify) in `~/.backlog/LOCAL.md`; the skills read it first.
 
+Workers default to Claude. In Chito, choose a harness and model together from one dropdown. The CLI accepts both settings in one command, for example `bl config PROJ harness codex model gpt-6.1-sol`. Pi needs a `provider/model` name, such as `together/moonshotai/Kimi-K3.1-Pro`; Codex can use its CLI default with an empty project model. A ticket can override both via `bl set KEY harness=pi model=together/moonshotai/Kimi-K3.1-Pro`. Changes affect new workers. Auto projects using Pi or Codex use a daemon-started `bl run` coordinator; Claude keeps its orchestrator sessions. Saved Pi credentials work for the daemon; environment keys can be stored in `~/.backlog/credentials.env` (`chmod 600`).
+
 Testing: point `BL_HOME` and `BL_DB` at a scratch directory, and set `worker_cmd` to a fake worker script.

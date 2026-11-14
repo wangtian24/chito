@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { scan, getMeta, HOME, PROJECTS_DIR } from './lib/index.js';
+import { scan, getMeta, getOtherItems, HOME, PROJECTS_DIR } from './lib/index.js';
 import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
 import { backlogSummary, backlogTicket, showcaseFile } from './lib/backlog.js';
+import { workerModel } from './lib/worker-models.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CHITO_PORT || 8791);
@@ -28,6 +29,10 @@ function blArgs(b) {
     case 'project-start': case 'project-pause': case 'project-resume': case 'project-plan': case 'project-archive':
       return k && ['project', action.slice(8), k];
     case 'project-executor': return k && ['daemon', 'session', 'auto'].includes(value) && ['project', 'set', k, `executor=${value}`];
+    case 'project-worker': {
+      const choice = workerModel(value);
+      return k && choice && ['config', k, 'harness', choice.harness, 'model', choice.model];
+    }
     case 'project-name': {
       const v = String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
       return k && v && ['project', 'set', k, `name=${v}`];
@@ -43,7 +48,12 @@ function blArgs(b) {
     }
     case 'ticket-move': return k && ['backlog', 'todo'].includes(value) && ['move', k, value, '--reason', 'from chito'];
     case 'ticket-priority': return k && /^[0-4]$/.test(String(value)) && ['set', k, `priority=${value}`];
-    case 'ticket-model': return k && /^[a-z0-9.-]{0,40}$/.test(String(value ?? '')) && ['set', k, `model=${value || ''}`];
+    case 'ticket-worker': {
+      if (!k) return null;
+      if (value === '') return ['set', k, 'harness=', 'model='];
+      const choice = workerModel(value);
+      return choice && ['set', k, `harness=${choice.harness}`, `model=${choice.model}`];
+    }
     case 'milestone-reach': case 'milestone-cancel': return k && ['milestone', action.slice(10), k];
     case 'ticket-milestone': return k && (value === '' || KEY_RE.test(String(value))) && ['set', k, `milestone=${value || ''}`];
     case 'ticket-handoff': return k && ['preparing', 'awaiting', 'discussing'].includes(value) && ['handoff', k, '--phase', value];
@@ -60,6 +70,7 @@ const STATIC = {
   '/i18n.js': ['public/i18n.js', 'text/javascript'],
   '/i18n/zh-CN.js': ['public/i18n/zh-CN.js', 'text/javascript'],
   '/keys.js': ['public/keys.js', 'text/javascript'],
+  '/worker-models.js': ['lib/worker-models.js', 'text/javascript'],
   '/favicon.svg': ['public/favicon.svg', 'image/svg+xml'],
   '/vendor/marked.js': ['node_modules/marked/lib/marked.esm.js', 'text/javascript'],
   '/vendor/purify.js': ['node_modules/dompurify/dist/purify.es.mjs', 'text/javascript'],
@@ -69,6 +80,8 @@ const shq = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 function resumeCommand(meta, prompt, fork = false) {
   const dir = meta.cwd && fs.existsSync(meta.cwd) ? meta.cwd : HOME;
+  if (meta.source === 'pi') return `cd ${shq(dir)} && pi ${fork ? '--fork' : '--session'} ${shq(meta.file)}${prompt ? ' ' + shq(prompt) : ''}`;
+  if (meta.source === 'codex') return `cd ${shq(dir)} && codex resume ${shq(meta.id)}${prompt ? ' ' + shq(prompt) : ''}`;
   return `cd ${shq(dir)} && claude --resume ${meta.id}${fork ? ' --fork-session' : ''}${CLAUDE_FLAGS ? ' ' + CLAUDE_FLAGS : ''}${prompt ? ' ' + shq(prompt) : ''}`;
 }
 
@@ -172,7 +185,7 @@ function send(res, status, body, type = 'application/json; charset=utf-8') {
 
 function listItem(m) {
   return {
-    id: m.id, title: m.title, customTitle: m.customTitle, aiTitle: m.aiTitle, project: m.project, cwd: m.cwd,
+    id: m.id, source: m.source || 'claude', title: m.title, customTitle: m.customTitle, aiTitle: m.aiTitle, project: m.project, cwd: m.cwd,
     gitBranch: m.gitBranch, startTime: m.startTime, lastTime: m.lastTime, userTurns: m.userTurns,
     firstPrompt: m.firstPrompt ? m.firstPrompt.slice(0, 200) : null, agent: m.agent, prCount: m.prLinks.length,
     subagents: m.subagents, size: m.size,
@@ -260,15 +273,16 @@ const server = http.createServer(async (req, res) => {
     if (m) {
       const id = m[1];
       if (!UUID_RE.test(id)) return send(res, 400, { error: 'bad id' });
-      const meta = getMeta(id);
+      let meta = getMeta(id);
       if (!meta) return send(res, 404, { error: 'not found' });
+      if (meta.source) { scan(true); meta = getMeta(id); if (!meta) return send(res, 404, { error: 'not found' }); }
       if (m[2] === '/send') {
         if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
         let text = '';
         try { text = String(JSON.parse(await readBody(req)).text || '').trim(); } catch { return send(res, 400, { error: 'bad body' }); }
         if (!text) return send(res, 400, { error: 'empty message' });
         // A typed newline would submit early in the live TUI, so flatten for that path.
-        const existing = await focusExisting(id, text.replace(/\s*\n\s*/g, ' '));
+        const existing = meta.source ? null : await focusExisting(id, text.replace(/\s*\n\s*/g, ' '));
         if (existing?.state === 'focused') return send(res, 200, { ok: true, action: 'typed', terminal: TERMINAL, ...existing });
         if (existing?.state === 'running-elsewhere') return send(res, 409, { error: `It is running in the background (pid ${existing.pid}) with no terminal to type into; open it to get a forked copy, or wait for it to finish` });
         await openInTerminal(resumeCommand(meta, text));
@@ -278,7 +292,7 @@ const server = http.createServer(async (req, res) => {
         // Custom header forces a CORS preflight, so other sites can't trigger this.
         if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
         const cmd = resumeCommand(meta);
-        const existing = await focusExisting(id);
+        const existing = meta.source ? null : await focusExisting(id);
         if (existing?.state === 'focused') return send(res, 200, { ok: true, action: 'focused', terminal: TERMINAL, ...existing });
         // Live in a process with no terminal (a daemon's claude -p): open a fork, a copy with the full history under a new
         // session id, so the running process keeps sole ownership of its own transcript.
@@ -290,8 +304,8 @@ const server = http.createServer(async (req, res) => {
         await openInTerminal(cmd);
         return send(res, 200, { ok: true, action: 'opened', command: cmd, terminal: TERMINAL });
       }
-      const items = loadTranscript(meta.file);
-      const live = liveSessions().get(id) || null;
+      const items = meta.source ? getOtherItems(id) : loadTranscript(meta.file);
+      const live = meta.source ? null : liveSessions().get(id) || null;
       return send(res, 200, { meta: { ...meta, live, resumeCommand: resumeCommand(meta), cwdExists: !!meta.cwd && fs.existsSync(meta.cwd) }, items });
     }
     send(res, 404, { error: 'not found' });

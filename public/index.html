@@ -52,6 +52,12 @@
         <kbd class="search-kbd">/</kbd>
       </div>
       <div class="filters">
+        <select id="f-source" aria-label="Filter by harness" title="Filter sessions by harness">
+          <option value="all">All harnesses</option>
+          <option value="claude">Claude Code</option>
+          <option value="pi">Pi</option>
+          <option value="codex">Codex</option>
+        </select>
         <button class="chip" id="f-agents" title="Show headless agent sessions (a)" data-i18n-attr="title" data-i18n>Agent runs</button>
         <span class="filters-spacer"></span>
         <button class="chip ghost" id="help-btn" title="Keyboard shortcuts (?)" data-i18n-attr="title" data-i18n>Keys</button>
@@ -200,8 +206,8 @@
           </svg>
           <div><b>chito</b><span data-i18n>Version 0.1.0</span></div>
         </div>
-        <p data-i18n-html="A simple web UI for Claude Code. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.">A simple web UI for Claude Code. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.</p>
-        <p data-i18n-html="It runs locally and reads the transcripts in &lt;code&gt;~/.claude/projects&lt;/code&gt;. Nothing is sent anywhere.">It runs locally and reads the transcripts in <code>~/.claude/projects</code>. Nothing is sent anywhere.</p>
+        <p data-i18n-html="A simple web UI for Claude Code, Pi, and Codex. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.">A simple web UI for Claude Code, Pi, and Codex. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.</p>
+        <p data-i18n-html="It runs locally and reads transcripts from each CLI&#39;s session directory. Nothing is sent anywhere.">It runs locally and reads transcripts from each CLI's session directory. Nothing is sent anywhere.</p>
         <p data-i18n-html="chito is open source and public under the MIT license. Code, issues and changes live at &lt;a href=&quot;https://github.com/wangtian24/chito&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;github.com/wangtian24/chito&lt;/a&gt;.">chito is open source and public under the MIT license. Code, issues and changes live at <a href="https://github.com/wangtian24/chito" target="_blank" rel="noopener">github.com/wangtian24/chito</a>.</p>
       </section>
     </div>

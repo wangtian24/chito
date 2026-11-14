@@ -8,6 +8,13 @@ marked.setOptions({ gfm: true, breaks: false });
 
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+function harnessChip(source) {
+  const labels = { claude: 'Claude Code', pi: 'Pi', codex: 'Codex' };
+  const name = labels[source || 'claude'] || source;
+  const chip = el('span', 'harness-chip', name);
+  chip.title = `Harness: ${name}`;
+  return chip;
+}
 const store = {
   get(k, d) { try { const v = localStorage.getItem('chito.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('chito.' + k, JSON.stringify(v)); } catch { } },
@@ -20,6 +27,7 @@ const state = {
   activeId: null,
   active: null, // { meta, items }
   showAgents: store.get('showAgents', false),
+  source: ['all', 'claude', 'pi', 'codex'].includes(store.get('source', 'all')) ? store.get('source', 'all') : 'all',
   toolMode: ['none', 'count', 'full'].includes(store.get('toolMode')) ? store.get('toolMode') : 'none',
   workMode: store.get('workMode', 'hide') === 'show' ? 'show' : 'hide',
   infoOpen: false,
@@ -120,7 +128,7 @@ function parseQuery(q) {
 function applyFilter(resetCursor = true, follow = true) {
   const q = $('#q').value;
   const { terms, proj } = parseQuery(q);
-  let list = state.sessions.filter(s => state.showAgents || !s.agent || s.id === state.activeId);
+  let list = state.sessions.filter(s => (state.source === 'all' || (s.source || 'claude') === state.source) && (state.showAgents || !s.agent || s.id === state.activeId));
   if (proj) list = list.filter(s => (s.project || '').toLowerCase().includes(proj));
   if (terms.length) {
     const scored = [];
@@ -254,7 +262,7 @@ function renderList(searching, follow = true) {
   const list = $('#list');
   const { terms } = parseQuery($('#q').value);
   list.textContent = '';
-  const shown = state.sessions.filter(s => state.showAgents || !s.agent).length;
+  const shown = state.sessions.filter(s => (state.source === 'all' || (s.source || 'claude') === state.source) && (state.showAgents || !s.agent)).length;
   $('#count').textContent = searching ? `${state.filtered.length} / ${shown}` : `${shown}`;
   if (!searching) list.append(pinZone());
   if (!state.filtered.length && !state.olderCount) { list.append(el('div', 'list-empty', t('No sessions match.'))); return; }
@@ -286,7 +294,7 @@ function renderList(searching, follow = true) {
     ti.append(highlight(s.title, terms));
     ti.title = s.title;
     const m = el('div', 'item-meta');
-    m.append(el('span', 'proj', s.project));
+    m.append(harnessChip(s.source), el('span', 'proj', s.project));
     if (s.gitBranch && !['main', 'master', 'HEAD'].includes(s.gitBranch)) m.append(el('span', 'branch', s.gitBranch));
     if (s.prCount) {
       const badge = el('button', 'badge', s.prCount > 1 ? t('{n} PRs', { n: s.prCount }) : 'PR');
@@ -362,11 +370,14 @@ async function openSession(id, { push = true, hash = '' } = {}) {
   if (state.view !== 'sessions') setView('sessions');
   state.activeId = id;
   state.cursorId = id;
+  const listMeta = state.sessions.find(s => s.id === id);
+  if (listMeta && state.source !== 'all' && (listMeta.source || 'claude') !== state.source) {
+    state.source = 'all'; store.set('source', 'all'); $('#f-source').value = 'all'; applyFilter(false, false);
+  }
   document.querySelectorAll('#list .item').forEach(n => n.classList.toggle('active', state.filtered[n.dataset.idx]?.id === id));
   const thread = $('#thread');
   document.body.classList.add('has-session');
   const token = ++state.renderToken;
-  const listMeta = state.sessions.find(s => s.id === id);
   setHeader(listMeta);
   thread.textContent = '';
   thread.append(el('div', 'loading', t('Loading…')));
@@ -401,7 +412,7 @@ function setHeader(meta) {
   $('#title').title = meta.title;
   const sub = $('#subtitle');
   sub.textContent = '';
-  sub.append(el('span', 'path', tildify(meta.cwd) || meta.project));
+  sub.append(harnessChip(meta.source), el('span', 'path', tildify(meta.cwd) || meta.project));
   if (meta.gitBranch && meta.gitBranch !== 'HEAD') sub.append(el('span', 'branch', meta.gitBranch));
   const span = el('span', 'span');
   span.append(el('span', 'num', fmtShort(meta.startTime)), t(' to '), el('span', 'num', fmtRel(meta.lastTime) === 'now' ? t('now') : fmtShort(meta.lastTime)));
@@ -540,7 +551,7 @@ function renderItem(it, idx = -1, total = 0) {
     const m = el('div', 'msg ai');
     m.id = it.uuid;
     const head = el('div', 'msg-head');
-    head.append(el('span', 'who', 'Claude'));
+    head.append(el('span', 'who', it.source === 'pi' ? 'Pi' : it.source === 'codex' ? 'Codex' : 'Claude'));
     if (it.model) head.append(el('span', 'model', it.model.replace(/^claude-/, '')));
     head.append(el('span', 'num', fmtTime(it.ts)));
     if (it.endTs && it.endTs !== it.ts) { const d = el('span', 'num dur', fmtDur(it.ts, it.endTs)); d.title = t('Time spent on this reply'); head.append(d); }
@@ -758,6 +769,7 @@ function renderInfo() {
   if (m.customTitle) row(t('Name'), m.customTitle);
   if (m.aiTitle && m.aiTitle !== m.customTitle) row(t('AI title'), m.aiTitle);
   row(t('Session ID'), code(m.id));
+  row(t('Harness'), harnessChip(m.source));
   row(t('Directory'), code(tildify(m.cwd) || '—'));
   if (m.gitBranch) row(t('Branch'), code(m.gitBranch));
   row(t('Prompts'), t('{prompts} prompts, {replies} replies, {tools} tool calls', { prompts: m.userTurns, replies: m.assistantMsgs, tools: m.toolCalls }));
@@ -920,7 +932,7 @@ async function renderLanding() {
     when.title = fmtDateTime(s.lastTime);
     top.append(when);
     const meta = el('div', 'rcard-meta');
-    meta.append(el('span', null, s.project));
+    meta.append(harnessChip(s.source), el('span', null, s.project));
     if (s.gitBranch && !['main', 'master', 'HEAD'].includes(s.gitBranch)) meta.append(el('span', null, s.gitBranch));
     if (s.live) meta.append(el('span', 'rcard-status', s.live.status === 'busy' ? t('Working now') : t('Open in a terminal')));
     a.append(top, meta);
@@ -935,7 +947,7 @@ async function renderLanding() {
       ans.querySelectorAll('a').forEach(x => x.replaceWith(...x.childNodes));
       a.append(ans);
     } else if (s.live?.status === 'busy') {
-      a.append(el('div', 'rcard-prompt', t('Claude is still working on this turn.')));
+      a.append(el('div', 'rcard-prompt', t('{name} is still working on this turn.', { name: s.source === 'pi' ? 'Pi' : s.source === 'codex' ? 'Codex' : 'Claude Code' })));
     }
     a.addEventListener('click', e => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
@@ -1314,6 +1326,8 @@ $('#q').addEventListener('input', () => {
 });
 $('#f-agents').classList.toggle('on', state.showAgents);
 $('#f-agents').addEventListener('click', toggleAgents);
+$('#f-source').value = state.source;
+$('#f-source').addEventListener('change', e => { state.source = e.target.value; store.set('source', state.source); applyFilter(); });
 $('#help-btn').addEventListener('click', () => openSettings('keyboard'));
 $('#b-settings').addEventListener('click', () => openSettings());
 $('#home').addEventListener('click', e => {

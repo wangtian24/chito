@@ -4,7 +4,7 @@
 SQLite at $BL_DB (default ~/.backlog/backlog.db). Stdlib only. Every write goes through here.
 Part of chito (github.com/wangtian24/chito); design in backlog/docs/design.md.
 """
-import argparse, json, os, re, shlex, signal, socket, sqlite3, subprocess, sys, time
+import argparse, json, os, re, shlex, shutil, signal, socket, sqlite3, subprocess, sys, time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -37,6 +37,7 @@ DEFAULTS = {
     "lease_minutes": 30,
     "worker_timeout_minutes": 120,
     "model": "opus",            # default worker model; a ticket can set meta.model (e.g. sonnet) for simple work
+    "harness": "claude",        # claude | codex | pi; may be set per project or ticket
     "worktree": True,
     "review": "ask",            # self | pr | ask
     "on_stuck": "wait",         # wait | exit
@@ -260,15 +261,69 @@ def orphan_sql(c):
     return (f"(p.owner IS NOT NULL AND p.owner!='daemon' AND (p.owner_heartbeat IS NULL OR p.owner_heartbeat < "
             f"'{(datetime.now(timezone.utc) - timedelta(minutes=setting(c, 'lease_minutes'))).strftime('%Y-%m-%dT%H:%M:%SZ')}'))")
 
-def ready(c, project=None, agent=None, only=None, mode=None):
+def ready(c, project=None, agent=None, only=None, mode=None, include_paused=False):
     sql = READY_SQL.format(proj="AND t.project=:project" if project else "",
                            only="AND t.key=:only" if only else "",
                            mode=MODE_SQL[mode].replace("{orphan}", orphan_sql(c)))
-    return c.execute(sql, {"project": project, "agent": agent or agent_id(), "only": only,
+    rows = c.execute(sql, {"project": project, "agent": agent or agent_id(), "only": only,
                            "adopt": 1 if setting(c, "orphan_policy") == "daemon" else 0}).fetchall()
+    return rows if include_paused else [t for t in rows if not quota_until(c, t["project"])]
 
 def model_for(c, t):
-    return json.loads(t["meta"]).get("model") or setting(c, "model", t["project"], json.loads(t["labels"]))
+    meta = json.loads(t["meta"])
+    if meta.get("model"):
+        return meta["model"]
+    scopes = [f"label:{label}" for label in json.loads(t["labels"])] + [f"project:{t['project']}", "global"]
+    for scope in scopes:
+        row = c.execute("SELECT value FROM settings WHERE scope=? AND key='model'", (scope,)).fetchone()
+        if row:
+            return json.loads(row["value"]) or None
+    # The built-in default belongs to Claude, not to Codex or Pi.
+    return DEFAULTS["model"] if harness_for(c, t) == "claude" else None
+
+def harness_for(c, t):
+    return json.loads(t["meta"]).get("harness") or setting(c, "harness", t["project"], json.loads(t["labels"]))
+
+def worker_command(c, t, model, prompt):
+    """Return an argv for built-in harnesses. A custom worker_cmd remains supported."""
+    harness = harness_for(c, t)
+    instruction = (f"You are a backlog worker for ticket {t['key']}. Read ~/.backlog/LOCAL.md and "
+                   "the backlog-worker contract if available. Finish with bl done, bl fail or bl release. "
+                   "Never deploy, spend money or push to main unless this ticket explicitly authorizes it.")
+    if harness == "claude":
+        return ["claude", "-p", prompt, "--model", model or "opus", "--permission-mode", "bypassPermissions",
+                "--append-system-prompt", instruction]
+    if harness == "codex":
+        cmd = ["codex", "exec", "--add-dir", str(HOME.resolve()), "--approve-for-me"]
+        repo = project_row(c, t["project"])["repo"]
+        if repo:
+            # Git worktrees write shared metadata in the repository's .git directory.
+            cmd += ["--add-dir", str(Path(repo).expanduser().resolve())]
+        if model: cmd += ["--model", model]
+        return cmd + [instruction + "\n\n" + prompt]
+    if harness == "pi":
+        if not model or "/" not in model:
+            raise ValueError("Pi needs a project or ticket model in provider/model form (for example moonshot/kimi-k2.5)")
+        pi = (shutil.which("pi") or str(Path.home() / ".pi" / "agent" / "bin" / "pi"))
+        return [pi, "--print", "--approve", "--provider", model.split("/", 1)[0], "--model", model,
+                "--append-system-prompt", instruction, prompt]
+    raise ValueError(f"unknown harness {harness!r}")
+
+def worker_env():
+    env = {k: v for k, v in os.environ.items() if k not in ("BL_IN_ORCH", "CLAUDE_CODE_SESSION_ID", "BL_OWNER")}
+    # launchd has no shell environment. Keep provider keys outside the database and repo.
+    keys = HOME / "credentials.env"
+    if keys.exists():
+        if keys.stat().st_mode & 0o077:
+            raise ValueError(f"{keys} must have permissions 600")
+        for line in keys.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"): continue
+            name, sep, value = line.partition("=")
+            if not sep or name not in ("TOGETHER_API_KEY", "MOONSHOT_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"):
+                raise ValueError(f"invalid credential entry in {keys}: {name}")
+            env[name] = value.strip().strip('"').strip("'")
+    return env
 
 def finalize_projects(c):
     """Executing, non-evergreen projects with nothing left to do become done. Also refreshes milestones."""
@@ -399,8 +454,11 @@ def release_ticket(c, t, reason, count_failure=False, actor=None):
 
 QUOTA_RE = re.compile(r"(usage limit (?:reached|hit)|limit reached\||hit your (?:\w+ )?limit|out of (?:extra )?usage|rate_limit_error|overloaded_error|too many requests|\bstatus(?: code)?:? ?429\b|\b429 too many)", re.I)
 
-def quota_until(c):
+def quota_until(c, project=None):
     q = setting(c, "quota_until") or ""
+    if project:
+        pq = setting(c, "quota_until", project) or ""
+        q = max(q, pq)
     return q if q and q > now() else None
 
 def detect_quota(text):
@@ -420,15 +478,16 @@ def detect_quota(text):
         return True, t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return True, None
 
-def note_quota(c, key, text, actor):
-    """A worker stopped on a usage limit: pause all claims until the reset time and notify once."""
+def note_quota(c, key, text, actor, project=None):
+    """Pause the affected project; a projectless event pauses all claims."""
     _, reset = detect_quota(text)
-    until = reset or later(setting(c, "quota_backoff_minutes"))
-    cur = setting(c, "quota_until") or ""
+    project = project or (ticket(c, key)["project"] if key else None)
+    until = reset or later(setting(c, "quota_backoff_minutes", project))
+    cur = quota_until(c, project) or ""
     if until > cur:
-        c.execute("INSERT OR REPLACE INTO settings VALUES('global','quota_until',?)", (json.dumps(until),))
+        c.execute("INSERT OR REPLACE INTO settings VALUES(?,?,?)", (f"project:{project}" if project else "global", "quota_until", json.dumps(until)))
     line = next((l for l in reversed(text.splitlines()) if QUOTA_RE.search(l)), "")[:200]
-    event(c, "quota", key, body=f"usage limit hit; claims paused until {until}: {line}", actor=actor, data={"until": until})
+    event(c, "quota", key, project=project, body=f"usage limit hit; {'project' if project else 'all'} claims paused until {until}: {line}", actor=actor, data={"until": until})
     return until
 
 def log_tail(lf_name, n=6000):
@@ -443,8 +502,8 @@ def claim(c, project=None, key=None, agent=None, lease=None, force=False, mode="
     agent = agent or agent_id()
     with tx(c):
         reap(c)
-        if not force and quota_until(c):
-            return None, f"paused for usage limit until {quota_until(c)} (bl quota clear to retry now)"
+        if not force and quota_until(c, project):
+            return None, f"paused for usage limit until {quota_until(c, project)}"
         if not force and mode == "daemon":
             if not setting(c, "daemon_enabled"):
                 return None, "daemon paused"
@@ -464,7 +523,7 @@ def claim(c, project=None, key=None, agent=None, lease=None, force=False, mode="
                 if c.execute("SELECT count(*) FROM tickets WHERE state='in_progress' AND project=?",
                              (project,)).fetchone()[0] >= pmax:
                     return None, f"project cap reached ({pmax} in progress in {project})"
-        rows = ready(c, project, agent, key, None if force else mode)
+        rows = ready(c, project, agent, key, None if force else mode, include_paused=force)
         if not rows:
             if not force and project:
                 pr = c.execute("SELECT status, executor FROM projects WHERE key=?", (project,)).fetchone()
@@ -801,8 +860,10 @@ def cmd_set(a):
                 c.execute(f"UPDATE tickets SET {k}=? WHERE key=?", (v if v != "" else None, t["key"]))
             elif k == "milestone":
                 assign_milestone(c, t["key"], v or None)
-            elif k.startswith("meta.") or k in ("review", "size", "model", "executor"):
+            elif k.startswith("meta.") or k in ("review", "size", "model", "harness", "executor"):
                 mk = k[5:] if k.startswith("meta.") else k
+                if mk == "harness" and v and v not in ("claude", "codex", "pi"):
+                    die("harness must be claude, codex or pi")
                 if v == "": meta.pop(mk, None)
                 else:
                     try: meta[mk] = json.loads(v)
@@ -823,13 +884,19 @@ def cmd_config(a):
             "\n".join(f"{k:24} {json.dumps(v)}{'  *' if any(r['key'] == k for r in rows) else ''}" for k, v in eff.items())
             + "\n(* set at this scope)")
         return
+    if len(a.extra) % 2:
+        die("config expects key/value pairs")
+    pairs = [(a.key, a.value)] + list(zip(a.extra[::2], a.extra[1::2]))
     with tx(c):
-        if a.value is None:
-            c.execute("DELETE FROM settings WHERE scope=? AND key=?", (scope, a.key))
-        else:
-            try: v = json.loads(a.value)
-            except Exception: v = a.value
-            c.execute("INSERT OR REPLACE INTO settings VALUES(?,?,?)", (scope, a.key, json.dumps(v)))
+        for key, value in pairs:
+            if key == "harness" and value is not None and value not in ("claude", "codex", "pi"):
+                die("harness must be claude, codex or pi")
+            if value is None:
+                c.execute("DELETE FROM settings WHERE scope=? AND key=?", (scope, key))
+            else:
+                try: v = json.loads(value)
+                except Exception: v = value
+                c.execute("INSERT OR REPLACE INTO settings VALUES(?,?,?)", (scope, key, json.dumps(v)))
     print("ok")
 
 def build_prompt(c, t, compact=False):
@@ -1342,15 +1409,26 @@ def spawn_worker(c, t, ag, actor):
         return None
     LOGS.mkdir(parents=True, exist_ok=True)
     lf = open(LOGS / f"{t['key']}.{t['attempts']}.log", "w")
-    env = {k: v for k, v in os.environ.items() if k not in ("BL_IN_ORCH", "CLAUDE_CODE_SESSION_ID", "BL_OWNER")}
-    model = str(model_for(c, t))
-    env = {**env, "BL_TICKET": t["key"], "BL_AGENT": ag, "BL_DB": str(DB), "BL_MODEL": model,
-           "PATH": f"{Path(__file__).resolve().parent}:{os.environ.get('PATH', '')}"}
-    cmd = setting(c, "worker_cmd", t["project"], json.loads(t["labels"]))
-    pr = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
+    model = model_for(c, t)
+    harness = harness_for(c, t)
+    try:
+        env = worker_env()
+        env.update({"BL_TICKET": t["key"], "BL_AGENT": ag, "BL_DB": str(DB), "BL_MODEL": str(model or ""),
+                    "BL_HARNESS": harness, "PATH": f"{Path(__file__).resolve().parent}:{os.environ.get('PATH', '')}"})
+        scopes = [f"label:{x}" for x in json.loads(t["labels"])] + [f"project:{t['project']}", "global"]
+        custom = next((r for scope in scopes if (r := c.execute(
+            "SELECT value FROM settings WHERE scope=? AND key='worker_cmd'", (scope,)).fetchone())), None)
+        cmd = json.loads(custom["value"]) if custom else worker_command(c, t, model, build_prompt(c, t))
+        pr = subprocess.Popen(cmd, shell=isinstance(cmd, str), cwd=cwd, env=env, stdout=lf,
+                              stderr=subprocess.STDOUT, start_new_session=True)
+    except (ValueError, OSError) as e:
+        lf.write(f"bl: worker could not start: {e}\n"); lf.close()
+        with tx(c):
+            release_ticket(c, ticket(c, t["key"]), f"worker could not start: {e}", count_failure=True, actor=actor)
+        return None
     with tx(c):
-        event(c, "spawn", t["key"], body=f"worker started in {cwd} (model {model})", actor=ag,
-              data={"cwd": cwd, "log": lf.name, "pid": pr.pid, "model": model})
+        event(c, "spawn", t["key"], body=f"{harness} worker started in {cwd} (model {model or 'default'})", actor=ag,
+              data={"cwd": cwd, "log": lf.name, "pid": pr.pid, "model": model, "harness": harness})
     return pr, lf
 
 def collect_children(c, children, actor, project=None):
@@ -1729,7 +1807,7 @@ ORCH_QUICK_SECONDS = 60   # an orchestrator that fails faster than this did not 
 ORCH_BACKOFF = {}          # project -> (crashes in a row, monotonic time before which no new orchestrator starts)
 
 def auto_projects(c, children, orchs, me, probe_active=None):
-    """executor=auto: 2+ ready tickets → one orchestrator session per project; 1 ready → run it as a queue worker."""
+    """executor=auto: start a coordinator for ready tickets, or a queue worker below the threshold."""
     # finished orchestrators
     for pk, (pr, ag, t0, lf) in list(orchs.items()):
         if pr.poll() is None:
@@ -1746,7 +1824,7 @@ def auto_projects(c, children, orchs, me, probe_active=None):
             (pr.returncode != 0 or bool(ready(c, pk, me, None, "auto1")))
         with tx(c):
             left = c.execute("SELECT * FROM tickets WHERE state='in_progress' AND claimed_by=?", (ag,)).fetchall()
-            until = note_quota(c, None, tail, me) if hit else None
+            until = note_quota(c, None, tail, me, project=pk) if hit else None
             for t in left:
                 release_ticket(c, t, "usage limit" if hit else f"orchestrator exited ({pr.returncode})", count_failure=not hit, actor=me)
             c.execute("UPDATE projects SET owner=NULL WHERE key=? AND owner=?", (pk, ag))
@@ -1794,17 +1872,27 @@ def auto_projects(c, children, orchs, me, probe_active=None):
             env.update({"BL_AGENT": ag, "BL_OWNER": ag, "BL_ORCH_PROJECT": p["key"], "BL_DB": str(DB),
                         "BL_MODEL": str(setting(c, "orchestrator_model", p["key"])),
                         "PATH": f"{Path(__file__).resolve().parent}:{os.environ.get('PATH', '')}"})
-            prompt = orchestrator_prompt(c, p["key"], ag)
-            pr = subprocess.Popen(["claude", "-p", prompt, "--model", env["BL_MODEL"], "--permission-mode", "bypassPermissions",
-                                   "--append-system-prompt", f"You are the backlog orchestrator for {p['key']}. Keep going until nothing is ready."],
+            claude_only = all(harness_for(c, t) == "claude" for t in rd)
+            if claude_only:
+                prompt = orchestrator_prompt(c, p["key"], ag)
+                cmd = ["claude", "-p", prompt, "--model", env["BL_MODEL"], "--permission-mode", "bypassPermissions",
+                       "--append-system-prompt", f"You are the backlog orchestrator for {p['key']}. Keep going until nothing is ready."]
+            else:
+                # bl run coordinates the DAG and launches each ticket with its effective harness/model.
+                cmd = [sys.executable, str(Path(__file__).resolve()), "run", p["key"], "--until", "done"]
+                env.pop("BL_AGENT", None)
+                env.pop("BL_OWNER", None)
+                env["BL_DAEMON"] = "1"
+            pr = subprocess.Popen(cmd,
                                   cwd=cwd, env=env, stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
             orchs[p["key"]] = (pr, ag, time.monotonic(), lf)
             with tx(c):
-                c.execute("UPDATE projects SET owner=?, owner_heartbeat=? WHERE key=?", (ag, now(), p["key"]))
+                if claude_only:
+                    c.execute("UPDATE projects SET owner=?, owner_heartbeat=? WHERE key=?", (ag, now(), p["key"]))
                 event(c, "run", project=p["key"], body=(f"daemon adopted the stalled project: " if adopting else "") +
-                      f"orchestrator session started for {len(rd)} ready tickets", actor=ag,
-                      data={"pid": pr.pid, "log": lf.name, "cwd": cwd, "adopted": adopting})
-            notify(c, p["key"], f"{p['key']}: {'adopted (no live session); ' if adopting else ''}started an orchestrator session for {len(rd)} ready tickets, log {lf.name}")
+                      f"{'Claude session' if claude_only else 'bl run'} orchestrator started for {len(rd)} ready tickets", actor=ag,
+                      data={"pid": pr.pid, "log": lf.name, "cwd": cwd, "adopted": adopting, "kind": "claude" if claude_only else "bl-run"})
+            notify(c, p["key"], f"{p['key']}: {'adopted (no live session); ' if adopting else ''}started {'Claude session' if claude_only else 'bl run'} orchestrator for {len(rd)} ready tickets, log {lf.name}")
         else:
             ag = f"{me}:a{int(time.time()) % 100000}"
             t, why = claim(c, p["key"], rd[0]["key"], agent=ag, mode="auto1")
@@ -1917,7 +2005,7 @@ def main():
     p.add_argument("--reset", action="store_true", help="with todo: reset attempts")
     p = P("set", cmd_set); p.add_argument("key"); p.add_argument("fields", nargs="+", help="field=value")
     p = P("config", cmd_config); p.add_argument("scope", help="global | MAP | project:MAP | label:ui")
-    p.add_argument("key", nargs="?"); p.add_argument("value", nargs="?")
+    p.add_argument("key", nargs="?"); p.add_argument("value", nargs="?"); p.add_argument("extra", nargs="*")
     p = P("prompt", cmd_prompt); p.add_argument("key"); p.add_argument("--compact", action="store_true")
     p = P("worktree", cmd_worktree); p.add_argument("key")
     P("status", cmd_status)
