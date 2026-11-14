@@ -36,6 +36,7 @@ scripts/install-launchagent.sh     # start at login; CHITO_NODE=/path/to/node CH
 - The chat view renders Markdown, collapsible tool calls (input and result loaded when expanded), thinking, images, compaction dividers, background-task notes and PR links.
 - **Details** (`i`) shows start time, last turn time, duration, name, ID, directory, branch, prompt, reply and tool counts, models, tokens, top tools, PRs, CLI version and transcript path.
 - **Open in terminal** (`o`) opens iTerm (or Terminal.app) with the corresponding CLI's resume command. The sidebar's source menu shows all sessions or one CLI at a time.
+- **Send a message** (`r`): if the session is open in iTerm it is typed into that pane. Otherwise, with **In background** ticked (the default, remembered per browser), chito resumes the session headless (`claude --resume <id> -p`, `codex exec resume`, `pi --session … -p`) in its own directory with no terminal window, and the reply appears in the open view as it is written. The session shows as running and a second send is refused until the run exits. Unticked, it opens a new terminal window instead; `⌥↵` uses the other mode once. Headless Claude turns run in the session's last recorded permission mode (they can't answer prompts); output goes to `~/.cache/chito/bg/`.
 - Permalinks: `http://localhost:8791/s/<session-id>`, plus `#<message-uuid>` for a single message (hover a message and click `#`).
 - Headless agent sessions (cwd outside `$HOME`) are hidden by default; toggle them with `a`.
 
@@ -188,7 +189,7 @@ Each turn's final run of text is the answer; everything before it (interim notes
 | `/`, `⌘K` | search (`↑↓` + `↵` inside the search box) |
 | `j` `k`, `↵` | move through the list, open |
 | `o` | reopen in terminal, or focus its iTerm window/tab/pane if already running |
-| `r` | write a message (typed into the live session, or resumes it in a new window) |
+| `r` | write a message (typed into the live session, or resumes it in the background or a new window) |
 | `↑` `↓` `PgUp` `PgDn` | scroll conversation |
 | `c` / `y` | copy resume command / permalink |
 | `i` | details panel |
@@ -217,6 +218,8 @@ Each turn's final run of text is the answer; everything before it (interim notes
 | `CHITO_ARTI_BASE` | unset (base URL used to link `doc_slug` design docs) |
 
 | `CHITO_CLAUDE_FLAGS` | `--allow-dangerously-skip-permissions` |
+| `CHITO_BG_PERMISSION_MODE` | unset (background sends use the session's last permission mode; set e.g. `acceptEdits` to force one) |
+| `CHITO_BG_LOG_DIR` | `~/.cache/chito/bg` |
 
 `~/.config/chito/config.json` can also set `blPath`, `artiBase` and `prices` (per-model $/M tokens for the nominal cost figures).
 

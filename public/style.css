@@ -329,7 +329,11 @@ code { font-size: .86em; }
 .composer .send:hover:not(:disabled) { background: var(--color-accent-2); }
 .composer .send:disabled { background: var(--color-paper-3); color: var(--color-muted); cursor: default; }
 .composer .send svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: square; }
-.composer-hint { max-width: 796px; margin: var(--space-xs) auto 0; font: 400 12.5px/1.4 var(--font-body); color: var(--color-muted); }
+.composer-foot { max-width: 796px; margin: var(--space-xs) auto 0; display: flex; gap: var(--space-md); align-items: baseline; }
+.composer-hint { flex: 1; font: 400 12.5px/1.4 var(--font-body); color: var(--color-muted); }
+.compose-bg { flex-shrink: 0; display: inline-flex; gap: 4px; align-items: center; font: 500 12.5px/1.4 var(--font-body); color: var(--color-ink-2, var(--color-muted)); cursor: pointer; user-select: none; }
+.compose-bg input { margin: 0; accent-color: var(--color-accent); }
+.composer-hint.bg-running { color: var(--color-accent); }
 
 /* ---------- Overlays ---------- */
 .modal { position: fixed; inset: 0; background: var(--color-scrim); display: grid; place-items: center; z-index: 50; }
