@@ -67,6 +67,7 @@ Act straight away on the obvious ones (approve a merged PR, reap a stale lease).
 `bl add PROJ "Title" -b "Goal… Done when…" [--after …] [--state backlog] [--model sonnet] [--size s|m|l|xl]`. Mention it in one line ("Filed Q-12"). Don't ask first.
 - For a **daemon** project, that's all: if the project is executing, the daemon picks the ticket up within seconds.
 - If the project doesn't exist, create it with `bl project add KEY "Name" [--repo PATH] [--executor daemon|session] [--evergreen]`. Choose the executor (§5), ask the review policy once (§8), and remember the project starts in `planning`.
+  - KEY prefixes every ticket and shows on the board, so make it readable: one or two whole words, dash-joined, about 10 letters at most (`ONBOARDING`, `ARTI-AUTH`, `AI-CODEGEN`). Don't use a cryptic acronym like `AICG`. Use the user's key if they give one.
 
 ## 4. Plan (break work into a DAG)
 1. Recall any history of the project. If the work is big, write or refresh a design doc first (where docs go is in LOCAL.md) and set `bl project set KEY doc_slug=…`. The ticket body holds *what* and *done-when*; the doc holds *why* and *how*.
