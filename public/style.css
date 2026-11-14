@@ -1083,7 +1083,13 @@ body:not(.has-session) .topbar { display: none; }
   .bl-compact-head .bl-lane-badges { flex-wrap: wrap; }
   .bl-compact-head .bl-prog-wrap { width: 160px; }
 }
-.bl-compact-run { display: grid; grid-template-columns: auto max-content minmax(0, 1fr) max-content max-content; margin-left: 20px; }
+.bl-compact-run { display: grid; grid-template-columns: auto max-content minmax(0, 1fr) max-content max-content max-content max-content; margin-left: 20px; }
+.bl-compact-model { font: 400 11.5px var(--font-mono); color: var(--color-muted); }
+.bl-compact-exec { font: 500 11.5px var(--font-body); color: var(--color-muted); white-space: nowrap; }
+.bl-compact-row .bl-compact-sess { justify-self: start; max-width: 16rem; min-width: 0; }
+.bl-compact-sess span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12px var(--font-display) !important; }
+.bl-compact-sess.none { font: var(--meta-style) 400 12px var(--font-body); color: var(--color-muted); }
+@media (max-width: 900px) { .bl-compact-run { grid-template-columns: auto max-content minmax(0, 1fr) max-content; } .bl-compact-model, .bl-compact-exec, .bl-compact-since { display: none; } }
 .bl-compact-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; gap: var(--space-sm); padding: 3px 6px; text-decoration: none; color: inherit; border-radius: 3px; --c: var(--bl-in_progress); }
 .bl-compact-row:hover { background: var(--color-well); }
 .bl-compact-row .num { font-size: 11.5px; color: var(--color-muted); }

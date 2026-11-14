@@ -27,9 +27,11 @@ const SESSION_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><pa
 
 let ctx = null;          // { openSession, toast, fmtRel, fmtDateTime }
 const bl = { data: null, byKey: new Map(), blockers: new Map(), dependents: new Map(), depth: new Map(), order: new Map(), error: null, timer: null, ticket: null, ticketKey: null };
+// Lane collapse lives for this page load only: the Projects tab always opens with every lane expanded
+// (Overview carries the compact, collapsed list).
 const ui = { closed: store.get('blClosed2', 'recent'), q: '', sort: store.get('blSort', { col: 'order', dir: 1 }), milestone: null,
-  collapsed: new Set(store.get('blCollapsed', [])) };
-const saveCollapsed = () => store.set('blCollapsed', [...ui.collapsed]);
+  collapsed: new Set() };
+try { localStorage.removeItem('chito.blCollapsed'); } catch { }
 ui.refresh = store.get('blRefresh', 60);
 ui.finSort = { col: 'finished', dir: -1 };
 
@@ -116,7 +118,8 @@ const liveRun = project => (bl.data.runs || []).find(r => r.project === project 
 
 // ---------- routing ----------
 export function parseBacklogPath(pathname) {
-  const m = pathname.match(/^\/backlog(?:\/([^/]+))?(?:\/([^/]+))?\/?$/);
+  // /projects is the board's home; /backlog is the old name, still accepted (the server redirects it too).
+  const m = pathname.match(/^\/(?:projects|backlog)(?:\/([^/]+))?(?:\/([^/]+))?\/?$/);
   if (!m) return null;
   return { project: m[1] ? decodeURIComponent(m[1]) : null, ticket: m[2] ? decodeURIComponent(m[2]) : null };
 }
@@ -134,8 +137,8 @@ function linkTo(a, path) {
   });
   return a;
 }
-const projPath = p => `/backlog/${encodeURIComponent(p)}`;
-const ticketPath = t => `/backlog/${encodeURIComponent(t.project)}/${encodeURIComponent(t.key)}`;
+const projPath = p => `/projects/${encodeURIComponent(p)}`;
+const ticketPath = t => `/projects/${encodeURIComponent(t.project)}/${encodeURIComponent(t.key)}`;
 
 function sessionLink(s, label) {
   const a = el('a', 'bl-sess');
@@ -161,13 +164,13 @@ export function renderBacklog() {
   if (!bl.data.available) {
     const s = el('div', 'board-status');
     s.append('No backlog database found at ', el('code', null, bl.data.db), '. Create one with ', el('code', null, 'bl init'), ', or set ', el('code', null, 'CHITO_BACKLOG_DB'), '.');
-    root.append(head('Backlog', ''), s);
+    root.append(head('Projects', ''), s);
     return;
   }
   const project = route.project && bl.data.projects.find(p => p.key === route.project.toUpperCase());
-  if (route.project && !project) { root.append(head('Backlog', ''), el('div', 'prs-empty', `No project ${route.project}.`)); }
-  else if (project) { document.title = `${project.key} · Backlog · chito`; renderProject(root, project); }
-  else { document.title = 'Backlog · chito'; renderLanes(root); }
+  if (route.project && !project) { root.append(head('Projects', ''), el('div', 'prs-empty', `No project ${route.project}.`)); }
+  else if (project) { document.title = `${project.key} · Projects · chito`; renderProject(root, project); }
+  else { document.title = 'Projects · chito'; renderLanes(root); }
   renderDrawer(route.ticket ? route.ticket.toUpperCase() : null);
 }
 
@@ -765,7 +768,7 @@ function card(t) {
   return c;
 }
 
-// ---- main page tabs: Overview (daemon, waiting on you, in flight) and Projects (lanes + the tickets toggle) ----
+// ---- main page tabs: Overview (daemon, waiting on you, open projects) and Projects (lanes + the tickets toggle) ----
 // The tab lives in ?tab=; with none in the URL, the last one picked is used, else Overview.
 const TABS = [['overview', 'Overview'], ['projects', 'Projects']];
 function currentTab() {
@@ -783,7 +786,7 @@ function setTab(k) {
   $(`#bl-tab-${k}`)?.focus();
 }
 function tabBar(cur, counts) {
-  const bar = el('div', 'tabs bl-tabs'); bar.setAttribute('role', 'tablist'); bar.setAttribute('aria-label', 'Backlog views');
+  const bar = el('div', 'tabs bl-tabs'); bar.setAttribute('role', 'tablist'); bar.setAttribute('aria-label', 'Projects views');
   for (const [k, label] of TABS) {
     const b = el('button', 'tab', label); b.type = 'button'; b.id = `bl-tab-${k}`;
     b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(k === cur)); b.tabIndex = k === cur ? 0 : -1;
@@ -809,7 +812,7 @@ function renderLanes(root) {
   const running = all.filter(t => t.state === 'in_progress').length;
   const you = all.filter(needsYou).length;
   const sub = [factRow('', `${projects.length} project${projects.length === 1 ? '' : 's'}`, `${running} in progress`, you ? `${you} waiting on you` : 'nothing waiting on you')];
-  root.append(head('Backlog', sub, headRight()));
+  root.append(head('Projects', sub, headRight()));
   const tab = currentTab();
   if (tab !== 'overview' && !new URLSearchParams(location.search).has('tab')) {   // a remembered tab: show it in the URL too
     const url = new URL(location.href); url.searchParams.set('tab', tab); history.replaceState(history.state, '', url.pathname + url.search + url.hash);
@@ -818,7 +821,7 @@ function renderLanes(root) {
   if (tab === 'overview') {
     root.append(daemonBar());
     const ny = needsYouPanel(all); if (ny) root.append(ny);
-    root.append(el('h2', 'bl-h2', 'In flight'), inFlight(all));
+    root.append(el('h2', 'bl-h2', 'Open projects'), openProjects(projects, all));
     return;
   }
   const ctl = controls();
@@ -826,7 +829,7 @@ function renderLanes(root) {
   const allCollapsed = visible.length && visible.every(k => ui.collapsed.has(k));
   const tog = el('button', 'btn bl-collapse-all', allCollapsed ? 'Expand all' : 'Collapse all');
   tog.title = allCollapsed ? 'Show every project\'s tickets' : 'Show projects only';
-  tog.addEventListener('click', () => { if (allCollapsed) visible.forEach(k => ui.collapsed.delete(k)); else visible.forEach(k => ui.collapsed.add(k)); saveCollapsed(); renderBacklog(); });
+  tog.addEventListener('click', () => { if (allCollapsed) visible.forEach(k => ui.collapsed.delete(k)); else visible.forEach(k => ui.collapsed.add(k)); renderBacklog(); });
   ctl.insertBefore(tog, ctl.querySelector('.bl-cap'));
   root.append(ctl);
   if (finishedMode()) {   // one flat list across projects, newest finished first
@@ -858,40 +861,11 @@ function renderLanes(root) {
     const chev = el('button', `bl-chev${collapsed ? '' : ' open'}`);
     chev.type = 'button'; chev.title = collapsed ? 'Show tickets' : 'Hide tickets';
     chev.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
-    chev.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (collapsed) ui.collapsed.delete(p.key); else ui.collapsed.add(p.key); saveCollapsed(); renderBacklog(); });
+    chev.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (collapsed) ui.collapsed.delete(p.key); else ui.collapsed.add(p.key); renderBacklog(); });
     const name = linkTo(el('a', 'bl-lane-name'), projPath(p.key));
     name.append(el('span', 'bl-lane-key num', p.key), el('span', 'bl-lane-title', p.name));
     const nameRow = el('div', 'bl-lane-namerow'); nameRow.append(chev, name);
-    if (collapsed) {
-      const lane2 = el('div', 'bl-lane'); 
-      const row = el('div', 'bl-lane-compact');
-      const head = el('div', 'bl-compact-head');
-      name.title = `${p.key} ${p.name}`;
-      head.append(nameRow);
-      const b2 = el('div', 'bl-lane-badges'); b2.append(...laneBadges(p)); head.append(b2);
-      const counts = el('div', 'bl-compact-counts');
-      for (const st of LANE_COLS) { const n = shown.filter(t => t.state === st).length; if (n) { const x = statePill(st); x.append(el('span', 'num', String(n))); counts.append(x); } }
-      const you = tks.filter(needsYou).length; if (you) counts.append(el('span', 'bl-compact-you', `${you} need${you === 1 ? 's' : ''} you`));
-      head.append(counts, progress(tks));
-      row.append(head);
-      const run = shown.filter(t => t.state === 'in_progress').sort((a, b) => (a.started || '') < (b.started || '') ? -1 : 1);
-      if (run.length) {
-        const list = el('div', 'bl-compact-run');
-        for (const t of run.slice(0, 3)) {
-          const r = linkTo(el('a', 'bl-compact-row'), ticketPath(t));
-          const ws = workerSession(t);
-          r.append(stateIcon('in_progress'), el('span', 'num', t.key.slice(p.key.length + 1)), el('span', 'bl-compact-title', t.title),
-            el('span', 'num bl-compact-since', t.started ? ctx.fmtRel(t.spawn?.at || t.started) : ''));
-          if (ws) r.append(sessionLink(ws));
-          list.append(r);
-        }
-        if (run.length > 3) list.append(el('span', 'bl-compact-more', `and ${run.length - 3} more running`));
-        row.append(list);
-      }
-      lane2.append(row);
-      grid.append(lane2);
-      continue;
-    }
+    if (collapsed) { grid.append(compactLane(p, tks, shown, nameRow)); continue; }
     const badges = el('div', 'bl-lane-badges'); badges.append(...laneBadges(p));
     side.append(nameRow, badges, progress(tks));
     const nm = nextMilestone(p);
@@ -922,10 +896,68 @@ function renderLanes(root) {
   root.append(grid);
 }
 
+// ---- compact project rows: the collapsed lanes on Projects, and the read-only list on Overview ----
+// One row per project (name, mode chip, state counts, progress) with its in-flight tickets under it.
+function compactLane(p, tks, shown, nameRow) {
+  const lane = el('div', 'bl-lane');
+  const row = el('div', 'bl-lane-compact');
+  const head = el('div', 'bl-compact-head');
+  const name = nameRow.querySelector('.bl-lane-name'); if (name) name.title = `${p.key} ${p.name}`;
+  head.append(nameRow);
+  const b2 = el('div', 'bl-lane-badges'); b2.append(...laneBadges(p)); head.append(b2);
+  const counts = el('div', 'bl-compact-counts');
+  for (const st of LANE_COLS) { const n = shown.filter(t => t.state === st).length; if (n) { const x = statePill(st); x.append(el('span', 'num', String(n))); counts.append(x); } }
+  const you = tks.filter(needsYou).length; if (you) counts.append(el('span', 'bl-compact-you', `${you} need${you === 1 ? 's' : ''} you`));
+  head.append(counts, progress(tks));
+  row.append(head);
+  const run = shown.filter(t => t.state === 'in_progress').sort((a, b) => (a.started || '') < (b.started || '') ? -1 : 1);
+  if (run.length) {
+    const list = el('div', 'bl-compact-run');
+    for (const t of run) list.append(flightRow(t, p));
+    row.append(list);
+  }
+  lane.append(row);
+  return lane;
+}
+// An in-flight ticket: key, title, the worker's model and executor, how long it has run, and its session.
+function flightRow(t, p) {
+  const r = linkTo(el('a', 'bl-compact-row'), ticketPath(t));
+  const [ex] = executorOf(t);
+  const since = t.spawn?.at || t.started;
+  const model = el('span', 'bl-compact-model', t.spawn?.model || t.meta?.model || '');
+  model.title = 'Worker model';
+  const exe = el('span', 'bl-compact-exec', ex); exe.title = t.claimed_by ? `Executor: ${t.claimed_by}` : '';
+  const ago = el('span', 'num bl-compact-since', since ? ctx.fmtRel(since) : '');
+  ago.title = since ? `Started ${ctx.fmtDateTime(since)}${t.attempts > 1 ? ` · attempt ${t.attempts}` : ''}` : '';
+  const kk = el('span', 'num', t.key.slice(p.key.length + 1)); kk.title = t.key;
+  r.append(stateIcon('in_progress'), kk, el('span', 'bl-compact-title', t.title), model, exe, ago);
+  const ws = workerSession(t);
+  if (ws) { const a = sessionLink(ws, ws.title || ws.id.slice(0, 8)); a.classList.add('bl-compact-sess'); r.append(a); }
+  else r.append(el('span', 'bl-compact-sess none', 'no session yet'));
+  return r;
+}
+// Overview's list: open projects only, collapsed and read-only; the name goes to the project page.
+function openProjects(projects, all) {
+  const wrap = el('div', 'bl-lanes bl-open-projects');
+  wrap.style.setProperty('--cols', '1');
+  let n = 0;
+  for (const p of projects) {
+    const tks = all.filter(t => t.project === p.key);
+    const open = tks.filter(t => !FINAL.has(t.state));
+    if (tks.length && !open.length) continue;
+    const name = linkTo(el('a', 'bl-lane-name'), projPath(p.key));
+    name.append(el('span', 'bl-lane-key num', p.key), el('span', 'bl-lane-title', p.name));
+    const nameRow = el('div', 'bl-lane-namerow'); nameRow.append(name);
+    wrap.append(compactLane(p, tks, open, nameRow)); n++;
+  }
+  if (!n) wrap.append(el('div', 'prs-empty', 'No open projects.'));
+  return wrap;
+}
+
 // ---- project page ----
 function renderProject(root, p) {
   const tks = bl.data.tickets.filter(t => t.project === p.key);
-  const back = linkTo(el('a', 'bl-back'), '/backlog');
+  const back = linkTo(el('a', 'bl-back'), '/projects');
   back.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>';
   back.append('All projects');
   root.append(back);
@@ -1371,7 +1403,7 @@ export function initBacklog(c) {
   document.addEventListener('click', e => {
     const d = $('#bl-drawer');
     if (!d || d.hidden || !e.isTrusted) return;
-    if (e.target.closest('#bl-drawer, .bl-card, .bl-node, .bl-table tbody tr, .bl-chip, .bl-flight-row, .toast, .modal, a[href^="/backlog/"]')) return;
+    if (e.target.closest('#bl-drawer, .bl-card, .bl-node, .bl-table tbody tr, .bl-chip, .bl-flight-row, .toast, .modal, a[href^="/projects/"]')) return;
     if (!document.body.contains(e.target)) return; // re-rendered under the click
     closeDrawer();
   });
