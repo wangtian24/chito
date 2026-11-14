@@ -44,6 +44,12 @@ scripts/install-launchagent.sh     # start at login; CHITO_NODE=/path/to/node CH
 
 Settings (`,` or the gear) has four tabs: Appearance, Conversation, Keyboard and About. Appearance offers six sans-serif presets, three light (Slate, the default; Ink; Sage) and three dark (Console, Midnight, Plum). Your choice is remembered per browser, and `?theme=<name>` overrides it. Palettes and type pairings start from [Hallmark](https://github.com/nutlope/hallmark) themes.
 
+## Language
+
+The UI is in English by default; the **EN / 中文** switch next to Settings shows it in Simplified Chinese, and the choice is remembered in this browser. `?lang=zh` (or `?lang=en`) in any URL picks one too. Only the chrome is translated: transcripts, ticket titles and bodies, and comments stay as written.
+
+Strings live in `public/i18n/zh-CN.js`, keyed by the English text. In code, wrap UI text in `t('…')` (`tr` in `backlog.js`) with `{placeholders}`, or `tp(n, 'one', 'many')` for plurals; in `index.html`, mark it with `data-i18n`, `data-i18n-attr` or `data-i18n-html`. A missing key falls back to English, and `npm test` fails until every key used in the UI has a Chinese translation.
+
 ## Artifacts: pull requests
 
 **Artifacts** (above the session list, or `P`) collects every PR opened in any session. Live state comes from GitHub through your local `gh` CLI (`gh auth login` once); no app or token setup. Each row shows the state (open, draft, merged, closed), repo, number, title, author, branch, diff size, checks, review and the sessions it came from. Open PRs stay until you dismiss them. Merged ones stay for 24 hours. Dismissed PRs move to their own tab and can be restored. Search matches title, number or repo; long lists page in 15s. State is cached: open PRs refresh every minute, merged ones far less often.

@@ -57,6 +57,8 @@ const STATIC = {
   '/app.js': ['public/app.js', 'text/javascript'],
   '/style.css': ['public/style.css', 'text/css'],
   '/backlog.js': ['public/backlog.js', 'text/javascript'],
+  '/i18n.js': ['public/i18n.js', 'text/javascript'],
+  '/i18n/zh-CN.js': ['public/i18n/zh-CN.js', 'text/javascript'],
   '/keys.js': ['public/keys.js', 'text/javascript'],
   '/favicon.svg': ['public/favicon.svg', 'image/svg+xml'],
   '/vendor/marked.js': ['node_modules/marked/lib/marked.esm.js', 'text/javascript'],

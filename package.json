@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test test/"
+    "test": "node scripts/check-i18n.mjs && node --test test/"
   },
   "engines": {
     "node": ">=20"

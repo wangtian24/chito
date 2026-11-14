@@ -25,7 +25,7 @@ test('/projects and project pages serve the app', async () => {
   for (const p of ['/projects', '/projects/CHITO', '/projects/CHITO/CHITO-8']) {
     const r = await get(p);
     assert.equal(r.status, 200, p);
-    assert.match(await r.text(), /<a class="view-tab" href="\/projects" data-view="backlog">Projects/);
+    assert.match(await r.text(), /<a class="view-tab" href="\/projects" data-view="backlog">(<span data-i18n>)?Projects/);
   }
 });
 
@@ -40,7 +40,7 @@ test('old /backlog URLs redirect to /projects, keeping the path and query', asyn
 
 test('the Keys help lists g p', async () => {
   const html = await (await get('/projects')).text();
-  assert.match(html, /<kbd>g<\/kbd> <kbd>p<\/kbd><\/div><div>Projects/);
+  assert.match(html, /<kbd>g<\/kbd> <kbd>p<\/kbd><\/div><div[^>]*>Projects/);
 });
 
 test('keys.js is served', async () => {
