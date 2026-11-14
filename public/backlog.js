@@ -4,6 +4,7 @@ import { marked } from '/vendor/marked.js';
 import DOMPurify from '/vendor/purify.js';
 // `t` is a ticket everywhere in this file, so the translator is tr / trp.
 import { t as tr, tp as trp, lang, LOCALE } from '/i18n.js';
+import { WORKER_MODELS } from '/worker-models.js';
 
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -355,8 +356,8 @@ function isOrphan(p) {
 }
 const MODES = {
   session: { short: tr('Manual'), title: tr('Manual (SO): you start /backlog-run in a session and it orchestrates until done') },
-  auto: { short: tr('Auto'), title: tr('Auto (DSO): the daemon starts an orchestrator session whenever tickets are ready, and again when more arrive') },
-  daemon: { short: tr('Simple'), title: tr('Simple (DQ): the daemon runs one Claude per ready ticket, with no orchestrator session') },
+  auto: { short: tr('Auto'), title: tr('Auto (DSO): the daemon starts a Claude session or bl run coordinator for ready tickets') },
+  daemon: { short: tr('Simple'), title: tr('Simple (DQ): the daemon runs one worker per ready ticket, with no orchestrator session') },
 };
 const CEDAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l4.5 6h-2.5l4 5h-2.5l4 5.5H4.5l4-5.5H6l4-5H7.5z" fill="currentColor"/><path d="M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 function evergreenIcon() {
@@ -406,6 +407,36 @@ function execBadge(p) {
   s.title = m.title;
   return s;
 }
+function workerChoice(harness, model) {
+  const legacy = { opus: 'claude:opus', sonnet: 'claude:sonnet', haiku: 'claude:haiku' };
+  if (harness === 'claude' && legacy[model]) return legacy[model];
+  return WORKER_MODELS.find(choice => choice.harness === harness && choice.model === model)?.id;
+}
+function workerPicker(key, action, harness, model, projectDefault = false) {
+  const wrap = el('label', 'bl-sel'); wrap.append(el('span', null, 'Model'));
+  const select = el('select');
+  select.setAttribute('aria-label', projectDefault ? 'Ticket model and harness' : 'Project model and harness');
+  if (projectDefault) {
+    const opt = el('option', null, 'Project default'); opt.value = ''; select.append(opt);
+  }
+  for (const group of ['Claude Code', 'Pi', 'Codex']) {
+    const options = el('optgroup'); options.label = group;
+    for (const choice of WORKER_MODELS.filter(choice => choice.group === group)) {
+      const opt = el('option', null, `${group} · ${choice.label}`); opt.value = choice.id; options.append(opt);
+    }
+    select.append(options);
+  }
+  const current = projectDefault && !harness && !model ? '' : workerChoice(harness, model);
+  if (current === undefined) {
+    const opt = el('option', null, `Current: ${harness || 'project'} / ${model || 'default'}`);
+    opt.value = '__current'; opt.disabled = true; select.prepend(opt);
+    select.value = '__current';
+  } else select.value = current;
+  select.title = 'Changes apply to newly started workers';
+  select.addEventListener('change', () => act(action, key, select.value));
+  wrap.append(select);
+  return wrap;
+}
 function lifecycleButtons(p, compact) {
   const box = el('div', 'bl-ctl');
   if (p.status === 'planning') box.append(actBtn(tr('Start'), 'project-start', p.key, null, { primary: true, title: tr('Move to executing so its executor picks up ready tickets') }));
@@ -420,6 +451,8 @@ function lifecycleButtons(p, compact) {
       seg.append(b);
     }
     const lab = el('span', 'bl-cap', tr('Orchestration')); box.append(lab, seg);
+    const harness = setting(p.key, 'harness', 'claude');
+    box.append(workerPicker(p.key, 'project-worker', harness, setting(p.key, 'model', harness === 'claude' ? 'opus' : '')));
     box.append(actBtn(tr('Archive'), 'project-archive', p.key, null, { confirm: true }));
   }
   return box;
@@ -1462,7 +1495,7 @@ function ticketActions(t) {
     wrap.append(s); return wrap;
   };
   box.append(sel(tr('Priority'), 'ticket-priority', PRIO.map((x, i) => [i, x]), t.priority));
-  box.append(sel(tr('Model'), 'ticket-model', [['', tr('Default (opus)')], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']], t.meta?.model || ''));
+  box.append(workerPicker(t.key, 'ticket-worker', t.meta?.harness || '', t.meta?.model || '', true));
   box.append(sel(tr('Assignee'), 'ticket-assignee', [['', tr('Agents')], ['human', tr('Human')]], t.assignee === 'human' ? 'human' : ''));
   const pms = (bl.data?.milestones || []).filter(m => m.project === t.project && m.status !== 'canceled');
   if (pms.length && !t.meta?.showcase_for) box.append(sel(tr('Milestone'), 'ticket-milestone', [['', tr('None')], ...pms.map(m => [m.key, `${m.key.slice(t.project.length + 1)} ${m.title}`])], t.milestone || ''));

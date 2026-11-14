@@ -66,17 +66,19 @@ Each project runs in one of three modes. Its `executor` field holds the mode, an
 |---|---|---|---|
 | **SO**: session orchestrator | `session` | Orchestrated · SO | You start `/backlog-run PROJ` in a session; it orchestrates (inline, subagents or `bl run`) until done. **If that session goes away**, the project has ready tickets, no live owner, and no activity for `adopt_after_minutes` (10), the daemon **adopts** it with a DSO session (`orphan_policy=adopt`). |
 | **DSO**: daemon session orchestrator | `auto` | Orchestrated · DSO | The daemon watches the project. Whenever tickets are ready and no orchestrator is alive, it starts an orchestrator session: `claude -p` with `bl orchestrate-prompt PROJ`, which claims tickets, runs one subagent per ticket in parallel, records results, adjusts downstream specs and keeps going until nothing is ready. When more tickets become ready later, it starts another. |
-| **DQ**: daemon queue | `daemon` | Queue · DQ | The daemon starts one `claude -p` per ready ticket. No coordinating session. |
+| **DQ**: daemon queue | `daemon` | Queue · DQ | The daemon starts one worker per ready ticket. No coordinating session. |
+
+Worker harness is a project setting (`claude`, `codex`, or `pi`) with an optional ticket `meta.harness` override. The model follows the same precedence; Pi requires a `provider/model` identifier. Built-in workers use argument arrays, while an explicitly configured `worker_cmd` still runs as a shell command. Auto projects run Claude orchestrator sessions when their ready tickets use Claude; otherwise the daemon starts `bl run` as a coordinator, which claims tickets in DAG order and launches workers using their effective harness/model. Below `orchestrate_min_ready`, Auto runs a queue worker. Human briefing sessions remain Claude sessions.
 
 The goal: once a project is executing, it moves as far as it can without you. You add tasks and step in only for human touchpoints: tickets assigned to `human` (answers, decisions, deploys), PRs in review (`review=pr|ask`), failed tickets, and milestone showcases to view and accept.
 
 ### Usage limits
 When a worker or orchestrator exits on a usage or rate limit (detected in its log: "usage limit reached|<epoch>", "resets 3pm", 429, …):
 - its tickets go back to `todo` **without** using an attempt;
-- `quota_until` is set to the reset time, or `quota_backoff_minutes` (30) when no reset time is given;
-- every claim (daemon, orchestrators, sessions) waits until then;
+- `quota_until` is set on the affected project to the reset time, or `quota_backoff_minutes` (30) when no reset time is given; an explicit global pause still affects all projects;
+- claims for the affected project wait until then while other projects remain eligible;
 - `bl status`, `bl daemon status` and the board show the pause;
-- once the time passes, the daemon resumes **by itself**. It starts one probe worker first, and goes back to full capacity once that worker has run for 90 seconds or reported back. If the probe hits the limit again, the pause is set again with the new reset time. DSO orchestrator sessions also wait for the probe.
+- once the time passes, the daemon resumes **by itself**. For an explicit global pause, it starts one probe worker first, then returns to full capacity once that worker has run for 90 seconds or reported back. A project-scoped pause resumes that project directly while other projects continue running.
 
 A lapsed lease (a session that closed, slept, or died on a limit) puts the ticket back without using an attempt. Attempts are used up only when a worker process exits without reporting, or when it reports `bl fail`.
 

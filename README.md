@@ -1,6 +1,6 @@
 # chito
 
-A fast local web UI for your Claude Code sessions: a session list on the left, the conversation on the right, a permalink for every session and message, and one key to reopen a session in your terminal. It also ships **backlog**, a local ticket DAG plus a background daemon that lets many Claude Code sessions and agents work through long-horizon projects together, with a board in chito.
+A fast local web UI for Claude Code, Pi, and Codex sessions: a session list on the left, the conversation on the right, a permalink for every session and message, and one key to reopen a session in your terminal. It also ships **backlog**, a local ticket DAG plus a background daemon that lets agents work through long-horizon projects together, with a board in chito.
 
 ## Install
 
@@ -17,7 +17,7 @@ That's everything on macOS. The script is idempotent; re-run it after `git pull`
 Requirements:
 - **Node 22.5+.** The Backlog view uses `node:sqlite`; Sessions and Artifacts work on Node 20.
 - **python3 3.11+ with SQLite 3.35+**, for `bl`.
-- **The `claude` CLI**, for backlog workers.
+- **The `claude` CLI**, for Claude workers and orchestrator and briefing sessions. **Codex CLI** or **Pi** is needed only for projects using that harness.
 - **`gh`** (optional), for live PR state.
 
 Just chito, by hand:
@@ -30,13 +30,12 @@ scripts/install-launchagent.sh     # start at login; CHITO_NODE=/path/to/node CH
 
 ## What it does
 
-- Reads `~/.claude/projects/*/*.jsonl`. Metadata is cached by mtime in `~/.cache/chito/`, so only changed transcripts are re-parsed. A cold index of about 1,000 sessions (780 MB) takes about 1.3 s; after that it takes about 10 ms.
+- Reads `~/.claude/projects/*/*.jsonl`, `~/.pi/agent/sessions/**/*.jsonl`, and `~/.codex/sessions/**/*.jsonl`. Changed transcripts are re-parsed; Claude metadata is also cached on disk in `~/.cache/chito/`.
 - Titles come from `/rename` (`custom-title`), then the AI title, then the first prompt.
 - Search ranks title matches first, then project and first prompt. `p:myapp` filters by project. The query is kept in the URL (`/?q=...`).
 - The chat view renders Markdown, collapsible tool calls (input and result loaded when expanded), thinking, images, compaction dividers, background-task notes and PR links.
 - **Details** (`i`) shows start time, last turn time, duration, name, ID, directory, branch, prompt, reply and tool counts, models, tokens, top tools, PRs, CLI version and transcript path.
-- **Open in terminal** (`o`) opens iTerm (or Terminal.app) with
-  `cd <cwd> && claude --resume <id> --allow-dangerously-skip-permissions`.
+- **Open in terminal** (`o`) opens iTerm (or Terminal.app) with the corresponding CLI's resume command. The sidebar's source menu shows all sessions or one CLI at a time.
 - Permalinks: `http://localhost:8791/s/<session-id>`, plus `#<message-uuid>` for a single message (hover a message and click `#`).
 - Headless agent sessions (cwd outside `$HOME`) are hidden by default; toggle them with `a`.
 
@@ -73,7 +72,19 @@ A long-horizon task becomes a **project**: tickets, each roughly one PR, with de
 |---|---|
 | **SO**: session orchestrator | You start `/backlog-run PROJ` in a session; it runs the DAG until done. If that session dies, the daemon adopts the project. |
 | **DSO**: daemon session orchestrator | The daemon starts an orchestrator session whenever tickets are ready, and another when more arrive. |
-| **DQ**: daemon queue | One `claude -p` per ready ticket. Nothing coordinates them; meant for independent tasks. |
+| **DQ**: daemon queue | One worker per ready ticket. Nothing coordinates them; meant for independent tasks. |
+
+**Switch a project's worker model** from one dropdown on its Backlog project page. The dropdown sets the harness and model together. Tickets have the same dropdown, with a Project default option. The UI offers Claude Code Opus, Sonnet, and Haiku 5.5 plus Auto (the CLI default); Pi Kimi K3.1 Pro, DeepSeek V4 Pro, and DeepSeek V4.1 Flash; and Codex Sol and Terra. You can also set both fields together with `bl config`:
+
+```bash
+bl config MYPROJ harness codex model gpt-6.1-sol
+bl config MYPROJ harness pi model together/moonshotai/Kimi-K3.1-Pro
+bl config MYPROJ harness claude model claude-opus-5-5
+```
+
+The switch applies to newly started tickets; pause the project first if a run is in flight. A ticket can override both settings with `bl set KEY harness=pi model=together/moonshotai/Kimi-K3.1-Pro`. Claude remains the default. Pi model names use `provider/model`; `pi --list-models kimi` lists installed choices. Pi can read keys saved with `pi auth login together --api-key`. For a daemon whose keys are supplied by environment variables, place `TOGETHER_API_KEY=...` or `MOONSHOT_API_KEY=...` in `~/.backlog/credentials.env` with mode `600`; the file stays outside the repo and database.
+
+For Pi or Codex projects in Auto mode, the daemon starts a `bl run` coordinator that follows the ticket DAG and launches each worker with its effective harness and model. Claude projects retain Claude orchestrator sessions. Human briefing sessions still use Claude. Chito links Pi and Codex worker transcripts to tickets when their saved prompt includes the ticket key.
 
 **Other features:**
 - **Lifecycle:** projects start in `planning`, and nothing runs until `bl project start`.
