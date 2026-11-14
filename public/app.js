@@ -1,6 +1,7 @@
 import { marked } from '/vendor/marked.js';
 import DOMPurify from '/vendor/purify.js';
 import { makeChords } from '/keys.js';
+import { t, tp, lang, LOCALE, setLang, applyStatic } from '/i18n.js';
 import { initBacklog, renderBacklog, parseBacklogPath, startBacklogPolling, stopBacklogPolling, closeDrawer } from '/backlog.js';
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -32,35 +33,40 @@ const isRecent = s => s.lastTime && Date.now() - new Date(s.lastTime).getTime() 
 
 // ---------- formatting ----------
 const pad = n => String(n).padStart(2, '0');
+const DATE_SEP = lang === 'zh' ? ' ' : ', ';   // between a date and its time
 function fmtDateTime(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+  return `${d.toLocaleDateString(LOCALE, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}${DATE_SEP}${d.toLocaleTimeString(LOCALE, { hour: 'numeric', minute: '2-digit' })}`;
 }
 function fmtShort(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   const sameYear = d.getFullYear() === new Date().getFullYear();
-  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+  return `${d.toLocaleDateString(LOCALE, { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })}${DATE_SEP}${d.toLocaleTimeString(LOCALE, { hour: 'numeric', minute: '2-digit' })}`;
 }
-function fmtTime(iso) { return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : ''; }
+function fmtTime(iso) { return iso ? new Date(iso).toLocaleTimeString(LOCALE, { hour: 'numeric', minute: '2-digit' }) : ''; }
 function fmtRel(iso) {
   if (!iso) return '';
   const s = (Date.now() - new Date(iso)) / 1000;
   if (s < 60) return 'now';
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  if (s < 86400 * 7) return `${Math.floor(s / 86400)}d`;
+  if (s < 3600) return t('{n}m', { n: Math.floor(s / 60) });
+  if (s < 86400) return t('{n}h', { n: Math.floor(s / 3600) });
+  if (s < 86400 * 7) return t('{n}d', { n: Math.floor(s / 86400) });
   const d = new Date(iso);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(d.getFullYear() !== new Date().getFullYear() ? { year: '2-digit' } : {}) });
+  return d.toLocaleDateString(LOCALE, { month: 'short', day: 'numeric', ...(d.getFullYear() !== new Date().getFullYear() ? { year: '2-digit' } : {}) });
 }
 function fmtDur(a, b) {
   const s = Math.max(0, Math.round((new Date(b) - new Date(a)) / 1000));
-  if (s < 60) return `${Math.round(s)}s`;
-  if (s < 3600) { const m = Math.floor(s / 60), r = s % 60; return r ? `${m}m ${r}s` : `${m}m`; }
-  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`;
-  return `${Math.floor(s / 86400)}d ${Math.round((s % 86400) / 3600)}h`;
+  if (s < 60) return t('{n}s', { n: Math.round(s) });
+  if (s < 3600) { const m = Math.floor(s / 60), r = s % 60; return r ? t('{m}m {s}s', { m, s: r }) : t('{n}m', { n: m }); }
+  if (s < 86400) return t('{h}h {m}m', { h: Math.floor(s / 3600), m: Math.round((s % 3600) / 60) });
+  return t('{d}d {h}h', { d: Math.floor(s / 86400), h: Math.round((s % 86400) / 3600) });
 }
+// fmtRel as a phrase: 'just now', '5m ago'.
+const fmtRelAgo = iso => { const r = fmtRel(iso); return r === 'now' ? t('just now') : t('{rel} ago', { rel: r }); };
+// fmtRel for display: 'now' becomes the locale's word.
+const fmtRelShow = iso => { const r = fmtRel(iso); return r === 'now' ? t('now') : r; };
 const fmtNum = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
 const fmtBytes = n => n >= 1 << 20 ? (n / (1 << 20)).toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB';
 const tildify = p => p ? p.replace(/^\/Users\/[^/]+/, '~') : '';
@@ -81,8 +87,8 @@ function toast(msg) {
 }
 
 async function copy(text, label) {
-  try { await navigator.clipboard.writeText(text); toast(`Copied ${label}`); }
-  catch { toast('Copy failed'); }
+  try { await navigator.clipboard.writeText(text); toast(t('Copied {label}', { label })); }
+  catch { toast(t('Copy failed')); }
 }
 
 // ---------- list ----------
@@ -160,11 +166,11 @@ function groupLabel(iso) {
   const now = new Date();
   const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const diff = Math.round((day(now) - day(d)) / 86400000);
-  if (diff <= 0) return 'Today';
-  if (diff === 1) return 'Yesterday';
-  if (diff < 7) return 'Previous 7 days';
-  if (diff < 30) return 'Previous 30 days';
-  return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  if (diff <= 0) return t('Today');
+  if (diff === 1) return t('Yesterday');
+  if (diff < 7) return t('Previous 7 days');
+  if (diff < 30) return t('Previous 30 days');
+  return d.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' });
 }
 
 function highlight(text, terms) {
@@ -199,35 +205,35 @@ function setPins(pins, msg) {
 function togglePin(id = state.activeId) {
   if (!id) return;
   const on = state.pins.includes(id);
-  setPins(on ? state.pins.filter(x => x !== id) : [id, ...state.pins], on ? 'Unpinned' : 'Pinned to top');
+  setPins(on ? state.pins.filter(x => x !== id) : [id, ...state.pins], on ? t('Unpinned') : t('Pinned to top'));
 }
 function updatePinButton() {
   const b = $('#b-pin'); if (!b) return;
   const on = state.pins.includes(state.activeId);
   b.classList.toggle('on', on);
-  b.title = on ? 'Unpin from the top of the list (f)' : 'Pin to the top of the list (f)';
+  b.title = on ? t('Unpin from the top of the list (f)') : t('Pin to the top of the list (f)');
   b.setAttribute('aria-pressed', String(on));
 }
 function pinZone() {
   const z = el('div', 'pin-zone' + (state.pinnedCount ? '' : ' empty'));
   const h = el('div', 'group pin-head');
   h.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z"/><path d="M12 15v5"/></svg>';
-  h.append(el('span', null, 'Pinned'));
-  z.append(h, el('div', 'pin-items'), el('div', 'pin-hint', 'Drag a session here to pin it'));
+  h.append(el('span', null, t('Pinned')));
+  z.append(h, el('div', 'pin-items'), el('div', 'pin-hint', t('Drag a session here to pin it')));
   z.addEventListener('dragover', e => { if (!e.dataTransfer.types.includes('text/x-chito-session')) return; e.preventDefault(); z.classList.add('over'); });
   z.addEventListener('dragleave', e => { if (!z.contains(e.relatedTarget)) z.classList.remove('over'); });
   z.addEventListener('drop', e => {
     e.preventDefault(); z.classList.remove('over');
     const id = e.dataTransfer.getData('text/x-chito-session');
-    if (id && !state.pins.includes(id)) setPins([...state.pins, id], 'Pinned to top');
+    if (id && !state.pins.includes(id)) setPins([...state.pins, id], t('Pinned to top'));
   });
   return z;
 }
 function olderDivider() {
   const d = el('button', 'older-divider');
   d.type = 'button';
-  d.append(el('span', null, state.showOlder ? 'Older than 48 hours' : `${state.olderCount} older session${state.olderCount === 1 ? '' : 's'}`));
-  if (!state.showOlder) d.append(el('span', 'older-hint', 'scroll or click to show'));
+  d.append(el('span', null, state.showOlder ? t('Older than 48 hours') : tp(state.olderCount, '{n} older session', '{n} older sessions')));
+  if (!state.showOlder) d.append(el('span', 'older-hint', t('scroll or click to show')));
   d.addEventListener('click', () => { state.showOlder = !state.showOlder; applyFilter(false, false); });
   return d;
 }
@@ -236,7 +242,7 @@ $('#list').addEventListener('dragover', e => { if (e.dataTransfer.types.includes
 $('#list').addEventListener('drop', e => {
   if (e.target.closest('.pin-zone')) return;
   const id = e.dataTransfer.getData('text/x-chito-session');
-  if (id && state.pins.includes(id)) { e.preventDefault(); setPins(state.pins.filter(x => x !== id), 'Unpinned'); }
+  if (id && state.pins.includes(id)) { e.preventDefault(); setPins(state.pins.filter(x => x !== id), t('Unpinned')); }
 });
 // Scrolling to the bottom reveals sessions older than 48 hours.
 $('#list').addEventListener('scroll', () => {
@@ -251,7 +257,7 @@ function renderList(searching, follow = true) {
   const shown = state.sessions.filter(s => state.showAgents || !s.agent).length;
   $('#count').textContent = searching ? `${state.filtered.length} / ${shown}` : `${shown}`;
   if (!searching) list.append(pinZone());
-  if (!state.filtered.length && !state.olderCount) { list.append(el('div', 'list-empty', 'No sessions match.')); return; }
+  if (!state.filtered.length && !state.olderCount) { list.append(el('div', 'list-empty', t('No sessions match.'))); return; }
   let lastGroup = null;
   let olderShown = false;
   state.filtered.forEach((s, i) => {
@@ -271,21 +277,21 @@ function renderList(searching, follow = true) {
     if (s.id === state.activeId) a.classList.add('active');
     else if (isUnread(s)) a.classList.add('unread');
     if (i === state.cursor) a.classList.add('cursor');
-    const t = el('div', 'item-title');
+    const ti = el('div', 'item-title');
     if (s.live) {
       const dot = el('span', 'live-dot' + (s.live.status === 'busy' ? ' busy' : ''));
-      dot.title = `Running now (${s.live.status || 'live'}, pid ${s.live.pid})`;
-      t.append(dot);
+      dot.title = t('Running now ({status}, pid {pid})', { status: { busy: t('busy'), idle: t('idle') }[s.live.status] || s.live.status || t('live'), pid: s.live.pid });
+      ti.append(dot);
     }
-    t.append(highlight(s.title, terms));
-    t.title = s.title;
+    ti.append(highlight(s.title, terms));
+    ti.title = s.title;
     const m = el('div', 'item-meta');
     m.append(el('span', 'proj', s.project));
     if (s.gitBranch && !['main', 'master', 'HEAD'].includes(s.gitBranch)) m.append(el('span', 'branch', s.gitBranch));
     if (s.prCount) {
-      const badge = el('button', 'badge', s.prCount > 1 ? `${s.prCount} PRs` : 'PR');
+      const badge = el('button', 'badge', s.prCount > 1 ? t('{n} PRs', { n: s.prCount }) : 'PR');
       badge.type = 'button';
-      badge.title = 'Show pull requests from this session';
+      badge.title = t('Show pull requests from this session');
       badge.addEventListener('click', e => {
         e.preventDefault();
         e.stopPropagation();
@@ -297,11 +303,11 @@ function renderList(searching, follow = true) {
       m.append(badge);
     }
     const turns = el('span', 'num turns', String(s.userTurns));
-    turns.title = `${s.userTurns} prompts`;
-    const when = el('span', 'num when', fmtRel(s.lastTime));
-    when.title = `Last turn ${fmtDateTime(s.lastTime)}`;
+    turns.title = tp(s.userTurns, '{n} prompt', '{n} prompts');
+    const when = el('span', 'num when', fmtRelShow(s.lastTime));
+    when.title = t('Last turn {when}', { when: fmtDateTime(s.lastTime) });
     m.append(turns, when);
-    a.append(t, m);
+    a.append(ti, m);
     a.addEventListener('click', e => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
       e.preventDefault();
@@ -363,7 +369,7 @@ async function openSession(id, { push = true, hash = '' } = {}) {
   const listMeta = state.sessions.find(s => s.id === id);
   setHeader(listMeta);
   thread.textContent = '';
-  thread.append(el('div', 'loading', 'Loading…'));
+  thread.append(el('div', 'loading', t('Loading…')));
   let data;
   try {
     const r = await fetch(`/api/sessions/${id}`);
@@ -372,7 +378,7 @@ async function openSession(id, { push = true, hash = '' } = {}) {
   } catch (e) {
     if (token !== state.renderToken) return;
     thread.textContent = '';
-    thread.append(el('div', 'loading', `Could not load session: ${e.message}`));
+    thread.append(el('div', 'loading', t('Could not load session: {error}', { error: e.message })));
     return;
   }
   if (token !== state.renderToken) return;
@@ -390,7 +396,7 @@ function setHeader(meta) {
   $('#actions').hidden = !meta;
   $('#composer').hidden = !meta;
   if (meta) updateComposerHint();
-  if (!meta) { $('#title').textContent = 'Select a session'; $('#subtitle').textContent = ''; return; }
+  if (!meta) { $('#title').textContent = t('Select a session'); $('#subtitle').textContent = ''; return; }
   $('#title').textContent = meta.title;
   $('#title').title = meta.title;
   const sub = $('#subtitle');
@@ -398,22 +404,22 @@ function setHeader(meta) {
   sub.append(el('span', 'path', tildify(meta.cwd) || meta.project));
   if (meta.gitBranch && meta.gitBranch !== 'HEAD') sub.append(el('span', 'branch', meta.gitBranch));
   const span = el('span', 'span');
-  span.append(el('span', 'num', fmtShort(meta.startTime)), ' to ', el('span', 'num', fmtRel(meta.lastTime) === 'now' ? 'now' : fmtShort(meta.lastTime)));
-  span.title = `${fmtDateTime(meta.startTime)} to ${fmtDateTime(meta.lastTime)}`;
+  span.append(el('span', 'num', fmtShort(meta.startTime)), t(' to '), el('span', 'num', fmtRel(meta.lastTime) === 'now' ? t('now') : fmtShort(meta.lastTime)));
+  span.title = t('{from} to {to}', { from: fmtDateTime(meta.startTime), to: fmtDateTime(meta.lastTime) });
   sub.append(span);
   const n = el('span', 'count');
-  n.append(el('span', 'num', String(meta.userTurns)), ' prompts');
+  n.append(el('span', 'num', String(meta.userTurns)), meta.userTurns === 1 ? t(' prompt') : t(' prompts'));
   sub.append(n);
   updateToolsButton();
   updatePinButton();
   const live = meta.live ?? state.sessions.find(s => s.id === meta.id)?.live;
-  $('#b-open span').textContent = live ? 'Focus terminal' : 'Open in terminal';
-  $('#b-open').title = live ? `Running now (pid ${live.pid}): focus its terminal (o)` : 'Reopen in terminal (o)';
+  $('#b-open span').textContent = live ? t('Focus terminal') : t('Open in terminal');
+  $('#b-open').title = live ? t('Running now (pid {pid}): focus its terminal (o)', { pid: live.pid }) : t('Reopen in terminal (o)');
 }
 
 function toolArg(name, input) {
   if (!input || typeof input !== 'object') return '';
-  if (input._truncated) return '(large input)';
+  if (input._truncated) return t('(large input)');
   const pick = input.command ?? input.file_path ?? input.notebook_path ?? input.pattern ?? input.url ?? input.query ?? input.description ?? input.prompt ?? input.skill ?? input.path;
   if (typeof pick === 'string') return tildify(pick).replace(/\s+/g, ' ').slice(0, 200);
   const first = Object.values(input).find(v => typeof v === 'string');
@@ -432,15 +438,15 @@ function renderTool(b) {
   const d = el('details', 'tool');
   const s = el('summary');
   s.append(el('span', 'tname', b.name), el('span', 'targ', toolArg(b.name, b.input)));
-  if (b.isError) { s.append(el('span', 'terr', 'failed')); d.classList.add('is-err'); }
+  if (b.isError) { s.append(el('span', 'terr', t('failed'))); d.classList.add('is-err'); }
   d.append(s);
   d.addEventListener('toggle', () => {
     if (!d.open || d.dataset.filled) return;
     d.dataset.filled = '1';
     const body = el('div', 'tool-body');
-    body.append(el('div', 'lbl', 'Input'), el('pre', null, toolInputText(b.input)));
+    body.append(el('div', 'lbl', t('Input')), el('pre', null, toolInputText(b.input)));
     if (b.result != null) {
-      body.append(el('div', 'lbl', b.isError ? 'Error' : 'Result'), el('pre', b.isError ? 'err' : null, b.result || '(empty)'));
+      body.append(el('div', 'lbl', b.isError ? t('Error') : t('Result')), el('pre', b.isError ? 'err' : null, b.result || t('(empty)')));
     }
     if (b.images?.length) body.append(images(b.images));
     d.append(body);
@@ -470,11 +476,11 @@ function images(srcs) {
 function anchor(uuid) {
   const a = el('a', 'anchor', '#');
   a.href = `#${uuid}`;
-  a.title = 'Copy link to this message';
+  a.title = t('Copy link to this message');
   a.addEventListener('click', e => {
     e.preventDefault();
     history.replaceState({}, '', `/s/${state.activeId}#${uuid}`);
-    copy(location.href, 'message link');
+    copy(location.href, t('message link'));
   });
   return a;
 }
@@ -484,7 +490,7 @@ function renderBlocks(blocks, body) {
   let count = 0;
   const flushCollapsed = () => {
     if (!group) return;
-    if (count) body.insertBefore(el('div', 'tools-collapsed', `${count} tool call${count > 1 ? 's' : ''}`), group);
+    if (count) body.insertBefore(el('div', 'tools-collapsed', tp(count, '{n} tool call', '{n} tool calls')), group);
     group = null; count = 0;
   };
   for (const b of blocks) {
@@ -496,7 +502,7 @@ function renderBlocks(blocks, body) {
     }
     if (b.type === 'thinking') {
       const d = el('details', 'thinking');
-      d.append(el('summary', null, 'Thinking'));
+      d.append(el('summary', null, t('Thinking')));
       d.addEventListener('toggle', () => { if (d.open && !d.dataset.filled) { d.dataset.filled = '1'; d.append(md(b.text)); } });
       // Thinking lives inside the tool group so hiding tools yields one collapsed label.
       if (group) group.append(d); else body.append(d);
@@ -522,7 +528,7 @@ function renderItem(it, idx = -1, total = 0) {
       m.append(b);
       if (it.text.length > 500 || it.text.split('\n').length > 9) {
         // Long prompts scroll inside a capped bubble; the hint stays until the end is reached.
-        const hint = el('div', 'bubble-hint', 'Long message. Scroll inside it to read the rest.');
+        const hint = el('div', 'bubble-hint', t('Long message. Scroll inside it to read the rest.'));
         m.append(hint);
         requestAnimationFrame(() => { if (b.scrollHeight <= b.clientHeight + 2) hint.remove(); });
         b.addEventListener('scroll', () => hint.classList.toggle('done', b.scrollTop + b.clientHeight >= b.scrollHeight - 4), { passive: true });
@@ -537,7 +543,7 @@ function renderItem(it, idx = -1, total = 0) {
     head.append(el('span', 'who', 'Claude'));
     if (it.model) head.append(el('span', 'model', it.model.replace(/^claude-/, '')));
     head.append(el('span', 'num', fmtTime(it.ts)));
-    if (it.endTs && it.endTs !== it.ts) { const d = el('span', 'num dur', fmtDur(it.ts, it.endTs)); d.title = 'Time spent on this reply'; head.append(d); }
+    if (it.endTs && it.endTs !== it.ts) { const d = el('span', 'num dur', fmtDur(it.ts, it.endTs)); d.title = t('Time spent on this reply'); head.append(d); }
     head.append(anchor(it.uuid));
     // The answer is the trailing run of text blocks; everything before it is work.
     let finalStart = it.blocks.length;
@@ -551,13 +557,13 @@ function renderItem(it, idx = -1, total = 0) {
       const notes = workBlocks.filter(b => b.type === 'text').length;
       const tools = workBlocks.filter(b => b.type === 'tool').length;
       const parts = [];
-      if (notes) parts.push(`${notes} note${notes > 1 ? 's' : ''}`);
-      if (tools) parts.push(`${tools} tool call${tools > 1 ? 's' : ''}`);
-      if (!parts.length) parts.push('thinking');
-      const dur = it.endTs && it.endTs !== it.ts ? `Worked ${fmtDur(it.ts, it.endTs)}` : 'Worked';
+      if (notes) parts.push(tp(notes, '{n} note', '{n} notes'));
+      if (tools) parts.push(tp(tools, '{n} tool call', '{n} tool calls'));
+      if (!parts.length) parts.push(t('thinking'));
+      const dur = it.endTs && it.endTs !== it.ts ? t('Worked {dur}', { dur: fmtDur(it.ts, it.endTs) }) : t('Worked');
       const btn = el('button', 'work-summary');
       btn.type = 'button';
-      btn.append(el('span', 'ws-label', `${dur}: ${parts.join(', ')}`), el('span', 'ws-act'));
+      btn.append(el('span', 'ws-label', `${dur}${t(': ')}${parts.join(t(', '))}`), el('span', 'ws-act'));
       btn.addEventListener('click', () => m.classList.toggle('show-work'));
       const work = el('div', 'work blocks');
       renderBlocks(workBlocks, work);
@@ -578,12 +584,12 @@ function renderItem(it, idx = -1, total = 0) {
   if (it.kind === 'note') return el('div', 'note', it.text);
   if (it.kind === 'summary') {
     const d = el('details', 'summary-card');
-    d.append(el('summary', null, 'Summary of earlier conversation'));
+    d.append(el('summary', null, t('Summary of earlier conversation')));
     d.addEventListener('toggle', () => { if (d.open && !d.dataset.filled) { d.dataset.filled = '1'; d.append(md(it.text)); } });
     return d;
   }
   if (it.kind === 'pr') {
-    const a = el('a', 'pr-card', `Opened PR #${it.number} in ${it.repo || 'GitHub'}`);
+    const a = el('a', 'pr-card', t('Opened PR #{number} in {repo}', { number: it.number, repo: it.repo || 'GitHub' }));
     a.id = prAnchor(it);
     a.href = it.url; a.target = '_blank'; a.rel = 'noopener';
     return a;
@@ -613,7 +619,7 @@ function renderThread(items, token, targetId, { stickBottom = false, keepScroll 
   thread.dataset.tools = state.toolMode;
   thread.dataset.work = state.workMode;
   if (!keepScroll && !stickBottom) convo.scrollTop = 0;
-  if (!items.length) { thread.append(el('div', 'loading', 'No messages in this session.')); return; }
+  if (!items.length) { thread.append(el('div', 'loading', t('No messages in this session.'))); return; }
   // Render in chunks so huge sessions stay responsive; jump to target once rendered.
   let i = 0;
   const targetIdx = targetId ? items.findIndex(x => x.uuid === targetId) : -1;
@@ -689,13 +695,13 @@ function updateComposerHint() {
   const live = meta && (state.sessions.find(s => s.id === meta.id)?.live ?? meta.live);
   const app = state.terminal === 'terminal' ? 'Terminal' : 'iTerm';
   $('#compose-hint').textContent = !meta ? '' : live
-    ? `Typed into the running session in ${app}. Enter sends, Shift+Enter adds a line (sent as spaces).`
-    : `Resumes this session in a new ${app} window with your message. Enter sends, Shift+Enter adds a line.`;
+    ? t('Typed into the running session in {app}. Enter sends, Shift+Enter adds a line (sent as spaces).', { app })
+    : t('Resumes this session in a new {app} window with your message. Enter sends, Shift+Enter adds a line.', { app });
 }
 
 async function sendMessage() {
-  const t = $('#compose');
-  const text = t.value.trim();
+  const box = $('#compose');
+  const text = box.value.trim();
   if (!text || !state.activeId) return;
   $('#send').disabled = true;
   try {
@@ -704,13 +710,13 @@ async function sendMessage() {
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error);
-    t.value = '';
+    box.value = '';
     autosize();
     state.watchUntil = Date.now() + 10 * 60 * 1000;
-    toast(j.action === 'typed' ? `Sent to running session (${j.tty})` : 'Resumed in a new terminal window');
+    toast(j.action === 'typed' ? t('Sent to running session ({tty})', { tty: j.tty }) : t('Resumed in a new terminal window'));
     setTimeout(() => loadList(), 2500);
   } catch (e) {
-    toast(`Send failed: ${e.message}`);
+    toast(t('Send failed: {error}', { error: e.message }));
     $('#send').disabled = false;
   }
 }
@@ -733,7 +739,7 @@ function renderInfo() {
   const prs = m.prLinks || [];
   const tabs = el('div', 'info-tabs');
   tabs.setAttribute('role', 'tablist');
-  for (const [key, label] of [['general', 'General'], ['artifacts', prs.length ? `Artifacts ${prs.length}` : 'Artifacts']]) {
+  for (const [key, label] of [['general', t('General')], ['artifacts', prs.length ? `${t('Artifacts')} ${prs.length}` : t('Artifacts')]]) {
     const t = el('button', 'tab', label);
     t.type = 'button';
     t.setAttribute('role', 'tab');
@@ -746,40 +752,40 @@ function renderInfo() {
   const dl = el('dl');
   const row = (k, v) => { dl.append(el('dt', null, k)); const dd = el('dd'); if (v instanceof Node) dd.append(v); else dd.textContent = v ?? '—'; dl.append(dd); };
   const code = t => el('code', null, t);
-  row('Started', fmtDateTime(m.startTime));
-  row('Last turn', `${fmtDateTime(m.lastTime)} (${fmtRel(m.lastTime)} ago)`.replace('(now ago)', '(just now)'));
-  row('Duration', fmtDur(m.startTime, m.lastTime));
-  if (m.customTitle) row('Name', m.customTitle);
-  if (m.aiTitle && m.aiTitle !== m.customTitle) row('AI title', m.aiTitle);
-  row('Session ID', code(m.id));
-  row('Directory', code(tildify(m.cwd) || '—'));
-  if (m.gitBranch) row('Branch', code(m.gitBranch));
-  row('Prompts', `${m.userTurns} prompts, ${m.assistantMsgs} replies, ${m.toolCalls} tool calls`);
-  if (m.compactions) row('Compactions', String(m.compactions));
-  if (m.subagents) row('Subagents', String(m.subagents));
-  row('Models', m.models.join(', ') || '—');
-  const t = m.tokens;
-  row('Tokens', `${fmtNum(t.input + t.cacheRead + t.cacheWrite)} in, ${fmtNum(t.cacheRead)} of it cached; ${fmtNum(t.output)} out`);
+  row(t('Started'), fmtDateTime(m.startTime));
+  row(t('Last turn'), `${fmtDateTime(m.lastTime)} (${fmtRelAgo(m.lastTime)})`);
+  row(t('Duration'), fmtDur(m.startTime, m.lastTime));
+  if (m.customTitle) row(t('Name'), m.customTitle);
+  if (m.aiTitle && m.aiTitle !== m.customTitle) row(t('AI title'), m.aiTitle);
+  row(t('Session ID'), code(m.id));
+  row(t('Directory'), code(tildify(m.cwd) || '—'));
+  if (m.gitBranch) row(t('Branch'), code(m.gitBranch));
+  row(t('Prompts'), t('{prompts} prompts, {replies} replies, {tools} tool calls', { prompts: m.userTurns, replies: m.assistantMsgs, tools: m.toolCalls }));
+  if (m.compactions) row(t('Compactions'), String(m.compactions));
+  if (m.subagents) row(t('Subagents'), String(m.subagents));
+  row(t('Models'), m.models.join(', ') || '—');
+  const tk = m.tokens;
+  row(t('Tokens'), t('{input} in, {cached} of it cached; {output} out', { input: fmtNum(tk.input + tk.cacheRead + tk.cacheWrite), cached: fmtNum(tk.cacheRead), output: fmtNum(tk.output) }));
   const tools = Object.entries(m.tools || {}).sort((a, b) => b[1] - a[1]).slice(0, 12);
   if (tools.length) {
     const bar = el('div', 'tools-bar');
-    for (const [n, c] of tools) { const t = el('span'); t.append(n + ' ', el('b', 'num', String(c))); bar.append(t); }
-    row('Top tools', bar);
+    for (const [n, c] of tools) { const x = el('span'); x.append(n + ' ', el('b', 'num', String(c))); bar.append(x); }
+    row(t('Top tools'), bar);
   }
-  row('CLI version', m.version);
-  row('Entrypoint', m.entrypoint);
-  row('Transcript', code(`${tildify(m.file)} (${fmtBytes(m.size)})`));
+  row(t('CLI version'), m.version);
+  row(t('Entrypoint'), m.entrypoint);
+  row(t('Transcript'), code(`${tildify(m.file)} (${fmtBytes(m.size)})`));
   box.append(dl);
   box.append(el('div', 'cmd', m.resumeCommand));
-  if (!m.cwdExists) box.append(el('div', 'warn', 'Original directory no longer exists here; it will open in your home directory.'));
+  if (!m.cwdExists) box.append(el('div', 'warn', t('Original directory no longer exists here; it will open in your home directory.')));
 }
 
 const prAnchor = p => `pr-${String(p.repo || '').replace(/[^a-z0-9]+/gi, '-')}-${p.number}`;
 
 function renderArtifacts(prs) {
   const wrap = el('div', 'artifacts');
-  if (!prs.length) { wrap.append(el('p', 'artifacts-empty', 'No pull requests were opened in this session.')); return wrap; }
-  wrap.append(el('div', 'artifacts-label', prs.length === 1 ? '1 pull request' : `${prs.length} pull requests`));
+  if (!prs.length) { wrap.append(el('p', 'artifacts-empty', t('No pull requests were opened in this session.'))); return wrap; }
+  wrap.append(el('div', 'artifacts-label', tp(prs.length, '{n} pull request', '{n} pull requests')));
   for (const p of prs) {
     const row = el('div', 'artifact');
     const a = el('a', 'artifact-main');
@@ -789,8 +795,8 @@ function renderArtifacts(prs) {
     if (live) { a.classList.add(`st-${prState(live)}`); a.append(prPill(prState(live))); a.title = p.repo; }
     row.append(a);
     const sub = el('div', 'artifact-sub');
-    if (p.at) sub.append(el('span', null, `Opened ${fmtDateTime(p.at)}`));
-    const jump = el('button', 'artifact-jump', 'Show in chat');
+    if (p.at) sub.append(el('span', null, t('Opened {when}', { when: fmtDateTime(p.at) })));
+    const jump = el('button', 'artifact-jump', t('Show in chat'));
     jump.type = 'button';
     jump.addEventListener('click', () => {
       const t = document.getElementById(prAnchor(p));
@@ -814,14 +820,14 @@ function toggleInfo(force) {
   if (state.infoOpen) renderInfo();
 }
 
-const TOOL_MODES = { none: 'Tools off', count: 'Tool counts', full: 'Tool details' };
+const TOOL_MODES = { none: t('Tools off'), count: t('Tool counts'), full: t('Tool details') };
 function updateToolsButton() {
   $('#b-tools span').textContent = TOOL_MODES[state.toolMode];
   $('#b-tools').classList.toggle('on', state.toolMode !== 'none');
 }
 
 function updateWorkButton() {
-  $('#b-work span').textContent = state.workMode === 'hide' ? 'Work hidden' : 'Work shown';
+  $('#b-work span').textContent = state.workMode === 'hide' ? t('Work hidden') : t('Work shown');
   $('#b-work').classList.toggle('on', state.workMode === 'show');
 }
 
@@ -831,7 +837,7 @@ function toggleWork() {
   $('#thread').dataset.work = state.workMode;
   document.querySelectorAll('#thread .msg.show-work').forEach(m => m.classList.remove('show-work'));
   updateWorkButton();
-  toast(state.workMode === 'hide' ? 'Showing answers only' : 'Showing all work');
+  toast(state.workMode === 'hide' ? t('Showing answers only') : t('Showing all work'));
 }
 
 // Cycles none -> count -> full.
@@ -853,14 +859,14 @@ function toggleAgents() {
 
 async function reopen() {
   if (!state.activeId) return;
-  toast('Finding terminal…');
+  toast(t('Finding terminal…'));
   try {
     const r = await fetch(`/api/sessions/${state.activeId}/open`, { method: 'POST', headers: { 'x-chito': '1' } });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error);
     const app = j.terminal === 'iterm' ? 'iTerm' : 'Terminal';
-    toast(j.action === 'focused' ? `Focused running session in ${app} (${j.tty})` : j.action === 'forked' ? `Running in the background (pid ${j.pid}), so this opened a forked copy in ${app}; the running session will not see what you type there` : `Opened in ${app}`);
-  } catch (e) { toast(`Failed: ${e.message}`); }
+    toast(j.action === 'focused' ? t('Focused running session in {app} ({tty})', { app, tty: j.tty }) : j.action === 'forked' ? t('Running in the background (pid {pid}), so this opened a forked copy in {app}; the running session will not see what you type there', { pid: j.pid, app }) : t('Opened in {app}', { app }));
+  } catch (e) { toast(t('Failed: {error}', { error: e.message })); }
 }
 
 function jumpPrompt(dir) {
@@ -892,8 +898,8 @@ async function renderLanding() {
   const sub = $('#landing-sub');
   const box = $('#recent');
   $('#mark-all').hidden = !pool.length;
-  $('#landing-title').textContent = pool.length ? 'Catch up' : "You're caught up";
-  sub.textContent = pool.length ? `The latest outcome from ${pool.length === 10 ? '10 recent sessions' : pool.length === 1 ? '1 session' : pool.length + ' sessions'} you haven't opened since it changed.` : 'Nothing new since you last looked. Pick a session on the left or search with /.';
+  $('#landing-title').textContent = pool.length ? t('Catch up') : t("You're caught up");
+  sub.textContent = pool.length ? (pool.length === 10 ? t("The latest outcome from 10 recent sessions you haven't opened since they changed.") : tp(pool.length, "The latest outcome from 1 session you haven't opened since it changed.", "The latest outcome from {n} sessions you haven't opened since they changed.")) : t('Nothing new since you last looked. Pick a session on the left or search with /.');
   const need = pool.filter(s => outcomeCache.get(s.id)?.lastTime !== s.lastTime).map(s => s.id);
   if (need.length) {
     try {
@@ -910,17 +916,17 @@ async function renderLanding() {
     a.href = `/s/${s.id}`;
     const top = el('div', 'rcard-top');
     top.append(el('span', 'rcard-title', s.title));
-    const when = el('span', 'rcard-when', fmtRel(s.lastTime));
+    const when = el('span', 'rcard-when', fmtRelShow(s.lastTime));
     when.title = fmtDateTime(s.lastTime);
     top.append(when);
     const meta = el('div', 'rcard-meta');
     meta.append(el('span', null, s.project));
     if (s.gitBranch && !['main', 'master', 'HEAD'].includes(s.gitBranch)) meta.append(el('span', null, s.gitBranch));
-    if (s.live) meta.append(el('span', 'rcard-status', s.live.status === 'busy' ? 'Working now' : 'Open in a terminal'));
+    if (s.live) meta.append(el('span', 'rcard-status', s.live.status === 'busy' ? t('Working now') : t('Open in a terminal')));
     a.append(top, meta);
     if (o.lastPrompt) {
       const pr = el('div', 'rcard-prompt');
-      pr.append(el('b', null, 'You: '), o.lastPrompt.replace(/\s+/g, ' '));
+      pr.append(el('b', null, t('You: ')), o.lastPrompt.replace(/\s+/g, ' '));
       a.append(pr);
     }
     if (o.lastAnswer) {
@@ -929,7 +935,7 @@ async function renderLanding() {
       ans.querySelectorAll('a').forEach(x => x.replaceWith(...x.childNodes));
       a.append(ans);
     } else if (s.live?.status === 'busy') {
-      a.append(el('div', 'rcard-prompt', 'Claude is still working on this turn.'));
+      a.append(el('div', 'rcard-prompt', t('Claude is still working on this turn.')));
     }
     a.addEventListener('click', e => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
@@ -957,7 +963,7 @@ state.prMap = new Map();
 state.github = { ok: true };
 state.board = { tab: 'active', page: 0 };
 
-const PR_LABEL = { OPEN: 'Open', DRAFT: 'Draft', MERGED: 'Merged', CLOSED: 'Closed', UNKNOWN: 'Unknown' };
+const PR_LABEL = { OPEN: t('Open'), DRAFT: t('Draft'), MERGED: t('Merged'), CLOSED: t('Closed'), UNKNOWN: t('Unknown') };
 const PR_ICON = {
   OPEN: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-3"/>',
   DRAFT: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 9v.01M18 12.5v.01"/>',
@@ -1006,10 +1012,10 @@ function matchesPr(pr, q) {
 
 function prTimeline(pr) {
   const g = pr.gh;
-  if (!g) return pr.firstAt ? `Seen ${fmtRel(pr.firstAt)} ago` : '';
-  if (g.state === 'MERGED') return `Merged ${fmtRel(g.mergedAt)} ago`;
-  if (g.state === 'CLOSED') return `Closed ${fmtRel(g.closedAt)} ago`;
-  return `Updated ${fmtRel(g.updatedAt)} ago`;
+  if (!g) return pr.firstAt ? t('Seen {ago}', { ago: fmtRelAgo(pr.firstAt) }) : '';
+  if (g.state === 'MERGED') return t('Merged {ago}', { ago: fmtRelAgo(g.mergedAt) });
+  if (g.state === 'CLOSED') return t('Closed {ago}', { ago: fmtRelAgo(g.closedAt) });
+  return t('Updated {ago}', { ago: fmtRelAgo(g.updatedAt) });
 }
 
 function renderPrRow(pr, tab) {
@@ -1021,30 +1027,30 @@ function renderPrRow(pr, tab) {
   const link = el('a', 'pr-link');
   link.href = pr.url; link.target = '_blank'; link.rel = 'noopener';
   link.title = pr.repo;
-  link.append(el('span', 'pr-repo', (pr.repo || '').split('/').pop()), el('span', 'pr-num', `#${pr.number}`), el('span', 'pr-title', g?.title || pr.ghError || 'Title unavailable'));
+  link.append(el('span', 'pr-repo', (pr.repo || '').split('/').pop()), el('span', 'pr-num', `#${pr.number}`), el('span', 'pr-title', g?.title || pr.ghError || t('Title unavailable')));
   top.append(link);
   row.append(top);
 
   const meta = el('div', 'pr-meta');
   const add = (text, cls, title) => { const x = el('span', cls || null, text); if (title) x.title = title; meta.append(x); };
   const when = prTimeline(pr);
-  if (when) add(when, null, g ? `Opened ${fmtDateTime(g.createdAt)}` : null);
+  if (when) add(when, null, g ? t('Opened {when}', { when: fmtDateTime(g.createdAt) }) : null);
   if (g) {
     if (g.author) add(g.author);
-    if (g.head) add(`${g.head} into ${g.base}`, 'num');
+    if (g.head) add(t('{head} into {base}', { head: g.head, base: g.base }), 'num');
     const diff = el('span');
-    diff.append(el('span', 'num add', `+${g.additions}`), ' ', el('span', 'num del', `−${g.deletions}`), ` in ${g.changedFiles} file${g.changedFiles === 1 ? '' : 's'}`);
+    diff.append(el('span', 'num add', `+${g.additions}`), ' ', el('span', 'num del', `−${g.deletions}`), tp(g.changedFiles, ' in {n} file', ' in {n} files'));
     meta.append(diff);
-    const checks = { SUCCESS: ['Checks passing', 'ok'], FAILURE: ['Checks failing', 'bad'], ERROR: ['Checks errored', 'bad'], PENDING: ['Checks running', 'wait'], EXPECTED: ['Checks expected', 'wait'] }[g.checks];
+    const checks = { SUCCESS: [t('Checks passing'), 'ok'], FAILURE: [t('Checks failing'), 'bad'], ERROR: [t('Checks errored'), 'bad'], PENDING: [t('Checks running'), 'wait'], EXPECTED: [t('Checks expected'), 'wait'] }[g.checks];
     if (checks && st !== 'MERGED') add(checks[0], checks[1]);
-    const review = { APPROVED: ['Approved', 'ok'], CHANGES_REQUESTED: ['Changes requested', 'bad'], REVIEW_REQUIRED: ['Review required', 'wait'] }[g.review];
+    const review = { APPROVED: [t('Approved'), 'ok'], CHANGES_REQUESTED: [t('Changes requested'), 'bad'], REVIEW_REQUIRED: [t('Review required'), 'wait'] }[g.review];
     if (review && (st === 'OPEN' || st === 'DRAFT')) add(review[0], review[1]);
-    if (g.comments) add(`${g.comments} comment${g.comments === 1 ? '' : 's'}`);
+    if (g.comments) add(tp(g.comments, '{n} comment', '{n} comments'));
   }
   row.append(meta);
 
   const from = el('div', 'pr-from');
-  from.append(el('span', null, pr.sessions.length > 1 ? 'From sessions' : 'From session'));
+  from.append(el('span', null, pr.sessions.length > 1 ? t('From sessions') : t('From session')));
   for (const sess of pr.sessions.slice(0, 3)) {
     const a = el('a', null, sess.title);
     a.href = `/s/${sess.id}`;
@@ -1055,14 +1061,14 @@ function renderPrRow(pr, tab) {
     });
     from.append(a);
   }
-  if (pr.sessions.length > 3) from.append(el('span', null, `and ${pr.sessions.length - 3} more`));
+  if (pr.sessions.length > 3) from.append(el('span', null, t('and {n} more', { n: pr.sessions.length - 3 })));
   row.append(from);
 
   const actions = el('div', 'pr-actions');
   const btn = el('button', 'btn icon');
   btn.type = 'button';
   const dismissing = tab === 'active';
-  btn.title = dismissing ? 'Dismiss' : 'Restore to Active';
+  btn.title = dismissing ? t('Dismiss') : t('Restore to Active');
   btn.setAttribute('aria-label', btn.title);
   btn.innerHTML = dismissing
     ? '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
@@ -1072,7 +1078,7 @@ function renderPrRow(pr, tab) {
     store.set('dismissedPrs', dismissedPrs);
     updateArtCount();
     renderBoard();
-    toast(dismissing ? `Dismissed #${pr.number}` : `Restored #${pr.number}`);
+    toast(dismissing ? t('Dismissed #{n}', { n: pr.number }) : t('Restored #{n}', { n: pr.number }));
   });
   actions.append(btn);
   row.append(actions);
@@ -1090,7 +1096,7 @@ function renderBoard() {
   if (state.github && !state.github.ok) {
     status.hidden = false;
     status.innerHTML = '';
-    status.append('GitHub state is unavailable, so PRs show without titles or status. Run ', el('code', null, 'gh auth login'), ' in a terminal, then refresh.');
+    status.append(t('GitHub state is unavailable, so PRs show without titles or status. Run '), el('code', null, 'gh auth login'), t(' in a terminal, then refresh.'));
   } else status.hidden = true;
 
   // Open and draft first (they need you), then everything else; newest activity first within each.
@@ -1105,18 +1111,18 @@ function renderBoard() {
   box.textContent = '';
   for (const pr of slice) box.append(renderPrRow(pr, state.board.tab));
   if (!slice.length) {
-    box.append(el('div', 'prs-empty', q ? 'No pull requests match that search.'
-      : state.board.tab === 'active' ? 'Nothing active. Open PRs appear here, and merged ones stay for 24 hours.'
-      : 'Nothing dismissed.'));
+    box.append(el('div', 'prs-empty', q ? t('No pull requests match that search.')
+      : state.board.tab === 'active' ? t('Nothing active. Open PRs appear here, and merged ones stay for 24 hours.')
+      : t('Nothing dismissed.')));
   }
   const pager = $('#pager');
   pager.textContent = '';
   if (pages > 1) {
-    const prev = el('button', 'btn', 'Previous'); prev.disabled = state.board.page === 0;
-    const next = el('button', 'btn', 'Next'); next.disabled = state.board.page >= pages - 1;
+    const prev = el('button', 'btn', t('Previous')); prev.disabled = state.board.page === 0;
+    const next = el('button', 'btn', t('Next')); next.disabled = state.board.page >= pages - 1;
     prev.addEventListener('click', () => { state.board.page--; renderBoard(); $('#board').scrollTop = 0; });
     next.addEventListener('click', () => { state.board.page++; renderBoard(); $('#board').scrollTop = 0; });
-    pager.append(prev, el('span', 'num', `Page ${state.board.page + 1} of ${pages}`), next);
+    pager.append(prev, el('span', 'num', t('Page {page} of {pages}', { page: state.board.page + 1, pages })), next);
   }
 }
 
@@ -1130,13 +1136,13 @@ function setView(view) {
   document.querySelectorAll('.views .view-tab').forEach(t => {
     if (t.dataset.view === view) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
   });
-  if (view === 'artifacts') { document.title = 'Artifacts · chito'; renderBoard(); }
+  if (view === 'artifacts') { document.title = `${t('Artifacts')} · chito`; renderBoard(); }
 }
 
 $('#bq').addEventListener('input', () => { state.board.page = 0; renderBoard(); });
 $('#bq').addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); if ($('#bq').value) { $('#bq').value = ''; renderBoard(); } else $('#bq').blur(); } });
 document.querySelectorAll('#board-tabs button').forEach(b => b.addEventListener('click', () => { state.board.tab = b.dataset.tab; state.board.page = 0; renderBoard(); }));
-$('#board-refresh').addEventListener('click', async () => { toast('Refreshing from GitHub…'); await loadPrs(true); toast('Up to date'); });
+$('#board-refresh').addEventListener('click', async () => { toast(t('Refreshing from GitHub…')); await loadPrs(true); toast(t('Up to date')); });
 document.querySelectorAll('.views .view-tab').forEach(t => t.addEventListener('click', e => {
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
@@ -1147,12 +1153,12 @@ document.querySelectorAll('.views .view-tab').forEach(t => t.addEventListener('c
 
 // ---------- settings ----------
 const PRESETS = [
-  { id: 'slate', name: 'Slate', note: 'Light, magenta, Hanken Grotesk' },
-  { id: 'ink', name: 'Ink', note: 'Light, teal, Epilogue' },
-  { id: 'sage', name: 'Sage', note: 'Light, green, Schibsted Grotesk' },
-  { id: 'console', name: 'Console', note: 'Dark, amber, Host Grotesk' },
-  { id: 'midnight', name: 'Midnight', note: 'Dark, ice blue, Mona Sans' },
-  { id: 'plum', name: 'Plum', note: 'Dark, coral, Geist' },
+  { id: 'slate', name: 'Slate', note: t('Light, magenta, Hanken Grotesk') },
+  { id: 'ink', name: 'Ink', note: t('Light, teal, Epilogue') },
+  { id: 'sage', name: 'Sage', note: t('Light, green, Schibsted Grotesk') },
+  { id: 'console', name: 'Console', note: t('Dark, amber, Host Grotesk') },
+  { id: 'midnight', name: 'Midnight', note: t('Dark, ice blue, Mona Sans') },
+  { id: 'plum', name: 'Plum', note: t('Dark, coral, Geist') },
 ];
 
 function renderPresets() {
@@ -1272,8 +1278,8 @@ document.addEventListener('keydown', e => {
     Enter: () => { const s = state.filtered[state.cursor]; if (s) openSession(s.id); },
     o: reopen,
     r: () => { if (state.activeId) $('#compose').focus(); },
-    c: () => state.active && copy(state.active.meta.resumeCommand, 'resume command'),
-    y: () => state.activeId && copy(`${location.origin}/s/${state.activeId}`, 'permalink'),
+    c: () => state.active && copy(state.active.meta.resumeCommand, t('resume command')),
+    y: () => state.activeId && copy(`${location.origin}/s/${state.activeId}`, t('permalink')),
     i: () => { if (!state.active) return; if (!state.infoOpen) state.infoTab = 'general'; toggleInfo(); },
     t: toggleTools,
     w: toggleWork,
@@ -1292,6 +1298,13 @@ document.addEventListener('keydown', e => {
 });
 
 // ---------- wiring ----------
+applyStatic();
+document.querySelectorAll('#lang-switch button').forEach(b => {
+  b.setAttribute('role', 'radio');
+  b.setAttribute('aria-checked', String(b.dataset.lang === lang));
+  b.title = b.dataset.lang === 'zh' ? '切换到中文' : 'Switch to English';
+  b.addEventListener('click', () => { if (b.dataset.lang !== lang) setLang(b.dataset.lang); });
+});
 $('#q').addEventListener('input', () => {
   applyFilter();
   const q = $('#q').value.trim();
@@ -1331,9 +1344,9 @@ if (qTheme && PRESETS.some(p => p.id === qTheme)) document.documentElement.datas
 updateWorkButton();
 $('#b-open').addEventListener('click', reopen);
 $('#b-pin').addEventListener('click', () => togglePin());
-initBacklog({ openSession: id => openSession(id), toast, fmtRel, fmtDateTime, getPr: url => state.prMap.get(url)?.gh || null });
-$('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, 'resume command'));
-$('#b-link').addEventListener('click', () => copy(`${location.origin}/s/${state.activeId}`, 'permalink'));
+initBacklog({ openSession: id => openSession(id), toast, fmtRel: fmtRelShow, fmtRelAgo, fmtDateTime, getPr: url => state.prMap.get(url)?.gh || null });
+$('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, t('resume command')));
+$('#b-link').addEventListener('click', () => copy(`${location.origin}/s/${state.activeId}`, t('permalink')));
 document.addEventListener('click', e => {
   if (state.infoOpen && !e.target.closest('#info') && !e.target.closest('#b-info')) toggleInfo(false);
 });

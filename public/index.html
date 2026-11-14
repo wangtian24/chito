@@ -28,7 +28,7 @@
   <div class="app">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <a class="brand-link" href="/" id="home" title="Home">
+        <a class="brand-link" href="/" id="home" title="Home" data-i18n-attr="title">
           <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
             <rect width="32" height="32" rx="8" fill="var(--color-accent)"/>
             <path d="M9 8.5h14A3.5 3.5 0 0 1 26.5 12v6.5A3.5 3.5 0 0 1 23 22h-7.5l-5 4v-4H9a3.5 3.5 0 0 1-3.5-3.5V12A3.5 3.5 0 0 1 9 8.5z" fill="var(--color-accent-ink)"/>
@@ -38,22 +38,23 @@
           <span class="brand-name">chito</span>
         </a>
         <div class="brand-count" id="count"></div>
-        <button class="btn icon" id="b-settings" title="Settings (,)" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+        <span class="lang-switch seg" id="lang-switch" role="radiogroup" aria-label="Language"><button type="button" data-lang="en" lang="en">EN</button><button type="button" data-lang="zh" lang="zh-CN">中文</button></span>
+        <button class="btn icon" id="b-settings" title="Settings (,)" aria-label="Settings" data-i18n-attr="title aria-label"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
       <nav class="views" aria-label="Views">
-        <a class="view-tab" href="/" data-view="sessions">Sessions</a>
-        <a class="view-tab" href="/artifacts" data-view="artifacts">Artifacts <span class="num view-count" id="art-count"></span></a>
-        <a class="view-tab" href="/projects" data-view="backlog">Projects <span class="num view-count" id="bl-count"></span></a>
+        <a class="view-tab" href="/" data-view="sessions" data-i18n>Sessions</a>
+        <a class="view-tab" href="/artifacts" data-view="artifacts"><span data-i18n>Artifacts</span> <span class="num view-count" id="art-count"></span></a>
+        <a class="view-tab" href="/projects" data-view="backlog"><span data-i18n>Projects</span> <span class="num view-count" id="bl-count"></span></a>
       </nav>
       <div class="search">
         <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="q" type="search" placeholder="Search sessions" autocomplete="off" spellcheck="false">
+        <input id="q" type="search" placeholder="Search sessions" data-i18n-attr="placeholder" autocomplete="off" spellcheck="false">
         <kbd class="search-kbd">/</kbd>
       </div>
       <div class="filters">
-        <button class="chip" id="f-agents" title="Show headless agent sessions (a)">Agent runs</button>
+        <button class="chip" id="f-agents" title="Show headless agent sessions (a)" data-i18n-attr="title" data-i18n>Agent runs</button>
         <span class="filters-spacer"></span>
-        <button class="chip ghost" id="help-btn" title="Keyboard shortcuts (?)">Keys</button>
+        <button class="chip ghost" id="help-btn" title="Keyboard shortcuts (?)" data-i18n-attr="title" data-i18n>Keys</button>
       </div>
       <nav class="list" id="list" tabindex="-1"></nav>
     </aside>
@@ -61,18 +62,18 @@
     <main class="main">
       <header class="topbar" id="topbar">
         <div class="topbar-title">
-          <div class="title" id="title">Select a session</div>
+          <div class="title" id="title" data-i18n>Select a session</div>
           <div class="subtitle" id="subtitle"></div>
         </div>
         <div class="actions" id="actions" hidden>
-          <button class="btn" id="b-work" title="Hide or show the work before each answer (w)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg><span>Work hidden</span></button>
-          <button class="btn" id="b-tools" title="Tool calls: off, counts, or details (t)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/></svg><span>Tools off</span></button>
+          <button class="btn" id="b-work" title="Hide or show the work before each answer (w)" data-i18n-attr="title"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg><span>Work hidden</span></button>
+          <button class="btn" id="b-tools" title="Tool calls: off, counts, or details (t)" data-i18n-attr="title"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/></svg><span>Tools off</span></button>
           <span class="actions-sep" aria-hidden="true"></span>
-          <button class="btn icon" id="b-pin" title="Pin to the top of the list (f)" aria-label="Pin session" aria-pressed="false"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z"/><path d="M12 15v5"/></svg></button>
-          <button class="btn icon" id="b-info" title="Session details (i)" aria-label="Session details"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.01"/></svg></button>
-          <button class="btn icon" id="b-link" title="Copy permalink (y)" aria-label="Copy permalink"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
-          <button class="btn icon" id="b-copy" title="Copy resume command (c)" aria-label="Copy resume command"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg></button>
-          <button class="btn primary" id="b-open" title="Reopen in terminal (o)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg><span>Open in terminal</span></button>
+          <button class="btn icon" id="b-pin" title="Pin to the top of the list (f)" aria-label="Pin session" data-i18n-attr="title aria-label" aria-pressed="false"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z"/><path d="M12 15v5"/></svg></button>
+          <button class="btn icon" id="b-info" title="Session details (i)" aria-label="Session details" data-i18n-attr="title aria-label"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.01"/></svg></button>
+          <button class="btn icon" id="b-link" title="Copy permalink (y)" aria-label="Copy permalink" data-i18n-attr="title aria-label"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+          <button class="btn icon" id="b-copy" title="Copy resume command (c)" aria-label="Copy resume command" data-i18n-attr="title aria-label"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg></button>
+          <button class="btn primary" id="b-open" title="Reopen in terminal (o)" data-i18n-attr="title"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg><span>Open in terminal</span></button>
         </div>
       </header>
       <div class="info" id="info" hidden></div>
@@ -81,21 +82,21 @@
           <div class="landing">
             <div class="landing-head">
               <div>
-                <h1 id="landing-title">Catch up</h1>
+                <h1 id="landing-title" data-i18n>Catch up</h1>
                 <p id="landing-sub"></p>
               </div>
-              <button class="btn" id="mark-all" hidden>Mark all read</button>
+              <button class="btn" id="mark-all" hidden data-i18n>Mark all read</button>
             </div>
             <div class="recent" id="recent"></div>
-            <p class="landing-keys">Press <kbd>/</kbd> to search or <kbd>?</kbd> for shortcuts.</p>
+            <p class="landing-keys" data-i18n-html="Press &lt;kbd&gt;/&lt;/kbd&gt; to search or &lt;kbd&gt;?&lt;/kbd&gt; for shortcuts.">Press <kbd>/</kbd> to search or <kbd>?</kbd> for shortcuts.</p>
           </div>
         </div>
         <div class="thread" id="thread"></div>
       </section>
       <form class="composer" id="composer" hidden>
         <div class="composer-box">
-          <textarea id="compose" rows="1" placeholder="Message this session…" spellcheck="true"></textarea>
-          <button type="submit" class="send" id="send" title="Send (↵)" aria-label="Send">
+          <textarea id="compose" rows="1" placeholder="Message this session…" data-i18n-attr="placeholder" spellcheck="true"></textarea>
+          <button type="submit" class="send" id="send" title="Send (↵)" aria-label="Send" data-i18n-attr="title aria-label">
             <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
           </button>
         </div>
@@ -105,19 +106,19 @@
         <div class="board-inner">
           <div class="board-head">
             <div>
-              <h1>Pull requests</h1>
-              <p id="board-sub">Every PR opened in your sessions. Merged ones stay here for 24 hours.</p>
+              <h1 data-i18n>Pull requests</h1>
+              <p id="board-sub" data-i18n>Every PR opened in your sessions. Merged ones stay here for 24 hours.</p>
             </div>
-            <button class="btn" id="board-refresh" title="Refresh from GitHub"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 5v4h4M4 13a8 8 0 0 0 14.9 3.9M20 19v-4h-4"/></svg><span>Refresh</span></button>
+            <button class="btn" id="board-refresh" title="Refresh from GitHub" data-i18n-attr="title"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 5v4h4M4 13a8 8 0 0 0 14.9 3.9M20 19v-4h-4"/></svg><span data-i18n>Refresh</span></button>
           </div>
           <div class="board-controls">
             <div class="search board-search">
               <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-              <input id="bq" type="search" placeholder="Search title, number or repo" autocomplete="off" spellcheck="false">
+              <input id="bq" type="search" placeholder="Search title, number or repo" data-i18n-attr="placeholder" autocomplete="off" spellcheck="false">
             </div>
             <div class="seg" id="board-tabs" role="tablist">
-              <button data-tab="active" role="tab">Active <span class="num" id="n-active"></span></button>
-              <button data-tab="dismissed" role="tab">Dismissed <span class="num" id="n-dismissed"></span></button>
+              <button data-tab="active" role="tab"><span data-i18n>Active</span> <span class="num" id="n-active"></span></button>
+              <button data-tab="dismissed" role="tab"><span data-i18n>Dismissed</span> <span class="num" id="n-dismissed"></span></button>
             </div>
           </div>
           <div class="board-status" id="board-status" hidden></div>
@@ -135,59 +136,59 @@
   <div class="modal" id="settings" hidden>
     <div class="modal-card settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="settings-head">
-        <h2 id="settings-title">Settings</h2>
-        <button class="btn icon" id="settings-close" title="Close (Esc)" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        <h2 id="settings-title" data-i18n>Settings</h2>
+        <button class="btn icon" id="settings-close" title="Close (Esc)" aria-label="Close" data-i18n-attr="title aria-label"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
       <div class="tabs" role="tablist">
-        <button class="tab" role="tab" data-tab="appearance">Appearance</button>
-        <button class="tab" role="tab" data-tab="conversation">Conversation</button>
-        <button class="tab" role="tab" data-tab="keyboard">Keyboard</button>
-        <button class="tab" role="tab" data-tab="about">About</button>
+        <button class="tab" role="tab" data-tab="appearance" data-i18n>Appearance</button>
+        <button class="tab" role="tab" data-tab="conversation" data-i18n>Conversation</button>
+        <button class="tab" role="tab" data-tab="keyboard" data-i18n>Keyboard</button>
+        <button class="tab" role="tab" data-tab="about" data-i18n>About</button>
       </div>
       <section class="tabpanel" data-panel="appearance" role="tabpanel">
-        <p class="panel-note">Pick a preset: three light, three dark.</p>
-        <div class="presets" id="presets" role="radiogroup" aria-label="Appearance preset"></div>
+        <p class="panel-note" data-i18n>Pick a preset: three light, three dark.</p>
+        <div class="presets" id="presets" role="radiogroup" aria-label="Appearance preset" data-i18n-attr="aria-label"></div>
       </section>
       <section class="tabpanel" data-panel="conversation" role="tabpanel" hidden>
         <div class="opt-row">
-          <div class="opt-label"><b>Work before answers</b><span>Notes, thinking and tools before each turn's final text</span></div>
-          <div class="seg" role="radiogroup" data-opt="work"><button data-v="hide">Hidden</button><button data-v="show">Shown</button></div>
+          <div class="opt-label"><b data-i18n>Work before answers</b><span data-i18n>Notes, thinking and tools before each turn's final text</span></div>
+          <div class="seg" role="radiogroup" data-opt="work"><button data-v="hide" data-i18n>Hidden</button><button data-v="show" data-i18n>Shown</button></div>
         </div>
         <div class="opt-row">
-          <div class="opt-label"><b>Tool calls</b><span>When work is shown</span></div>
-          <div class="seg" role="radiogroup" data-opt="tools"><button data-v="none">Off</button><button data-v="count">Counts</button><button data-v="full">Details</button></div>
+          <div class="opt-label"><b data-i18n>Tool calls</b><span data-i18n>When work is shown</span></div>
+          <div class="seg" role="radiogroup" data-opt="tools"><button data-v="none" data-i18n>Off</button><button data-v="count" data-i18n>Counts</button><button data-v="full" data-i18n>Details</button></div>
         </div>
         <div class="opt-row">
-          <div class="opt-label"><b>Agent runs</b><span>Headless sessions started outside your home folder</span></div>
-          <div class="seg" role="radiogroup" data-opt="agents"><button data-v="hide">Hidden</button><button data-v="show">Shown</button></div>
+          <div class="opt-label"><b data-i18n>Agent runs</b><span data-i18n>Headless sessions started outside your home folder</span></div>
+          <div class="seg" role="radiogroup" data-opt="agents"><button data-v="hide" data-i18n>Hidden</button><button data-v="show" data-i18n>Shown</button></div>
         </div>
       </section>
       <section class="tabpanel" data-panel="keyboard" role="tabpanel" hidden>
   <div class="keys">
-        <div><kbd>/</kbd> or <kbd>⌘K</kbd></div><div>Search</div>
-        <div><kbd>j</kbd> <kbd>k</kbd></div><div>Next / previous session</div>
-        <div><kbd>↓</kbd> <kbd>↑</kbd> <kbd>PgDn</kbd> <kbd>PgUp</kbd></div><div>Scroll conversation</div>
-        <div><kbd>↵</kbd></div><div>Open highlighted session</div>
-        <div><kbd>Esc</kbd></div><div>Leave search / close panel</div>
-        <div><kbd>o</kbd></div><div>Reopen / focus in terminal</div>
-        <div><kbd>r</kbd></div><div>Write a message (↵ send, ⇧↵ newline)</div>
-        <div><kbd>c</kbd></div><div>Copy resume command</div>
-        <div><kbd>y</kbd></div><div>Copy permalink</div>
-        <div><kbd>i</kbd></div><div>Session details</div>
-        <div><kbd>w</kbd></div><div>Hide or show the work before each answer</div>
-        <div><kbd>t</kbd></div><div>Cycle tool calls: hidden → counts → detailed</div>
-        <div><kbd>n</kbd> <kbd>p</kbd></div><div>Next / previous prompt</div>
-        <div><kbd>g</kbd> <kbd>G</kbd></div><div>Top / bottom of conversation</div>
-        <div><kbd>space</kbd> <kbd>⇧space</kbd></div><div>Page down / up</div>
-        <div><kbd>a</kbd></div><div>Show / hide agent sessions</div>
-        <div><kbd>[</kbd></div><div>Collapse sidebar</div>
-        <div><kbd>P</kbd></div><div>Artifacts (pull requests) or back to sessions</div>
-        <div><kbd>g</kbd> <kbd>p</kbd></div><div>Projects (the backlog board)</div>
-        <div><kbd>B</kbd></div><div>Projects or back to sessions</div>
-        <div><kbd>f</kbd></div><div>Pin or unpin this session (or drag sessions into Pinned)</div>
-        <div><kbd>,</kbd></div><div>Settings</div>
+        <div data-i18n-html="&lt;kbd&gt;/&lt;/kbd&gt; or &lt;kbd&gt;⌘K&lt;/kbd&gt;"><kbd>/</kbd> or <kbd>⌘K</kbd></div><div data-i18n>Search</div>
+        <div><kbd>j</kbd> <kbd>k</kbd></div><div data-i18n>Next / previous session</div>
+        <div><kbd>↓</kbd> <kbd>↑</kbd> <kbd>PgDn</kbd> <kbd>PgUp</kbd></div><div data-i18n>Scroll conversation</div>
+        <div><kbd>↵</kbd></div><div data-i18n>Open highlighted session</div>
+        <div><kbd>Esc</kbd></div><div data-i18n>Leave search / close panel</div>
+        <div><kbd>o</kbd></div><div data-i18n>Reopen / focus in terminal</div>
+        <div><kbd>r</kbd></div><div data-i18n>Write a message (↵ send, ⇧↵ newline)</div>
+        <div><kbd>c</kbd></div><div data-i18n>Copy resume command</div>
+        <div><kbd>y</kbd></div><div data-i18n>Copy permalink</div>
+        <div><kbd>i</kbd></div><div data-i18n>Session details</div>
+        <div><kbd>w</kbd></div><div data-i18n>Hide or show the work before each answer</div>
+        <div><kbd>t</kbd></div><div data-i18n>Cycle tool calls: hidden → counts → detailed</div>
+        <div><kbd>n</kbd> <kbd>p</kbd></div><div data-i18n>Next / previous prompt</div>
+        <div><kbd>g</kbd> <kbd>G</kbd></div><div data-i18n>Top / bottom of conversation</div>
+        <div><kbd>space</kbd> <kbd>⇧space</kbd></div><div data-i18n>Page down / up</div>
+        <div><kbd>a</kbd></div><div data-i18n>Show / hide agent sessions</div>
+        <div><kbd>[</kbd></div><div data-i18n>Collapse sidebar</div>
+        <div><kbd>P</kbd></div><div data-i18n>Artifacts (pull requests) or back to sessions</div>
+        <div><kbd>g</kbd> <kbd>p</kbd></div><div data-i18n>Projects (the backlog board)</div>
+        <div><kbd>B</kbd></div><div data-i18n>Projects or back to sessions</div>
+        <div><kbd>f</kbd></div><div data-i18n>Pin or unpin this session (or drag sessions into Pinned)</div>
+        <div><kbd>,</kbd></div><div data-i18n>Settings</div>
       </div>
-      <p class="panel-note" style="margin-top: var(--space-md)">Search matches title first, then project and first prompt. Use <code>p:name</code> to filter by project.</p>
+      <p class="panel-note" style="margin-top: var(--space-md)" data-i18n-html="Search matches title first, then project and first prompt. Use &lt;code&gt;p:name&lt;/code&gt; to filter by project.">Search matches title first, then project and first prompt. Use <code>p:name</code> to filter by project.</p>
       </section>
       <section class="tabpanel about" data-panel="about" role="tabpanel" hidden>
         <div class="about-head">
@@ -197,11 +198,11 @@
             <path d="M10.5 12.5l3 2.75-3 2.75" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M16 18h5.5" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round"/>
           </svg>
-          <div><b>chito</b><span>Version 0.1.0</span></div>
+          <div><b>chito</b><span data-i18n>Version 0.1.0</span></div>
         </div>
-        <p>A simple web UI for Claude Code. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.</p>
-        <p>It runs locally and reads the transcripts in <code>~/.claude/projects</code>. Nothing is sent anywhere.</p>
-        <p>chito is open source and public under the MIT license. Code, issues and changes live at <a href="https://github.com/wangtian24/chito" target="_blank" rel="noopener">github.com/wangtian24/chito</a>.</p>
+        <p data-i18n-html="A simple web UI for Claude Code. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.">A simple web UI for Claude Code. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.</p>
+        <p data-i18n-html="It runs locally and reads the transcripts in &lt;code&gt;~/.claude/projects&lt;/code&gt;. Nothing is sent anywhere.">It runs locally and reads the transcripts in <code>~/.claude/projects</code>. Nothing is sent anywhere.</p>
+        <p data-i18n-html="chito is open source and public under the MIT license. Code, issues and changes live at &lt;a href=&quot;https://github.com/wangtian24/chito&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;github.com/wangtian24/chito&lt;/a&gt;.">chito is open source and public under the MIT license. Code, issues and changes live at <a href="https://github.com/wangtian24/chito" target="_blank" rel="noopener">github.com/wangtian24/chito</a>.</p>
       </section>
     </div>
   </div>

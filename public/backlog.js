@@ -2,6 +2,8 @@
 // Reads /api/backlog (the local `bl` SQLite database). Read-only.
 import { marked } from '/vendor/marked.js';
 import DOMPurify from '/vendor/purify.js';
+// `t` is a ticket everywhere in this file, so the translator is tr / trp.
+import { t as tr, tp as trp, lang, LOCALE } from '/i18n.js';
 
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -12,7 +14,7 @@ const store = {
 };
 
 export const STATES = ['backlog', 'todo', 'in_progress', 'in_review', 'failed', 'done', 'canceled'];
-const LABEL = { backlog: 'Backlog', todo: 'Todo', in_progress: 'In progress', in_review: 'In review', failed: 'Failed', done: 'Done', canceled: 'Canceled' };
+const LABEL = { backlog: tr('Backlog'), todo: tr('Todo'), in_progress: tr('In progress'), in_review: tr('In review'), failed: tr('Failed'), done: tr('Done'), canceled: tr('Canceled') };
 const FINAL = new Set(['done', 'canceled']);
 const ICON = {
   backlog: '<circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/>',
@@ -25,7 +27,7 @@ const ICON = {
 };
 const SESSION_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5h14a2 2 0 0 1 2 2V15a2 2 0 0 1-2 2h-6l-4 3.5V17H5a2 2 0 0 1-2-2V8.5a2 2 0 0 1 2-2z"/></svg>';
 
-let ctx = null;          // { openSession, toast, fmtRel, fmtDateTime }
+let ctx = null;          // { openSession, toast, fmtRel, fmtRelAgo, fmtDateTime, getPr }
 const bl = { data: null, byKey: new Map(), blockers: new Map(), dependents: new Map(), depth: new Map(), order: new Map(), error: null, timer: null, ticket: null, ticketKey: null };
 // Lane collapse lives for this page load only: the Projects tab always opens with every lane expanded
 // (Overview carries the compact, collapsed list).
@@ -143,7 +145,7 @@ const ticketPath = t => `/projects/${encodeURIComponent(t.project)}/${encodeURIC
 function sessionLink(s, label) {
   const a = el('a', 'bl-sess');
   a.href = `/s/${s.id}`;
-  a.title = `${s.title || s.id}${s.role ? ` (${s.role})` : ''}`;
+  a.title = `${s.title || s.id}${s.role ? ` (${ROLE[s.role] || s.role})` : ''}`;
   a.innerHTML = SESSION_ICON;
   if (label) a.append(el('span', null, label));
   a.addEventListener('click', e => {
@@ -159,18 +161,18 @@ export function renderBacklog() {
   if (!root) return;
   const route = parseBacklogPath(location.pathname) || {};
   root.textContent = '';
-  if (bl.error) { root.append(el('div', 'board-status', `Could not load the backlog: ${bl.error}`)); return; }
-  if (!bl.data) { root.append(el('div', 'prs-empty', 'Loading…')); return; }
+  if (bl.error) { root.append(el('div', 'board-status', tr('Could not load the backlog: {error}', { error: bl.error }))); return; }
+  if (!bl.data) { root.append(el('div', 'prs-empty', tr('Loading…'))); return; }
   if (!bl.data.available) {
     const s = el('div', 'board-status');
-    s.append('No backlog database found at ', el('code', null, bl.data.db), '. Create one with ', el('code', null, 'bl init'), ', or set ', el('code', null, 'CHITO_BACKLOG_DB'), '.');
-    root.append(head('Projects', ''), s);
+    s.append(tr('No backlog database found at '), el('code', null, bl.data.db), tr('. Create one with '), el('code', null, 'bl init'), tr(', or set '), el('code', null, 'CHITO_BACKLOG_DB'), tr('.'));
+    root.append(head(tr('Projects'), ''), s);
     return;
   }
   const project = route.project && bl.data.projects.find(p => p.key === route.project.toUpperCase());
-  if (route.project && !project) { root.append(head('Projects', ''), el('div', 'prs-empty', `No project ${route.project}.`)); }
-  else if (project) { document.title = `${project.key} · Projects · chito`; renderProject(root, project); }
-  else { document.title = 'Projects · chito'; renderLanes(root); }
+  if (route.project && !project) { root.append(head(tr('Projects'), ''), el('div', 'prs-empty', tr('No project {key}.', { key: route.project }))); }
+  else if (project) { document.title = `${project.key} · ${tr('Projects')} · chito`; renderProject(root, project); }
+  else { document.title = `${tr('Projects')} · chito`; renderLanes(root); }
   renderDrawer(route.ticket ? route.ticket.toUpperCase() : null);
 }
 
@@ -189,19 +191,19 @@ function controls(withSearch = true) {
   if (withSearch) {
     const box = el('div', 'search board-search');
     box.innerHTML = '<svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
-    const inp = el('input'); inp.type = 'search'; inp.placeholder = 'Search key, title or label'; inp.id = 'blq'; inp.value = ui.q; inp.autocomplete = 'off'; inp.spellcheck = false;
+    const inp = el('input'); inp.type = 'search'; inp.placeholder = tr('Search key, title or label'); inp.id = 'blq'; inp.value = ui.q; inp.autocomplete = 'off'; inp.spellcheck = false;
     inp.addEventListener('input', () => { ui.q = inp.value; const pos = inp.selectionStart; renderBacklog(); const n = $('#blq'); n.focus(); n.setSelectionRange(pos, pos); });
     inp.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); if (inp.value) { ui.q = ''; renderBacklog(); } else inp.blur(); } });
     box.append(inp);
     row.append(box);
   }
   const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup');
-  for (const [v, label, tip] of [['none', 'Open', 'Open tickets only'], ['recent', '+ 24h', 'Open, plus tickets closed in the last 24 hours'], ['all', 'All', 'Every ticket, however old'], ['finished', 'Finished', 'Only tickets finished (done, canceled or failed) in the last 7 days, across all projects, newest first']]) {
+  for (const [v, label, tip] of [['none', tr('Open|tickets'), tr('Open tickets only')], ['recent', tr('+ 24h'), tr('Open, plus tickets closed in the last 24 hours')], ['all', tr('All'), tr('Every ticket, however old')], ['finished', tr('Finished'), tr('Only tickets finished (done, canceled or failed) in the last 7 days, across all projects, newest first')]]) {
     const b = el('button', null, label); b.setAttribute('aria-checked', String(ui.closed === v)); b.title = tip;
     b.addEventListener('click', () => { ui.closed = v; store.set('blClosed2', v); renderBacklog(); });
     seg.append(b);
   }
-  const cap = el('span', 'bl-cap', 'Tickets'); row.append(cap, seg);
+  const cap = el('span', 'bl-cap', tr('Tickets')); row.append(cap, seg);
   return row;
 }
 
@@ -213,18 +215,20 @@ const closedAt = t => new Date(t.finished || t.updated || 0).getTime();
 // The Updated column's moment: when an ended ticket finished; for an open one, its last state change (else its last edit).
 const shownAt = t => (ENDED.has(t.state) ? t.finished : t.changed) || t.updated || '';
 // Exact relative time: '12m ago', '1h 20m ago'; from 2 h on, the Pacific clock time ('14:35 PT', 'Nov 12, 14:35 PT', 'Nov 12 2025, 14:35 PT').
-const PT_PARTS = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+// In Chinese: '12分钟前', '1小时20分钟前', '14:35 PT', '11月12日 14:35 PT', '2025年11月12日 14:35 PT'.
+const PT_PARTS = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: lang === 'zh' ? 'numeric' : 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const ptParts = d => Object.fromEntries(PT_PARTS.formatToParts(d).map(p => [p.type, p.value]));
 export function fmtAgo(iso, now = new Date()) {
   if (!iso) return '';
   const d = new Date(iso);
   const min = Math.floor((now - d) / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  if (min < 120) return min === 60 ? '1h ago' : `1h ${min - 60}m ago`;
+  if (min < 1) return tr('just now');
+  if (min < 60) return tr('{n}m ago', { n: min });
+  if (min < 120) return min === 60 ? tr('{n}h ago', { n: 1 }) : tr('{h}h {m}m ago', { h: 1, m: min - 60 });
   const p = ptParts(d), n = ptParts(now);
   const clock = `${p.hour}:${p.minute} PT`;
   if (p.year === n.year && p.month === n.month && p.day === n.day) return clock;
+  if (lang === 'zh') return `${p.year === n.year ? '' : p.year + '年'}${p.month}月${p.day}日 ${clock}`;
   return `${p.month} ${p.day}${p.year === n.year ? '' : ' ' + p.year}, ${clock}`;
 }
 const closedRecently = t => Date.now() - closedAt(t) < DAY_MS;
@@ -246,13 +250,13 @@ const matches = t => {
   return ui.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w));
 };
 
-const REFRESH = [[0, 'Off'], [60, '1m'], [300, '5m'], [600, '10m'], [1800, '30m'], [3600, '1h']];
+const REFRESH = [[0, tr('Off')], [60, tr('{n}m', { n: 1 })], [300, tr('{n}m', { n: 5 })], [600, tr('{n}m', { n: 10 })], [1800, tr('{n}m', { n: 30 })], [3600, tr('{n}h', { n: 1 })]];
 function refreshSelect() {
-  const wrap = el('label', 'bl-sel bl-refresh'); wrap.title = 'Auto-refresh this page';
-  wrap.append(el('span', null, 'Auto-refresh'));
+  const wrap = el('label', 'bl-sel bl-refresh'); wrap.title = tr('Auto-refresh this page');
+  wrap.append(el('span', null, tr('Auto-refresh')));
   const s = el('select');
   for (const [v, t] of REFRESH) { const o = el('option', null, t); o.value = String(v); if (v === ui.refresh) o.selected = true; s.append(o); }
-  s.addEventListener('change', () => { ui.refresh = Number(s.value); store.set('blRefresh', ui.refresh); startBacklogPolling(); ctx.toast(ui.refresh ? `Refreshing every ${REFRESH.find(r => r[0] === ui.refresh)[1]}` : 'Auto-refresh off'); });
+  s.addEventListener('change', () => { ui.refresh = Number(s.value); store.set('blRefresh', ui.refresh); startBacklogPolling(); ctx.toast(ui.refresh ? tr('Refreshing every {every}', { every: REFRESH.find(r => r[0] === ui.refresh)[1] }) : tr('Auto-refresh off')); });
   wrap.append(s);
   return wrap;
 }
@@ -263,16 +267,17 @@ function headRight(extra) {
   return r;
 }
 function refreshBtn() {
-  const b = el('button', 'btn'); b.title = 'Reload from the database';
-  b.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 5v4h4M4 13a8 8 0 0 0 14.9 3.9M20 19v-4h-4"/></svg><span>Refresh</span>';
-  b.addEventListener('click', async () => { await loadBacklog(); renderBacklog(); ctx.toast('Up to date'); });
+  const b = el('button', 'btn'); b.title = tr('Reload from the database');
+  b.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 5v4h4M4 13a8 8 0 0 0 14.9 3.9M20 19v-4h-4"/></svg>';
+  b.append(el('span', null, tr('Refresh')));
+  b.addEventListener('click', async () => { await loadBacklog(); renderBacklog(); ctx.toast(tr('Up to date')); });
   return b;
 }
 
 function progress(tks) {
   const total = tks.filter(t => t.state !== 'canceled').length;
   const done = tks.filter(t => t.state === 'done').length;
-  const bar = el('div', 'bl-progress'); bar.title = `${done} of ${total} done`;
+  const bar = el('div', 'bl-progress'); bar.title = tr('{done} of {total} done', { done, total });
   for (const st of ['done', 'in_review', 'in_progress', 'failed', 'todo', 'backlog']) {
     const n = tks.filter(t => t.state === st).length;
     if (!n || !total) continue;
@@ -286,8 +291,8 @@ function progress(tks) {
 function runBadge(project) {
   const r = liveRun(project.key);
   if (!r) return null;
-  const s = el('span', 'bl-run'); s.title = `Orchestrator pid ${r.pid}, started ${ctx.fmtDateTime(r.started)}, last heartbeat ${ctx.fmtRel(r.heartbeat)} ago`;
-  s.append(el('span', 'live-dot busy'), 'Running');
+  const s = el('span', 'bl-run'); s.title = tr('Orchestrator pid {pid}, started {started}, last heartbeat {ago}', { pid: r.pid, started: ctx.fmtDateTime(r.started), ago: ctx.fmtRelAgo(r.heartbeat) });
+  s.append(el('span', 'live-dot busy'), tr('Running'));
   return s;
 }
 
@@ -297,8 +302,8 @@ async function act(action, key, value) {
     const r = await fetch('/api/backlog/action', { method: 'POST', headers: { 'content-type': 'application/json', 'x-chito': '1' }, body: JSON.stringify({ action, key, value }) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
-    ctx.toast(j.out ? `${key ? key + ': ' : ''}${j.out.split('\n')[0]}` : 'Done');
-  } catch (e) { ctx.toast(`Failed: ${e.message}`); }
+    ctx.toast(j.out ? `${key ? key + ': ' : ''}${j.out.split('\n')[0]}` : tr('Done'));
+  } catch (e) { ctx.toast(tr('Failed: {error}', { error: e.message })); }
   await loadBacklog();
   if (bl.ticketKey) bl.ticket = null;
   renderBacklog();
@@ -311,7 +316,7 @@ function actBtn(label, action, key, value, { confirm = false, primary = false, t
   b.addEventListener('click', e => {
     e.preventDefault(); e.stopPropagation();
     if (confirm && !armed) {
-      b.textContent = `Confirm ${label.toLowerCase()}?`; b.classList.add('armed');
+      b.textContent = tr('Confirm {action}?', { action: lang === 'zh' ? label : label.toLowerCase() }); b.classList.add('armed');
       armed = setTimeout(() => { armed = null; b.textContent = label; b.classList.remove('armed'); }, 3000);
       return;
     }
@@ -320,11 +325,16 @@ function actBtn(label, action, key, value, { confirm = false, primary = false, t
   return b;
 }
 
-const PSTATE = { planning: 'Planning', executing: 'Executing', paused: 'Paused', done: 'Done', archived: 'Archived', active: 'Executing' };
+// Words that come from the database as codes; anything not listed shows as stored.
+const ROLE = { worker: tr('worker'), created: tr('created'), touched: tr('touched') };
+const EVENT = { created: tr('created'), state: tr('state'), claim: tr('claim'), comment: tr('comment'), edit: tr('edit'), dep: tr('dep'), spawn: tr('spawn'), handoff: tr('handoff'), brief: tr('brief'), run: tr('run'), quota: tr('quota'), milestone: tr('milestone'), project: tr('project'), daemon: tr('daemon'), orchestrator: tr('orchestrator') };
+const SESS_KIND = { 'Handoff session': tr('Handoff session'), Briefing: tr('Briefing'), 'Worker session': tr('Worker session'), 'Orchestrator session': tr('Orchestrator session') };
+const PRIO = [tr('Urgent'), tr('High'), tr('Normal'), tr('Low'), tr('None')];
+const PSTATE = { planning: tr('Planning'), executing: tr('Executing'), paused: tr('Paused'), done: tr('Done'), archived: tr('Archived'), active: tr('Executing') };
 function projState(p) {
   const orphan = isOrphan(p);
-  const s = el('span', `bl-pstate ps-${p.status}${orphan ? ' orphan' : ''}`, orphan ? 'Orphaned' : PSTATE[p.status] || p.status);
-  s.title = orphan ? `Executing, but its owner (${p.owner}) stopped responding. Resume it with /backlog-run, or let the daemon adopt it.` : `Project is ${p.status}`;
+  const s = el('span', `bl-pstate ps-${p.status}${orphan ? ' orphan' : ''}`, orphan ? tr('Orphaned') : PSTATE[p.status] || p.status);
+  s.title = orphan ? tr('Executing, but its owner ({owner}) stopped responding. Resume it with /backlog-run, or let the daemon adopt it.', { owner: p.owner }) : tr('Project is {status}', { status: PSTATE[p.status] || p.status });
   return s;
 }
 function isOrphan(p) {
@@ -334,20 +344,20 @@ function isOrphan(p) {
   return !p.owner_heartbeat || Date.now() - new Date(p.owner_heartbeat).getTime() > lease * 60e3;
 }
 const MODES = {
-  session: { short: 'Manual', title: 'Manual (SO): you start /backlog-run in a session and it orchestrates until done' },
-  auto: { short: 'Auto', title: 'Auto (DSO): the daemon starts an orchestrator session whenever tickets are ready, and again when more arrive' },
-  daemon: { short: 'Simple', title: 'Simple (DQ): the daemon runs one Claude per ready ticket, with no orchestrator session' },
+  session: { short: tr('Manual'), title: tr('Manual (SO): you start /backlog-run in a session and it orchestrates until done') },
+  auto: { short: tr('Auto'), title: tr('Auto (DSO): the daemon starts an orchestrator session whenever tickets are ready, and again when more arrive') },
+  daemon: { short: tr('Simple'), title: tr('Simple (DQ): the daemon runs one Claude per ready ticket, with no orchestrator session') },
 };
 const CEDAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l4.5 6h-2.5l4 5h-2.5l4 5.5H4.5l4-5.5H6l4-5H7.5z" fill="currentColor"/><path d="M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 function evergreenIcon() {
-  const s = el('span', 'bl-ever'); s.innerHTML = CEDAR; s.title = 'Evergreen: this project never finishes; new tickets keep flowing'; s.setAttribute('role', 'img'); s.setAttribute('aria-label', 'Evergreen');
+  const s = el('span', 'bl-ever'); s.innerHTML = CEDAR; s.title = tr('Evergreen: this project never finishes; new tickets keep flowing'); s.setAttribute('role', 'img'); s.setAttribute('aria-label', tr('Evergreen'));
   return s;
 }
 // Project page: click the name to rename it; Enter or leaving the field saves, Escape cancels.
 function nameEditor(p) {
-  const t = el('button', 'bl-name-edit', p.name); t.title = 'Click to rename';
+  const t = el('button', 'bl-name-edit', p.name); t.title = tr('Click to rename');
   t.addEventListener('click', () => {
-    const inp = el('input', 'bl-name-input'); inp.value = p.name; inp.maxLength = 120; const fit = () => { inp.size = Math.max(12, inp.value.length + 2); }; fit(); inp.addEventListener('input', fit); inp.setAttribute('aria-label', 'Project name');
+    const inp = el('input', 'bl-name-input'); inp.value = p.name; inp.maxLength = 120; const fit = () => { inp.size = Math.max(12, inp.value.length + 2); }; fit(); inp.addEventListener('input', fit); inp.setAttribute('aria-label', tr('Project name'));
     let done = false;
     const finish = save => {
       if (done) return; done = true;
@@ -367,8 +377,8 @@ function evergreenToggle(p) {
   const b = el('button', `bl-ever-toggle${on ? ' on' : ''}`);
   b.innerHTML = on ? CEDAR : CEDAR.replaceAll('fill="currentColor"', 'fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"');
   b.setAttribute('aria-pressed', String(on));
-  b.setAttribute('aria-label', 'Evergreen');
-  b.title = on ? 'Evergreen: this project never finishes; new tickets keep flowing in. Click to make it a normal project.' : 'Not evergreen: the project finishes when its tickets are done. Click to make it evergreen.';
+  b.setAttribute('aria-label', tr('Evergreen'));
+  b.title = on ? tr('Evergreen: this project never finishes; new tickets keep flowing in. Click to make it a normal project.') : tr('Not evergreen: the project finishes when its tickets are done. Click to make it evergreen.');
   b.addEventListener('click', () => act('project-evergreen', p.key, !on));
   return b;
 }
@@ -388,19 +398,19 @@ function execBadge(p) {
 }
 function lifecycleButtons(p, compact) {
   const box = el('div', 'bl-ctl');
-  if (p.status === 'planning') box.append(actBtn('Start', 'project-start', p.key, null, { primary: true, title: 'Move to executing so its executor picks up ready tickets' }));
-  if (p.status === 'executing') box.append(actBtn('Pause', 'project-pause', p.key, null, { title: 'Running work finishes; nothing new is claimed' }));
-  if (p.status === 'paused') box.append(actBtn('Resume', 'project-resume', p.key, null, { primary: true }));
+  if (p.status === 'planning') box.append(actBtn(tr('Start'), 'project-start', p.key, null, { primary: true, title: tr('Move to executing so its executor picks up ready tickets') }));
+  if (p.status === 'executing') box.append(actBtn(tr('Pause'), 'project-pause', p.key, null, { title: tr('Running work finishes; nothing new is claimed') }));
+  if (p.status === 'paused') box.append(actBtn(tr('Resume'), 'project-resume', p.key, null, { primary: true }));
   if (!compact) {
-    if (p.status !== 'planning') box.append(actBtn('Back to planning', 'project-plan', p.key));
-    const seg = el('div', 'seg bl-seg'); seg.title = 'Orchestration: who runs this project';
+    if (p.status !== 'planning') box.append(actBtn(tr('Back to planning'), 'project-plan', p.key));
+    const seg = el('div', 'seg bl-seg'); seg.title = tr('Orchestration: who runs this project');
     for (const ex of ['session', 'auto', 'daemon']) {
       const b = el('button', null, MODES[ex].short); b.title = MODES[ex].title; b.setAttribute('aria-checked', String(p.executor === ex));
       b.addEventListener('click', () => { if (p.executor !== ex) act('project-executor', p.key, ex); });
       seg.append(b);
     }
-    const lab = el('span', 'bl-cap', 'Orchestration'); box.append(lab, seg);
-    box.append(actBtn('Archive', 'project-archive', p.key, null, { confirm: true }));
+    const lab = el('span', 'bl-cap', tr('Orchestration')); box.append(lab, seg);
+    box.append(actBtn(tr('Archive'), 'project-archive', p.key, null, { confirm: true }));
   }
   return box;
 }
@@ -410,34 +420,33 @@ function daemonBar() {
   const bar = el('div', 'bl-daemon');
   const cap = setting(null, 'global_max_parallel', 6);
   const dot = el('span', 'live-dot' + (d?.alive && d.enabled ? ' busy' : ''));
-  const label = !d || !d.alive ? 'Daemon not running' : d.enabled ? 'Daemon running' : 'Daemon paused';
+  const label = !d || !d.alive ? tr('Daemon not running') : d.enabled ? tr('Daemon running') : tr('Daemon paused');
   const t = el('b', null, label);
   const facts = el('span', 'bl-daemon-facts');
   const workers = bl.data.tickets.filter(x => x.state === 'in_progress' && (x.claimed_by || '').startsWith('daemon:')).length;
-  const rel = d?.heartbeat ? ctx.fmtRel(d.heartbeat) : '';
-  const hb = d?.heartbeat ? el('span', null, rel === 'now' ? 'heartbeat just now' : `heartbeat ${rel} ago`) : null;
+  const hb = d?.heartbeat ? el('span', null, tr('heartbeat {ago}', { ago: ctx.fmtRelAgo(d.heartbeat) })) : null;
   if (hb) hb.title = ctx.fmtDateTime(d.heartbeat);
   const runs = d?.runsToday ?? 0;
-  facts.append(factRow('', workers ? `${workers} queue worker${workers === 1 ? '' : 's'}` : null, `${runs} run${runs === 1 ? '' : 's'} today`, `up to ${cap} at once`, hb));
+  facts.append(factRow('', workers ? trp(workers, '{n} queue worker', '{n} queue workers') : null, trp(runs, '{n} run today', '{n} runs today'), tr('up to {n} at once', { n: cap }), hb));
   bar.append(dot, t, facts);
   if (d?.quota?.until) {
     const q = el('div', 'bl-quota');
-    q.append(el('b', null, 'Usage limit hit.'), ` Nothing new starts until ${ctx.fmtDateTime(d.quota.until)}; the tickets that hit it went back to todo without using an attempt.`);
-    if (d.quota.last?.ticket) q.append(' Last: ', d.quota.last.ticket, '.');
-    q.append(actBtn('Retry now', 'quota-clear', null, null, { title: 'Clear the pause; the next claims try again' }));
+    q.append(el('b', null, tr('Usage limit hit.')), tr(' Nothing new starts until {until}; the tickets that hit it went back to todo without using an attempt.', { until: ctx.fmtDateTime(d.quota.until) }));
+    if (d.quota.last?.ticket) q.append(tr(' Last: {key}.', { key: d.quota.last.ticket }));
+    q.append(actBtn(tr('Retry now'), 'quota-clear', null, null, { title: tr('Clear the pause; the next claims try again') }));
     bar.append(q);
   }
-  if (d?.alive) bar.append(d.enabled ? actBtn('Pause daemon', 'daemon-pause', null, null, { title: 'Workers already running finish; nothing new starts' }) : actBtn('Resume daemon', 'daemon-resume', null, null, { primary: true }));
-  else { const hint = el('span', 'bl-daemon-hint'); hint.append('Start it with ', el('code', null, 'bl daemon install')); bar.append(hint); }
+  if (d?.alive) bar.append(d.enabled ? actBtn(tr('Pause daemon'), 'daemon-pause', null, null, { title: tr('Workers already running finish; nothing new starts') }) : actBtn(tr('Resume daemon'), 'daemon-resume', null, null, { primary: true }));
+  else { const hint = el('span', 'bl-daemon-hint'); hint.append(tr('Start it with '), el('code', null, 'bl daemon install')); bar.append(hint); }
   return bar;
 }
 
 function executorOf(t) {
   const c = t.claimed_by || '';
-  if (c.startsWith('daemon:')) return ['Queue worker', 'ex-queue'];
-  if (c.startsWith('orchs:')) return ['Auto orchestrator', 'ex-orch'];
+  if (c.startsWith('daemon:')) return [tr('Queue worker'), 'ex-queue'];
+  if (c.startsWith('orchs:')) return [tr('Auto orchestrator'), 'ex-orch'];
   if (c.startsWith('orch:')) return ['bl run', 'ex-orch'];
-  if (c.startsWith('cc:')) return ['Session', 'ex-session'];
+  if (c.startsWith('cc:')) return [tr('Session'), 'ex-session'];
   if (c === 'chito') return ['chito', ''];
   return [c || '', ''];
 }
@@ -448,7 +457,7 @@ function workerSession(t) {
 function inFlight(tks) {
   const rows = tks.filter(t => t.state === 'in_progress').sort((a, b) => (a.started || '') < (b.started || '') ? -1 : 1);
   const wrap = el('div', 'bl-flight');
-  if (!rows.length) { wrap.append(el('div', 'bl-flight-empty', 'Nothing running right now.')); return wrap; }
+  if (!rows.length) { wrap.append(el('div', 'bl-flight-empty', tr('Nothing running right now.'))); return wrap; }
   for (const t of rows) {
     const r = linkTo(el('a', 'bl-flight-row'), ticketPath(t));
     const [ex, cls] = executorOf(t);
@@ -457,10 +466,10 @@ function inFlight(tks) {
     r.append(stateIcon('in_progress'), el('span', 'num bl-flight-key', t.key), el('span', 'bl-flight-title', t.title),
       el('span', 'bl-flight-model', t.spawn?.model || ''),
       el('span', 'num bl-flight-since', since ? ctx.fmtRel(since) : ''));
-    r.lastChild.title = since ? `Started ${ctx.fmtDateTime(since)}${t.attempts > 1 ? ` · attempt ${t.attempts}` : ''}` : '';
+    r.lastChild.title = since ? `${tr('Started {when}', { when: ctx.fmtDateTime(since) })}${t.attempts > 1 ? ` · ${tr('attempt {n}', { n: t.attempts })}` : ''}` : '';
     r.title = `${ex}${t.claimed_by ? ` (${t.claimed_by})` : ''}`;
-    if (sess) { const a = sessionLink(sess, 'Session'); a.classList.add('bl-flight-sess'); r.append(a); }
-    else r.append(el('span', 'bl-flight-sess none', 'no session yet'));
+    if (sess) { const a = sessionLink(sess, tr('Session')); a.classList.add('bl-flight-sess'); r.append(a); }
+    else r.append(el('span', 'bl-flight-sess none', tr('no session yet')));
     wrap.append(r);
   }
   return wrap;
@@ -469,22 +478,22 @@ function inFlight(tks) {
 // ---- who is executing a project ----
 // The orchestrator session is where general instructions for a project go, so its link is a button, not a footnote.
 function orchLink(s, compact, last = false) {
-  const a = sessionLink(s, compact ? (last ? 'Last orchestrator' : 'Orchestrator') : (last ? 'Open the last orchestrator session' : 'Open the orchestrator session'));
+  const a = sessionLink(s, compact ? (last ? tr('Last orchestrator') : tr('Orchestrator')) : (last ? tr('Open the last orchestrator session') : tr('Open the orchestrator session')));
   a.classList.add('btn', 'bl-orch-link');
-  a.title = `${s.title || s.id}: give the orchestrator general instructions for this project here`;
+  a.title = tr('{title}: give the orchestrator general instructions for this project here', { title: s.title || s.id });
   return a;
 }
 // Standing instructions: every orchestrator run and every worker prompt in this project gets them, and a running
 // orchestrator re-reads them each round (bl instructions KEY).
 function instructionsBox(p) {
   const box = el('details', 'bl-instr'); if (p.instructions) box.open = true;
-  const sum = el('summary', null, 'Standing instructions');
-  sum.append(el('span', 'bl-instr-hint', p.instructions ? ' every orchestrator and worker in this project follows these' : ' none yet: guidance every orchestrator and worker here should follow'));
-  const ta = el('textarea'); ta.value = p.instructions || ''; ta.rows = 4; ta.placeholder = 'For example: deploy only at milestones. Always add a unit test. Leave the billing code alone.';
+  const sum = el('summary', null, tr('Standing instructions'));
+  sum.append(el('span', 'bl-instr-hint', p.instructions ? tr(' every orchestrator and worker in this project follows these') : tr(' none yet: guidance every orchestrator and worker here should follow')));
+  const ta = el('textarea'); ta.value = p.instructions || ''; ta.rows = 4; ta.placeholder = tr('For example: deploy only at milestones. Always add a unit test. Leave the billing code alone.');
   ta.addEventListener('keydown', e => e.stopPropagation());
-  const save = el('button', 'btn primary', 'Save'); save.type = 'button';
+  const save = el('button', 'btn primary', tr('Save')); save.type = 'button';
   save.addEventListener('click', () => { save.disabled = true; act('project-instructions', p.key, ta.value); });
-  const row = el('div', 'bl-instr-row'); row.append(save, el('span', 'bl-instr-hint', 'A running orchestrator picks changes up at its next round.'));
+  const row = el('div', 'bl-instr-row'); row.append(save, el('span', 'bl-instr-hint', tr('A running orchestrator picks changes up at its next round.')));
   box.append(sum, ta, row);
   return box;
 }
@@ -497,10 +506,10 @@ function execLine(p, compact) {
     const o = ex.orchestrator;
     if (o) {
       const row = el('span', 'bl-execrun');
-      row.append(el('span', 'live-dot busy'), el('span', null, 'Orchestrator running'), orchLink(o, compact));
+      row.append(el('span', 'live-dot busy'), el('span', null, tr('Orchestrator running')), orchLink(o, compact));
       box.append(row);
     } else {
-      box.append(el('span', null, !d?.alive ? 'Daemon not running' : !d.enabled ? 'Daemon paused' : d.quota?.until ? 'Waiting for the usage limit to reset' : compact ? 'Idle' : 'Idle; the daemon starts an orchestrator when tickets are ready'));
+      box.append(el('span', null, !d?.alive ? tr('Daemon not running') : !d.enabled ? tr('Daemon paused') : d.quota?.until ? tr('Waiting for the usage limit to reset') : compact ? tr('Idle') : tr('Idle; the daemon starts an orchestrator when tickets are ready')));
       if (!d?.alive || !d?.enabled || d?.quota?.until) box.classList.add('warn');
       const last = (p.orchSessions || [])[0];
       if (last) box.append(orchLink(last, compact, true));
@@ -510,23 +519,23 @@ function execLine(p, compact) {
   if (p.executor === 'daemon') {
     const d = bl.data.daemon;
     const n = (ex.workers || []).length;
-    box.append(el('span', null, !d?.alive ? 'Daemon not running' : !d.enabled ? 'Daemon paused' : n ? `${n} working` : 'Idle'));
+    box.append(el('span', null, !d?.alive ? tr('Daemon not running') : !d.enabled ? tr('Daemon paused') : n ? tr('{n} working', { n }) : tr('Idle')));
     if (!d?.alive || !d?.enabled) box.classList.add('warn');
     return box;
   }
   if (ex.runs?.length) {
     for (const r of ex.runs) {
       const row = el('span', 'bl-execrun');
-      row.append(el('span', 'live-dot busy'), el('span', null, `Orchestrator pid ${r.pid}`));
-      if (r.session) row.append(orchLink(r.session, compact)); else row.append(el('span', null, 'launching its session'));
-      row.title = `bl run started ${ctx.fmtDateTime(r.started)}; heartbeat ${ctx.fmtRel(r.heartbeat)} ago`;
+      row.append(el('span', 'live-dot busy'), el('span', null, tr('Orchestrator pid {pid}', { pid: r.pid })));
+      if (r.session) row.append(orchLink(r.session, compact)); else row.append(el('span', null, tr('launching its session')));
+      row.title = tr('bl run started {started}; heartbeat {ago}', { started: ctx.fmtDateTime(r.started), ago: ctx.fmtRelAgo(r.heartbeat) });
       box.append(row);
     }
     return box;
   }
   if (ex.owner?.session) {
     const row = el('span', 'bl-execrun');
-    row.append(el('span', 'live-dot' + (isOrphan(p) ? '' : ' busy')), el('span', null, isOrphan(p) ? 'Owner session went quiet' : 'Run by session'),
+    row.append(el('span', 'live-dot' + (isOrphan(p) ? '' : ' busy')), el('span', null, isOrphan(p) ? tr('Owner session went quiet') : tr('Run by session')),
       orchLink(ex.owner.session, compact));
     box.append(row);
     if (isOrphan(p)) box.classList.add('warn');
@@ -535,8 +544,8 @@ function execLine(p, compact) {
   const ready = bl.data.tickets.filter(t => t.project === p.key && isReady(t)).length;
   if (!ready) return null;
   box.classList.add('warn');
-  box.append(el('span', null, `${ready} ready, no orchestrator running`));
-  const hint = el('code', null, `/backlog-run ${p.key}`); hint.title = 'Run it from a Claude Code session, or switch the executor to Daemon';
+  box.append(el('span', null, tr('{n} ready, no orchestrator running', { n: ready })));
+  const hint = el('code', null, `/backlog-run ${p.key}`); hint.title = tr('Run it from a Claude Code session, or switch the executor to Daemon');
   box.append(hint);
   return box;
 }
@@ -546,12 +555,12 @@ const fmtTok = n => n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 
 const fmtCost = u => u ? `$${u.cost < 10 ? u.cost.toFixed(2) : Math.round(u.cost)}${u.unpriced ? '+' : ''}` : '';
 function usageTitle(u) {
   if (!u) return '';
-  return `Nominal list-price cost (not billed on a subscription)\n${u.turns} model turns · ${(u.models || []).join(', ')}\n` +
-    `input ${fmtTok(u.input)} · output ${fmtTok(u.output)} · cache read ${fmtTok(u.cacheRead)} · cache write ${fmtTok(u.cacheWrite)}`;
+  return `${tr('Nominal list-price cost (not billed on a subscription)')}\n${tr('{n} model turns', { n: u.turns })} · ${(u.models || []).join(', ')}\n` +
+    tr('input {input} · output {output} · cache read {cacheRead} · cache write {cacheWrite}', { input: fmtTok(u.input), output: fmtTok(u.output), cacheRead: fmtTok(u.cacheRead), cacheWrite: fmtTok(u.cacheWrite) });
 }
 function usageStat(label, u) {
   const s = el('span', 'bl-usage');
-  s.append(el('span', null, label), el('b', 'num', fmtCost(u)), factRow('num', `${u.turns} turns`, `${fmtTok(u.tokens)} tokens`));
+  s.append(el('span', null, label), el('b', 'num', fmtCost(u)), factRow('num', tr('{n} turns', { n: u.turns }), tr('{n} tokens', { n: fmtTok(u.tokens) })));
   s.title = usageTitle(u);
   return s;
 }
@@ -567,7 +576,7 @@ function resultLine(t) {
   for (const u of urls) {
     if (/github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(u)) continue;      // PRs come from t.prs below
     let label;
-    try { const x = new URL(u); label = /arti\./.test(x.host) ? `doc: ${x.pathname.split('/')[2] || x.host}` : x.host.replace(/^www\./, ''); } catch { continue; }
+    try { const x = new URL(u); label = /arti\./.test(x.host) ? tr('doc: {slug}', { slug: x.pathname.split('/')[2] || x.host }) : x.host.replace(/^www\./, ''); } catch { continue; }
     if (/^localhost|^127\./.test(label)) continue;
     const a = el('a', 'bl-res-link', label); a.href = u; a.target = '_blank'; a.rel = 'noopener'; a.title = u;
     a.addEventListener('click', e => e.stopPropagation());
@@ -582,7 +591,7 @@ function resultLine(t) {
   const row = el('div', 'bl-res');
   row.append(...links);
   if (one) row.append(el('span', 'bl-res-text', one));
-  row.title = 'Result: the full text is in the details';
+  row.title = tr('Result: the full text is in the details');
   return row;
 }
 
@@ -594,7 +603,7 @@ function prChips(t, max = 3) {
     const st = gh?.state || 'UNKNOWN';
     const a = el('a', `bl-pr st-${st}`);
     a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
-    a.title = `${pr.repo || ''} #${pr.number}${gh?.title ? ' · ' + gh.title : ''} · ${st.toLowerCase()}`;
+    a.title = `${pr.repo || ''} #${pr.number}${gh?.title ? ' · ' + gh.title : ''} · ${PR_STATE[st] || st.toLowerCase()}`;
     a.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-3"/></svg>';
     a.append(el('span', 'num', `#${pr.number}`));
     a.addEventListener('click', e => e.stopPropagation());
@@ -605,11 +614,12 @@ function prChips(t, max = 3) {
 }
 
 // ---- milestones ----
-const MS_LABEL = { planned: 'Planned', active: 'Active', reached: 'Reached', showcased: 'Showcased', canceled: 'Canceled' };
+const PR_STATE = { OPEN: tr('open'), DRAFT: tr('draft'), MERGED: tr('merged'), CLOSED: tr('closed'), UNKNOWN: tr('unknown') };
+const MS_LABEL = { planned: tr('Planned'), active: tr('Active|milestone'), reached: tr('Reached'), showcased: tr('Showcased'), canceled: tr('Canceled') };
 function msTrigger(m) {
-  if (m.trigger === 'deploy') return `On deploy (${m.gate || '?'})`;
-  if (m.trigger === 'manual') return 'Manual';
-  return 'When all done';
+  if (m.trigger === 'deploy') return tr('On deploy ({gate})', { gate: m.gate || '?' });
+  if (m.trigger === 'manual') return tr('Manual');
+  return tr('When all done');
 }
 function msTickets(m) { return bl.data.tickets.filter(t => t.milestone === m.key && t.key !== m.showcase_ticket); }
 function showcaseItems(m, big) {
@@ -637,26 +647,26 @@ function roadmap(p) {
     const tks = msTickets(m);
     const card = el('button', `bl-ms ms-${m.status}${ui.milestone === m.key ? ' on' : ''}`);
     card.type = 'button';
-    card.title = ui.milestone === m.key ? 'Show all tickets' : 'Show only this milestone\'s tickets';
+    card.title = ui.milestone === m.key ? tr('Show all tickets') : tr("Show only this milestone's tickets");
     card.addEventListener('click', e => { if (e.target.closest('a')) return; ui.milestone = ui.milestone === m.key ? null : m.key; renderBacklog(); });
     const top = el('div', 'bl-ms-top');
     top.append(el('span', 'num bl-ms-key', m.key.slice(p.key.length + 1)), el('span', `bl-ms-state ms-${m.status}`, MS_LABEL[m.status] || m.status));
-    if (m.due) { const due = el('span', 'bl-ms-due', `due ${m.due}`); if (m.due < new Date().toISOString().slice(0, 10) && !['reached', 'showcased'].includes(m.status)) due.classList.add('late'); top.append(due); }
+    if (m.due) { const due = el('span', 'bl-ms-due', tr('due {date}', { date: m.due })); if (m.due < new Date().toISOString().slice(0, 10) && !['reached', 'showcased'].includes(m.status)) due.classList.add('late'); top.append(due); }
     card.append(top, el('div', 'bl-ms-title', m.title));
     const meta = el('div', 'bl-ms-meta'); meta.append(el('span', null, msTrigger(m)));
-    if (m.showcase_kind && m.showcase_kind !== 'none') meta.append(el('span', null, `showcase: ${m.showcase_kind}`));
+    if (m.showcase_kind && m.showcase_kind !== 'none') meta.append(el('span', null, tr('showcase: {kind}', { kind: m.showcase_kind })));
     card.append(meta, progress(tks));
     if (m.showcases?.length) card.append(showcaseItems(m));
     else if (m.showcase_ticket) {
       const st = bl.byKey.get(m.showcase_ticket);
-      if (st) { const l = linkTo(el('a', 'bl-ms-st'), ticketPath(st)); l.append(stateIcon(st.state), el('span', null, `Showcase ${st.key.slice(p.key.length + 1)}: ${LABEL[st.state].toLowerCase()}`)); card.append(l); }
+      if (st) { const l = linkTo(el('a', 'bl-ms-st'), ticketPath(st)); l.append(stateIcon(st.state), el('span', null, tr('Showcase {key}: {state}', { key: st.key.slice(p.key.length + 1), state: lang === 'zh' ? LABEL[st.state] : LABEL[st.state].toLowerCase() }))); card.append(l); }
     }
     wrap.append(card);
   }
   const none = bl.data.tickets.filter(t => t.project === p.key && !t.milestone && !t.meta?.showcase_for && !FINAL.has(t.state)).length;
   if (none) {
     const c = el('button', `bl-ms ms-none${ui.milestone === '-' ? ' on' : ''}`); c.type = 'button';
-    c.append(el('div', 'bl-ms-title', `${none} open ticket${none === 1 ? '' : 's'} without a milestone`));
+    c.append(el('div', 'bl-ms-title', trp(none, '{n} open ticket without a milestone', '{n} open tickets without a milestone')));
     c.addEventListener('click', () => { ui.milestone = ui.milestone === '-' ? null : '-'; renderBacklog(); });
     wrap.append(c);
   }
@@ -668,13 +678,13 @@ function nextMilestone(p) {
 }
 
 // ---- needs you: what is asked and where to answer ----
-const PHASE = { preparing: 'Preparing your handoff', awaiting: 'Ready for you', discussing: 'In discussion' };
+const PHASE = { preparing: tr('Preparing your handoff'), awaiting: tr('Ready for you'), discussing: tr('In discussion') };
 function needReason(t) {
   const ph = t.meta?.handoff?.phase;
   if (t.assignee === 'human' && PHASE[ph]) return PHASE[ph];
-  if (t.state === 'failed') return 'Failed, decide: retry, fix the spec or cancel';
-  if (t.state === 'in_review') return 'Review the PR, then approve';
-  return 'Your decision';
+  if (t.state === 'failed') return tr('Failed, decide: retry, fix the spec or cancel');
+  if (t.state === 'in_review') return tr('Review the PR, then approve');
+  return tr('Your decision');
 }
 function answerSession(t) {
   const hs = t.meta?.handoff?.session;
@@ -692,8 +702,8 @@ async function openInTerminal(id) {
     const r = await fetch(`/api/sessions/${id}/open`, { method: 'POST', headers: { 'x-chito': '1' } });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
-    ctx.toast(j.action === 'focused' ? 'Focused its terminal' : j.action === 'forked' ? 'Still running in the background, so this opened a forked copy; the running session will not see what you type there' : 'Opened in a terminal');
-  } catch (e) { ctx.toast(`Could not open: ${e.message}`); }
+    ctx.toast(j.action === 'focused' ? tr('Focused its terminal') : j.action === 'forked' ? tr('Still running in the background, so this opened a forked copy; the running session will not see what you type there') : tr('Opened in a terminal'));
+  } catch (e) { ctx.toast(tr('Could not open: {error}', { error: e.message })); }
 }
 function needsYouPanel(tks) {
   const items = tks.filter(needsYou);
@@ -704,8 +714,8 @@ function needsYouPanel(tks) {
   // The header is the toggle: folding keeps the count in view, so nothing hides silently.
   const h = el('button', 'bl-needs-head'); h.type = 'button';
   h.innerHTML = '<svg class="bl-needs-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
-  h.append(el('b', null, 'Waiting on you'), el('span', 'num', String(items.length + ms.length)));
-  const sync = o => { box.classList.toggle('folded', !o); h.setAttribute('aria-expanded', String(o)); h.title = o ? 'Fold this list' : 'Show what is waiting on you'; };
+  h.append(el('b', null, tr('Waiting on you')), el('span', 'num', String(items.length + ms.length)));
+  const sync = o => { box.classList.toggle('folded', !o); h.setAttribute('aria-expanded', String(o)); h.title = o ? tr('Fold this list') : tr('Show what is waiting on you'); };
   sync(open);
   h.addEventListener('click', () => { const o = box.classList.contains('folded'); store.set('blNeedsOpen', o); sync(o); });
   box.append(h);
@@ -717,16 +727,16 @@ function needsYouPanel(tks) {
     const act = el('div', 'bl-needs-act');
     const b = t.meta?.brief;
     const sess = answerSession(t);
-    if (t.meta?.handoff?.packet) act.append(linkTo(el('a', 'btn primary bl-open-handoff', 'Open handoff'), ticketPath(t)));
-    else if (b?.pending) act.append(el('span', 'bl-needs-pending', 'Preparing a briefing'));
+    if (t.meta?.handoff?.packet) act.append(linkTo(el('a', 'btn primary bl-open-handoff', tr('Open handoff')), ticketPath(t)));
+    else if (b?.pending) act.append(el('span', 'bl-needs-pending', tr('Preparing a briefing')));
     if (sess) {
-      const open = sessionLink(sess, sess.kind === 'Briefing' ? 'Read the briefing' : sess.kind);
-      const term = el('button', `btn${sess.kind === 'Briefing' && !t.meta?.handoff?.packet ? ' primary' : ''}`, 'Answer in terminal'); term.type = 'button';
-      term.title = `Resume ${sess.title || 'the session'} in your terminal and reply there`;
+      const open = sessionLink(sess, sess.kind === 'Briefing' ? tr('Read the briefing') : SESS_KIND[sess.kind] || sess.kind);
+      const term = el('button', `btn${sess.kind === 'Briefing' && !t.meta?.handoff?.packet ? ' primary' : ''}`, tr('Answer in terminal')); term.type = 'button';
+      term.title = sess.title ? tr('Resume {title} in your terminal and reply there', { title: sess.title }) : tr('Resume the session in your terminal and reply there');
       term.addEventListener('click', e => { e.stopPropagation(); openInTerminal(sess.id); });
       act.append(open, term);
-    } else if (!b?.pending) act.append(el('span', 'bl-needs-pending', 'No session yet'));
-    if (b?.error) act.append(el('span', 'bl-needs-pending', 'Briefing failed; the daemon retries after a restart'));
+    } else if (!b?.pending) act.append(el('span', 'bl-needs-pending', tr('No session yet')));
+    if (b?.error) act.append(el('span', 'bl-needs-pending', tr('Briefing failed; the daemon retries after a restart')));
     if (t.meta?.handoff?.phase) row.classList.add(`ph-${t.meta.handoff.phase}`);
     row.append(title, why, act);
     box.append(row);
@@ -734,7 +744,7 @@ function needsYouPanel(tks) {
   for (const m of ms) {
     const row = el('div', 'bl-needs-row');
     const title = linkTo(el('a', 'bl-needs-title'), projPath(m.project)); title.append(el('span', 'num', m.key), el('span', null, m.title));
-    row.append(title, el('span', 'bl-needs-why', 'Review the showcase, then accept or reopen'), el('div', 'bl-needs-act'));
+    row.append(title, el('span', 'bl-needs-why', tr('Review the showcase, then accept or reopen')), el('div', 'bl-needs-act'));
     box.append(row);
   }
   return box;
@@ -749,19 +759,19 @@ function card(t) {
   const top = el('div', 'bl-card-top');
   const kk = el('span', 'bl-key num', t.key.slice(t.project.length + 1)); kk.title = t.key;
   top.append(stateIcon(t.state), kk);
-  if (t.priority <= 1) top.append(el('span', `bl-prio p${t.priority}`, t.priority === 0 ? 'Urgent' : 'High'));
+  if (t.priority <= 1) top.append(el('span', `bl-prio p${t.priority}`, t.priority === 0 ? tr('Urgent') : tr('High')));
   c.append(top, el('div', 'bl-card-title', t.title));
   const meta = el('div', 'bl-card-meta');
   const bs = (bl.blockers.get(t.key) || []).filter(b => !FINAL.has(bl.byKey.get(b)?.state ?? 'done'));
   if (t.state === 'todo') {
-    if (bs.length) meta.append(el('span', 'wait', `Waits on ${bs.map(b => b.startsWith(t.project + '-') ? b.slice(t.project.length + 1) : b).join(', ')}`));
-    else if (t.assignee === 'human') meta.append(el('span', 'bad', 'Needs you'));
-    else meta.append(el('span', 'ok', 'Ready'));
+    if (bs.length) meta.append(el('span', 'wait', tr('Waits on {keys}', { keys: bs.map(b => b.startsWith(t.project + '-') ? b.slice(t.project.length + 1) : b).join(', ') })));
+    else if (t.assignee === 'human') meta.append(el('span', 'bad', tr('Needs you')));
+    else meta.append(el('span', 'ok', tr('Ready')));
   }
-  if (t.state === 'in_progress' && t.attempts > 1) meta.append(el('span', null, `try ${t.attempts}`));
-  if (t.state === 'failed') meta.append(el('span', 'bad', `${t.attempts} attempt${t.attempts === 1 ? '' : 's'}`));
-  if (t.state === 'in_review') meta.append(el('span', 'wait', 'Waiting for approval'));
-  if (t.assignee === 'human' && t.state !== 'todo') meta.append(el('span', null, 'human'));
+  if (t.state === 'in_progress' && t.attempts > 1) meta.append(el('span', null, tr('try {n}', { n: t.attempts })));
+  if (t.state === 'failed') meta.append(el('span', 'bad', trp(t.attempts, '{n} attempt', '{n} attempts')));
+  if (t.state === 'in_review') meta.append(el('span', 'wait', tr('Waiting for approval')));
+  if (t.assignee === 'human' && t.state !== 'todo') meta.append(el('span', null, tr('human')));
   meta.append(...prChips(t, 2));
   if (t.sessions?.length) meta.append(sessionLink(t.sessions[0], t.sessions.length > 1 ? String(t.sessions.length) : null));
   if (meta.childNodes.length) c.append(meta);
@@ -770,7 +780,7 @@ function card(t) {
 
 // ---- main page tabs: Overview (daemon, waiting on you, open projects) and Projects (lanes + the tickets toggle) ----
 // The tab lives in ?tab=; with none in the URL, the last one picked is used, else Overview.
-const TABS = [['overview', 'Overview'], ['projects', 'Projects']];
+const TABS = [['overview', tr('Overview')], ['projects', tr('Projects')]];
 function currentTab() {
   const q = new URLSearchParams(location.search).get('tab');
   if (TABS.some(([k]) => k === q)) return q;
@@ -786,12 +796,12 @@ function setTab(k) {
   $(`#bl-tab-${k}`)?.focus();
 }
 function tabBar(cur, counts) {
-  const bar = el('div', 'tabs bl-tabs'); bar.setAttribute('role', 'tablist'); bar.setAttribute('aria-label', 'Projects views');
+  const bar = el('div', 'tabs bl-tabs'); bar.setAttribute('role', 'tablist'); bar.setAttribute('aria-label', tr('Projects views'));
   for (const [k, label] of TABS) {
     const b = el('button', 'tab', label); b.type = 'button'; b.id = `bl-tab-${k}`;
     b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(k === cur)); b.tabIndex = k === cur ? 0 : -1;
     const n = counts[k];
-    if (k === 'overview' && n) { const c = el('span', 'num bl-tab-count you', String(n)); c.title = `${n} waiting on you`; b.append(c); b.title = `${n} waiting on you`; }
+    if (k === 'overview' && n) { const c = el('span', 'num bl-tab-count you', String(n)); c.title = tr('{n} waiting on you', { n }); b.append(c); b.title = tr('{n} waiting on you', { n }); }
     else if (k === 'projects' && n) b.append(el('span', 'num bl-tab-count', String(n)));
     b.addEventListener('click', () => { if (k !== cur) setTab(k); });
     b.addEventListener('keydown', e => {
@@ -811,8 +821,8 @@ function renderLanes(root) {
   const all = d.tickets;
   const running = all.filter(t => t.state === 'in_progress').length;
   const you = all.filter(needsYou).length;
-  const sub = [factRow('', `${projects.length} project${projects.length === 1 ? '' : 's'}`, `${running} in progress`, you ? `${you} waiting on you` : 'nothing waiting on you')];
-  root.append(head('Projects', sub, headRight()));
+  const sub = [factRow('', trp(projects.length, '{n} project', '{n} projects'), tr('{n} in progress', { n: running }), you ? tr('{n} waiting on you', { n: you }) : tr('nothing waiting on you'))];
+  root.append(head(tr('Projects'), sub, headRight()));
   const tab = currentTab();
   if (tab !== 'overview' && !new URLSearchParams(location.search).has('tab')) {   // a remembered tab: show it in the URL too
     const url = new URL(location.href); url.searchParams.set('tab', tab); history.replaceState(history.state, '', url.pathname + url.search + url.hash);
@@ -821,14 +831,14 @@ function renderLanes(root) {
   if (tab === 'overview') {
     root.append(daemonBar());
     const ny = needsYouPanel(all); if (ny) root.append(ny);
-    root.append(el('h2', 'bl-h2', 'Open projects'), openProjects(projects, all));
+    root.append(el('h2', 'bl-h2', tr('Open projects')), openProjects(projects, all));
     return;
   }
   const ctl = controls();
   const visible = projects.map(p => p.key);
   const allCollapsed = visible.length && visible.every(k => ui.collapsed.has(k));
-  const tog = el('button', 'btn bl-collapse-all', allCollapsed ? 'Expand all' : 'Collapse all');
-  tog.title = allCollapsed ? 'Show every project\'s tickets' : 'Show projects only';
+  const tog = el('button', 'btn bl-collapse-all', allCollapsed ? tr('Expand all') : tr('Collapse all'));
+  tog.title = allCollapsed ? tr("Show every project's tickets") : tr('Show projects only');
   tog.addEventListener('click', () => { if (allCollapsed) visible.forEach(k => ui.collapsed.delete(k)); else visible.forEach(k => ui.collapsed.add(k)); renderBacklog(); });
   ctl.insertBefore(tog, ctl.querySelector('.bl-cap'));
   root.append(ctl);
@@ -849,7 +859,7 @@ function renderLanes(root) {
     hdr.append(h);
   }
   if (!(visible.length && visible.every(k => ui.collapsed.has(k)))) grid.append(hdr);
-  if (!projects.length) grid.append(el('div', 'prs-empty', 'No projects yet. Create one with bl project add.'));
+  if (!projects.length) grid.append(el('div', 'prs-empty', tr('No projects yet. Create one with bl project add.')));
   for (const p of projects) {
     const tks = all.filter(t => t.project === p.key);
     const shown = visibleTickets(tks).filter(matches);
@@ -859,7 +869,7 @@ function renderLanes(root) {
     const side = el('div', 'bl-lane-side');
     const collapsed = ui.collapsed.has(p.key);
     const chev = el('button', `bl-chev${collapsed ? '' : ' open'}`);
-    chev.type = 'button'; chev.title = collapsed ? 'Show tickets' : 'Hide tickets';
+    chev.type = 'button'; chev.title = collapsed ? tr('Show tickets') : tr('Hide tickets');
     chev.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
     chev.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (collapsed) ui.collapsed.delete(p.key); else ui.collapsed.add(p.key); renderBacklog(); });
     const name = linkTo(el('a', 'bl-lane-name'), projPath(p.key));
@@ -879,7 +889,7 @@ function renderLanes(root) {
     const exl = execLine(p, true); if (exl) side.append(exl);
     side.append(lifecycleButtons(p, true));
     const facts = el('div', 'bl-lane-facts');
-    const you = tks.filter(needsYou).length; if (you) facts.append(el('span', 'bad', `${you} need${you === 1 ? 's' : ''} you`));
+    const you = tks.filter(needsYou).length; if (you) facts.append(el('span', 'bad', trp(you, '{n} needs you', '{n} need you')));
     side.append(facts);
     lane.append(side);
     for (const st of cols) {
@@ -888,7 +898,7 @@ function renderLanes(root) {
       if (st === 'done') list = list.sort((a, b) => ((b.finished || '') > (a.finished || '') ? 1 : -1));
       const cap = st === 'done' ? 4 : 50;
       for (const t of list.slice(0, cap)) col.append(card(t));
-      if (list.length > cap) col.append(linkTo(el('a', 'bl-more', `${list.length - cap} more`), projPath(p.key)));
+      if (list.length > cap) col.append(linkTo(el('a', 'bl-more', tr('{n} more', { n: list.length - cap })), projPath(p.key)));
       lane.append(col);
     }
     grid.append(lane);
@@ -907,7 +917,7 @@ function compactLane(p, tks, shown, nameRow) {
   const b2 = el('div', 'bl-lane-badges'); b2.append(...laneBadges(p)); head.append(b2);
   const counts = el('div', 'bl-compact-counts');
   for (const st of LANE_COLS) { const n = shown.filter(t => t.state === st).length; if (n) { const x = statePill(st); x.append(el('span', 'num', String(n))); counts.append(x); } }
-  const you = tks.filter(needsYou).length; if (you) counts.append(el('span', 'bl-compact-you', `${you} need${you === 1 ? 's' : ''} you`));
+  const you = tks.filter(needsYou).length; if (you) counts.append(el('span', 'bl-compact-you', trp(you, '{n} needs you', '{n} need you')));
   head.append(counts, progress(tks));
   row.append(head);
   const run = shown.filter(t => t.state === 'in_progress').sort((a, b) => (a.started || '') < (b.started || '') ? -1 : 1);
@@ -925,15 +935,15 @@ function flightRow(t, p) {
   const [ex] = executorOf(t);
   const since = t.spawn?.at || t.started;
   const model = el('span', 'bl-compact-model', t.spawn?.model || t.meta?.model || '');
-  model.title = 'Worker model';
-  const exe = el('span', 'bl-compact-exec', ex); exe.title = t.claimed_by ? `Executor: ${t.claimed_by}` : '';
+  model.title = tr('Worker model');
+  const exe = el('span', 'bl-compact-exec', ex); exe.title = t.claimed_by ? tr('Executor: {who}', { who: t.claimed_by }) : '';
   const ago = el('span', 'num bl-compact-since', since ? ctx.fmtRel(since) : '');
-  ago.title = since ? `Started ${ctx.fmtDateTime(since)}${t.attempts > 1 ? ` · attempt ${t.attempts}` : ''}` : '';
+  ago.title = since ? `${tr('Started {when}', { when: ctx.fmtDateTime(since) })}${t.attempts > 1 ? ` · ${tr('attempt {n}', { n: t.attempts })}` : ''}` : '';
   const kk = el('span', 'num', t.key.slice(p.key.length + 1)); kk.title = t.key;
   r.append(stateIcon('in_progress'), kk, el('span', 'bl-compact-title', t.title), model, exe, ago);
   const ws = workerSession(t);
   if (ws) { const a = sessionLink(ws, ws.title || ws.id.slice(0, 8)); a.classList.add('bl-compact-sess'); r.append(a); }
-  else r.append(el('span', 'bl-compact-sess none', 'no session yet'));
+  else r.append(el('span', 'bl-compact-sess none', tr('no session yet')));
   return r;
 }
 // Overview's list: open projects only, collapsed and read-only; the name goes to the project page.
@@ -950,7 +960,7 @@ function openProjects(projects, all) {
     const nameRow = el('div', 'bl-lane-namerow'); nameRow.append(name);
     wrap.append(compactLane(p, tks, open, nameRow)); n++;
   }
-  if (!n) wrap.append(el('div', 'prs-empty', 'No open projects.'));
+  if (!n) wrap.append(el('div', 'prs-empty', tr('No open projects.')));
   return wrap;
 }
 
@@ -959,15 +969,15 @@ function renderProject(root, p) {
   const tks = bl.data.tickets.filter(t => t.project === p.key);
   const back = linkTo(el('a', 'bl-back'), '/projects');
   back.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>';
-  back.append('All projects');
+  back.append(tr('All projects'));
   root.append(back);
   const sub = [];
   if (p.repo) sub.push(el('span', 'num', p.repo.replace(/^\/Users\/[^/]+/, '~')));
-  sub.push(el('span', null, `review ${setting(p.key, 'review', 'ask')}`), el('span', null, `parallel ${setting(p.key, 'max_parallel', 3)}`));
+  sub.push(el('span', null, tr('review {policy}', { policy: setting(p.key, 'review', 'ask') })), el('span', null, tr('parallel {n}', { n: setting(p.key, 'max_parallel', 3) })));
   if (p.doc_slug) {
     const base = bl.data.artiBase;
-    if (base) { const a = el('a', null, `doc: ${p.doc_slug}`); a.href = `${base.replace(/\/$/, '')}/s/${encodeURIComponent(p.doc_slug)}`; a.target = '_blank'; a.rel = 'noopener'; sub.push(a); }
-    else sub.push(el('span', null, `doc: ${p.doc_slug}`));
+    if (base) { const a = el('a', null, tr('doc: {slug}', { slug: p.doc_slug })); a.href = `${base.replace(/\/$/, '')}/s/${encodeURIComponent(p.doc_slug)}`; a.target = '_blank'; a.rel = 'noopener'; sub.push(a); }
+    else sub.push(el('span', null, tr('doc: {slug}', { slug: p.doc_slug })));
   }
   const subWrap = [factRow('', ...sub)];
   const right = headRight(runBadge(p));
@@ -979,7 +989,7 @@ function renderProject(root, p) {
   root.append(ctl);
   const exl = execLine(p, false); if (exl) root.append(exl);
   root.append(instructionsBox(p));
-  if (tks.some(t => t.state === 'in_progress')) root.append(el('h2', 'bl-h2', 'In flight'), inFlight(tks));
+  if (tks.some(t => t.state === 'in_progress')) root.append(el('h2', 'bl-h2', tr('In flight')), inFlight(tks));
 
   const stats = el('div', 'bl-stats');
   stats.append(progress(tks));
@@ -987,33 +997,33 @@ function renderProject(root, p) {
   root.append(stats);
   if (p.usage) {
     const us = el('div', 'bl-usage-row');
-    us.append(usageStat('Total', p.usage));
-    if (p.sharedUsage) us.append(usageStat('Orchestration and shared sessions', p.sharedUsage));
-    us.append(el('span', 'bl-usage-note', 'Nominal list prices from transcripts; not billed on a subscription.'));
+    us.append(usageStat(tr('Total'), p.usage));
+    if (p.sharedUsage) us.append(usageStat(tr('Orchestration and shared sessions'), p.sharedUsage));
+    us.append(el('span', 'bl-usage-note', tr('Nominal list prices from transcripts; not billed on a subscription.')));
     root.append(us);
   }
 
   const nyp = needsYouPanel(tks); if (nyp) root.append(nyp);
 
   const rm = roadmap(p);
-  if (rm) root.append(el('h2', 'bl-h2', 'Roadmap'), rm);
+  if (rm) root.append(el('h2', 'bl-h2', tr('Roadmap')), rm);
   else if (ui.milestone) ui.milestone = null;
   // The graph collapses; the choice is remembered for every project.
   const gsec = el('details', 'bl-sec'); gsec.open = store.get('graphOpen', true);
-  const gsum = el('summary'); gsum.append(el('h2', 'bl-h2', 'Dependency graph'));
+  const gsum = el('summary'); gsum.append(el('h2', 'bl-h2', tr('Dependency graph')));
   gsec.append(gsum, graph(tks));
   gsec.addEventListener('toggle', () => store.set('graphOpen', gsec.open));
   root.append(gsec);
   const msOk = t => !ui.milestone || (ui.milestone === '-' ? !t.milestone && !t.meta?.showcase_for : t.milestone === ui.milestone);
-  const th = el('h2', 'bl-h2', 'Tickets');
-  if (ui.milestone) { const x = el('button', 'chip on', `${ui.milestone === '-' ? 'No milestone' : ui.milestone} ×`); x.addEventListener('click', () => { ui.milestone = null; renderBacklog(); }); th.append(' ', x); }
+  const th = el('h2', 'bl-h2', tr('Tickets'));
+  if (ui.milestone) { const x = el('button', 'chip on', `${ui.milestone === '-' ? tr('No milestone') : ui.milestone} ×`); x.addEventListener('click', () => { ui.milestone = null; renderBacklog(); }); th.append(' ', x); }
   root.append(th, controls(), table(visibleTickets(tks).filter(t => matches(t) && msOk(t))));
 }
 
 function graph(tks, big = false) {
   const wrap = el('div', 'bl-graph' + (big ? ' big' : ''));
   const shown = tks.filter(t => t.state !== 'canceled' || ui.closed === 'all');
-  if (!shown.length) { wrap.append(el('div', 'prs-empty', 'No tickets.')); return wrap; }
+  if (!shown.length) { wrap.append(el('div', 'prs-empty', tr('No tickets.'))); return wrap; }
   const W = big ? 250 : 200, H = big ? 86 : 58, GX = big ? 80 : 64, GY = big ? 26 : 20, PAD = 12;
   const cols = new Map();
   for (const t of [...shown].sort((a, b) => bl.order.get(a.key) - bl.order.get(b.key))) {
@@ -1060,12 +1070,12 @@ function graph(tks, big = false) {
     const p = pos.get(t.key);
     const n = linkTo(el('a', `bl-node bl-${t.state}${isReady(t) ? ' ready' : ''}${bl.ticketKey === t.key ? ' sel' : ''}`), ticketPath(t));
     n.style.left = p.x + 'px'; n.style.top = p.y + 'px'; n.style.width = W + 'px'; n.style.height = H + 'px';
-    n.title = `${t.key} · ${LABEL[t.state]}${isReady(t) ? ' · ready' : ''}\n${t.title}`;
+    n.title = `${t.key} · ${LABEL[t.state]}${isReady(t) ? ' · ' + tr('ready') : ''}\n${t.title}`;
     const top = el('div', 'bl-node-top'); top.append(stateIcon(t.state), el('span', 'num', t.project === tks[0].project ? t.key.slice(t.project.length + 1) : t.key));
     n.addEventListener('mouseenter', () => svg.querySelectorAll(`[data-from="${t.key}"], [data-to="${t.key}"]`).forEach(e => e.classList.add('hl')));
     n.addEventListener('mouseleave', () => svg.querySelectorAll('.hl').forEach(e => e.classList.remove('hl')));
-    if (t.assignee === 'human') top.append(el('span', 'bl-node-tag', 'human'));
-    else if (isReady(t)) top.append(el('span', 'bl-node-tag ok', 'ready'));
+    if (t.assignee === 'human') top.append(el('span', 'bl-node-tag', tr('human')));
+    else if (isReady(t)) top.append(el('span', 'bl-node-tag ok', tr('ready')));
     n.append(top, el('div', 'bl-node-title', t.title));
     layer.append(n);
   }
@@ -1073,10 +1083,11 @@ function graph(tks, big = false) {
   const scroller = el('div', 'bl-graph-scroll'); scroller.append(wrap);
   if (big) return scroller;
   const box = el('div', 'bl-graph-box');
-  const ex = el('button', 'btn bl-graph-expand'); ex.type = 'button'; ex.title = 'Open a larger view';
-  ex.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg><span>Expand</span>';
+  const ex = el('button', 'btn bl-graph-expand'); ex.type = 'button'; ex.title = tr('Open a larger view');
+  ex.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+  ex.append(el('span', null, tr('Expand')));
   ex.addEventListener('click', () => openGraphModal(tks));
-  box.title = 'Click anywhere to expand';
+  box.title = tr('Click anywhere to expand');
   box.addEventListener('click', e => { if (e.target.closest('.bl-node, .bl-graph-expand')) return; openGraphModal(tks); });
   box.append(ex, scroller);
   return box;
@@ -1086,8 +1097,8 @@ function openGraphModal(tks) {
   const m = el('div', 'bl-modal');
   const card = el('div', 'bl-modal-card');
   const head = el('div', 'bl-modal-head');
-  head.append(el('b', null, 'Dependency graph'), el('span', null, 'Hover a ticket to highlight its edges; click to open it.'));
-  const close = el('button', 'btn icon'); close.title = 'Close (Esc)';
+  head.append(el('b', null, tr('Dependency graph')), el('span', null, tr('Hover a ticket to highlight its edges; click to open it.')));
+  const close = el('button', 'btn icon'); close.title = tr('Close (Esc)');
   close.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   head.append(close);
   card.append(head, graph(tks, true));
@@ -1109,22 +1120,22 @@ function openGraphModal(tks) {
 
 const COLS = [
   ['order', '#', t => bl.order.get(t.key)],
-  ['key', 'Key', t => [t.project, t.id]],
-  ['title', 'Title', t => t.title.toLowerCase()],
-  ['state', 'State', t => STATES.indexOf(t.state)],
-  ['deps', 'Waits on', t => (bl.blockers.get(t.key) || []).length],
-  ['blocks', 'Blocks', t => (bl.dependents.get(t.key) || []).length],
-  ['priority', 'P', t => t.priority],
-  ['attempts', 'Tries', t => t.attempts],
-  ['who', 'Who', t => t.claimed_by || t.assignee || ''],
-  ['ms', 'Milestone', t => bl.milestones.get(t.milestone)?.seq ?? 1e9],
-  ['prs', 'PRs', t => (t.prs || []).length],
-  ['cost', 'Cost', t => t.usage?.cost ?? -1],
-  ['updated', 'Updated', t => new Date(shownAt(t) || 0).getTime()],
+  ['key', tr('Key'), t => [t.project, t.id]],
+  ['title', tr('Title'), t => t.title.toLowerCase()],
+  ['state', tr('State'), t => STATES.indexOf(t.state)],
+  ['deps', tr('Waits on'), t => (bl.blockers.get(t.key) || []).length],
+  ['blocks', tr('Blocks'), t => (bl.dependents.get(t.key) || []).length],
+  ['priority', tr('P'), t => t.priority],
+  ['attempts', tr('Tries'), t => t.attempts],
+  ['who', tr('Who'), t => t.claimed_by || t.assignee || ''],
+  ['ms', tr('Milestone'), t => bl.milestones.get(t.milestone)?.seq ?? 1e9],
+  ['prs', tr('PRs'), t => (t.prs || []).length],
+  ['cost', tr('Cost'), t => t.usage?.cost ?? -1],
+  ['updated', tr('Updated'), t => new Date(shownAt(t) || 0).getTime()],
 ];
 const FIN_COLS = [
   ...COLS.filter(([id]) => ['key', 'title', 'state', 'who', 'ms', 'prs', 'cost'].includes(id)),
-  ['finished', 'Finished', closedAt],
+  ['finished', tr('Finished'), closedAt],
 ];
 
 function cmp(a, b) {
@@ -1146,7 +1157,7 @@ function table(tks) {
   const openKey = parseBacklogPath(location.pathname)?.ticket || null;   // the route, not bl.ticketKey, which the drawer sets after the table renders
   const wrap = el('div', 'bl-table-wrap');
   const tbl = el('table', 'bl-table');
-  const thead = el('thead'); const tr = el('tr');
+  const thead = el('thead'); const hr = el('tr');
   const has = {
     ms: tks.some(t => t.milestone) || (bl.data.milestones || []).some(m => tks[0] && m.project === tks[0].project),
     prs: tks.some(t => t.prs?.length),
@@ -1167,9 +1178,9 @@ function table(tks) {
       if (fin) ui.finSort = next; else { ui.sort = next; store.set('blSort', ui.sort); }
       renderBacklog();
     });
-    th.append(b); tr.append(th);
+    th.append(b); hr.append(th);
   }
-  thead.append(tr); tbl.append(thead);
+  thead.append(hr); tbl.append(thead);
   const key = cols.find(c => c[0] === sort.col)?.[2] || cols[0][2];
   const rows = [...tks].sort((a, b) => sort.dir * cmp(key(a), key(b)) || bl.order.get(a.key) - bl.order.get(b.key));
   const tbody = el('tbody');
@@ -1206,7 +1217,7 @@ function table(tks) {
     const wsess = needsYou(t) && ho ? { ...(t.sessions || []).find(s => s.id === ho), id: ho } : own;
     if (wsess) {
       const a = el('a', 'bl-tt-text linked'); a.href = `/s/${wsess.id}`;
-      a.title = `Open the session: ${wsess.title || wsess.id}${t.sessions.length > 1 ? ` (${t.sessions.length} sessions; all in the details)` : ''}`;
+      a.title = `${tr('Open the session: {title}', { title: wsess.title || wsess.id })}${t.sessions.length > 1 ? tr(' ({n} sessions; all in the details)', { n: t.sessions.length }) : ''}`;
       a.append(t.title);
       const ic = el('span', 'bl-tt-sess'); ic.innerHTML = SESSION_ICON; a.append(ic);
       a.addEventListener('click', e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); e.stopPropagation(); ctx.openSession(wsess.id); });
@@ -1214,7 +1225,7 @@ function table(tks) {
     } else ttl.append(el('span', 'bl-tt-text', t.title));
     if (t.labels?.length) for (const l of t.labels) ttl.append(el('span', 'bl-label', l));
     const rl = resultLine(t); if (rl) ttl.append(rl);
-    if (t.usage) { const u = el('div', 'bl-tt-usage num'); u.append(factRow('', `${t.usage.turns} turns`, `${fmtTok(t.usage.tokens)} tokens`, fmtCost(t.usage))); u.title = usageTitle(t.usage); ttl.append(u); }
+    if (t.usage) { const u = el('div', 'bl-tt-usage num'); u.append(factRow('', tr('{n} turns', { n: t.usage.turns }), tr('{n} tokens', { n: fmtTok(t.usage.tokens) }), fmtCost(t.usage))); u.title = usageTitle(t.usage); ttl.append(u); }
     const tcell = td('c-title', ttl);
     const g = geo.get(t.key);
     if (g) {
@@ -1231,7 +1242,7 @@ function table(tks) {
       if (g.kids) { const st = el('i', 'bl-stem'); st.style.left = `${x(g.depth)}px`; tcell.append(st); }
       const dot = el('i', `bl-node-dot bl-${t.state}`); dot.style.left = `${x(g.depth) - DOT}px`; tcell.append(dot);
     }
-    td('c-state', statePill(t.state), ...(needsYou(t) ? [el('span', 'bl-needs-tag', 'Needs you')] : isReady(t) ? [el('span', 'bl-ready', 'ready')] : isBlocked(t) ? [el('span', 'bl-blocked', 'blocked')] : []));
+    td('c-state', statePill(t.state), ...(needsYou(t) ? [el('span', 'bl-needs-tag', tr('Needs you'))] : isReady(t) ? [el('span', 'bl-ready', tr('ready'))] : isBlocked(t) ? [el('span', 'bl-blocked', tr('blocked'))] : []));
     if (on('deps')) td('c-deps', ...(bl.blockers.get(t.key) || []).map(k => depChip(k, t.project)));
     if (on('blocks')) td('c-blocks', ...(bl.dependents.get(t.key) || []).map(k => depChip(k, t.project)));
     if (on('priority')) td(`c-priority num p${t.priority}`, String(t.priority));
@@ -1241,14 +1252,14 @@ function table(tks) {
     if (on('ms')) { td('c-ms', ...(ms ? [el('span', `bl-ms-chip ms-${ms.status}`, ms.key.slice(t.project.length + 1))] : [])); if (ms) r.lastChild.title = ms.title; }
     if (on('prs')) td('c-prs', ...prChips(t, 3));
     if (on('cost')) td('c-cost num', fmtCost(t.usage)).title = usageTitle(t.usage);
-    if (fin) { const at = t.finished || t.updated; td('c-updated c-finished', fmtAgo(at)).title = `Finished ${ctx.fmtDateTime(at)}`; }
+    if (fin) { const at = t.finished || t.updated; td('c-updated c-finished', fmtAgo(at)).title = tr('Finished {when}', { when: ctx.fmtDateTime(at) }); }
     else {
       const at = shownAt(t);
-      td('c-updated', fmtAgo(at)).title = at ? `${ENDED.has(t.state) && t.finished ? 'Finished' : t.changed ? 'State changed' : 'Updated'} ${ctx.fmtDateTime(at)}` : '';
+      td('c-updated', fmtAgo(at)).title = at ? (ENDED.has(t.state) && t.finished ? tr('Finished {when}', { when: ctx.fmtDateTime(at) }) : t.changed ? tr('State changed {when}', { when: ctx.fmtDateTime(at) }) : tr('Updated {when}', { when: ctx.fmtDateTime(at) })) : '';
     }
     tbody.append(r);
   }
-  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', fin ? (ui.q.trim() ? 'No ticket finished in the last 7 days matches that search.' : 'Nothing finished (done, canceled or failed) in the last 7 days.') : ui.q ? 'No tickets match that search.' : ui.closed === 'none' ? 'No open tickets. Switch to + 24h or All to see finished ones.' : 'Nothing open or closed in the last 24 hours. Switch to All, or search.'); c.colSpan = cols.length; r.append(c); tbody.append(r); }
+  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', fin ? (ui.q.trim() ? tr('No ticket finished in the last 7 days matches that search.') : tr('Nothing finished (done, canceled or failed) in the last 7 days.')) : ui.q ? tr('No tickets match that search.') : ui.closed === 'none' ? tr('No open tickets. Switch to + 24h or All to see finished ones.') : tr('Nothing open or closed in the last 24 hours. Switch to All, or search.')); c.colSpan = cols.length; r.append(c); tbody.append(r); }
   tbl.append(tbody); wrap.append(tbl);
   return wrap;
 }
@@ -1261,11 +1272,11 @@ async function renderDrawer(key) {
   box.hidden = false;
   if (!bl.ticket || bl.ticket.key !== key) {
     box.textContent = '';
-    box.append(el('div', 'prs-empty', 'Loading…'));
+    box.append(el('div', 'prs-empty', tr('Loading…')));
   } else drawDrawer(box, bl.ticket);
   try {
     const r = await fetch(`/api/backlog/ticket/${encodeURIComponent(key)}`);
-    if (!r.ok) throw new Error(r.status === 404 ? `No ticket ${key}` : `HTTP ${r.status}`);
+    if (!r.ok) throw new Error(r.status === 404 ? tr('No ticket {key}', { key }) : `HTTP ${r.status}`);
     const t = await r.json();
     if (bl.ticketKey !== key) return;
     bl.ticket = t;
@@ -1274,7 +1285,7 @@ async function renderDrawer(key) {
 }
 
 function closeBtn() {
-  const b = el('button', 'btn icon bl-close'); b.title = 'Close (Esc)'; b.setAttribute('aria-label', 'Close');
+  const b = el('button', 'btn icon bl-close'); b.title = tr('Close (Esc)'); b.setAttribute('aria-label', tr('Close'));
   b.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   b.addEventListener('click', closeDrawer);
   return b;
@@ -1298,58 +1309,58 @@ function drawDrawer(box, t) {
 
   const dl = el('dl', 'bl-d-meta');
   const row = (k, ...v) => { if (!v.length || v.every(x => x == null || x === '')) return; dl.append(el('dt', null, k)); const dd = el('dd'); dd.append(...v.filter(x => x != null)); dl.append(dd); };
-  const prio = ['Urgent', 'High', 'Normal', 'Low', 'None'][t.priority] ?? String(t.priority);
-  row('Priority', `${prio} (${t.priority})`);
-  if (t.state === 'todo') row('Status', isBlocked(bl.byKey.get(t.key) || t) ? 'Blocked by open tickets' : t.assignee === 'human' ? 'Ready, waiting on you' : 'Ready to run');
-  row('Assignee', t.assignee || null);
-  row('Claimed by', t.claimed_by || null);
-  if (t.lease_until && t.state === 'in_progress') row('Lease until', ctx.fmtDateTime(t.lease_until));
-  row('Attempts', t.attempts ? `${t.attempts}${t.max_attempts ? ' of ' + t.max_attempts : ''}` : null);
-  row('Labels', t.labels?.length ? t.labels.join(', ') : null);
-  row('Locks', t.locks?.length ? t.locks.join(', ') : null);
+  const prio = PRIO[t.priority] ?? String(t.priority);
+  row(tr('Priority'), `${prio} (${t.priority})`);
+  if (t.state === 'todo') row(tr('Status'), isBlocked(bl.byKey.get(t.key) || t) ? tr('Blocked by open tickets') : t.assignee === 'human' ? tr('Ready, waiting on you') : tr('Ready to run'));
+  row(tr('Assignee'), t.assignee === 'human' ? tr('human') : t.assignee || null);
+  row(tr('Claimed by'), t.claimed_by || null);
+  if (t.lease_until && t.state === 'in_progress') row(tr('Lease until'), ctx.fmtDateTime(t.lease_until));
+  row(tr('Attempts'), t.attempts ? (t.max_attempts ? tr('{n} of {max}', { n: t.attempts, max: t.max_attempts }) : String(t.attempts)) : null);
+  row(tr('Labels'), t.labels?.length ? t.labels.join(', ') : null);
+  row(tr('Locks'), t.locks?.length ? t.locks.join(', ') : null);
   const meta = { ...t.meta }; for (const k of ['sessions', 'brief', 'handoff', 'showcase_for']) delete meta[k];
-  if (meta.review) { row('Review', meta.review); delete meta.review; }
-  if (meta.size) { row('Size', meta.size); delete meta.size; }
+  if (meta.review) { row(tr('Review'), meta.review); delete meta.review; }
+  if (meta.size) { row(tr('Size'), meta.size); delete meta.size; }
   for (const [k, v] of Object.entries(meta)) row(k, typeof v === 'string' ? v : JSON.stringify(v));
   if (t.doc_slug) {
     const base = bl.data?.artiBase;
-    if (base) { const a = el('a', null, t.doc_slug); a.href = `${base.replace(/\/$/, '')}/s/${encodeURIComponent(t.doc_slug)}`; a.target = '_blank'; a.rel = 'noopener'; row('Design doc', a); }
-    else row('Design doc', t.doc_slug);
+    if (base) { const a = el('a', null, t.doc_slug); a.href = `${base.replace(/\/$/, '')}/s/${encodeURIComponent(t.doc_slug)}`; a.target = '_blank'; a.rel = 'noopener'; row(tr('Design doc'), a); }
+    else row(tr('Design doc'), t.doc_slug);
   }
   const tu = bl.byKey.get(t.key)?.usage;
-  if (tu) { const x = factRow('', fmtCost(tu), `${tu.turns} turns`, `${fmtTok(tu.tokens)} tokens`); x.title = usageTitle(tu); row('Usage', x); }
-  row('Created', ctx.fmtDateTime(t.created));
-  if (t.started) row('Started', ctx.fmtDateTime(t.started));
-  if (t.finished) row('Finished', ctx.fmtDateTime(t.finished));
+  if (tu) { const x = factRow('', fmtCost(tu), tr('{n} turns', { n: tu.turns }), tr('{n} tokens', { n: fmtTok(tu.tokens) })); x.title = usageTitle(tu); row(tr('Usage'), x); }
+  row(tr('Created'), ctx.fmtDateTime(t.created));
+  if (t.started) row(tr('Started'), ctx.fmtDateTime(t.started));
+  if (t.finished) row(tr('Finished'), ctx.fmtDateTime(t.finished));
   box.append(dl);
 
   if (t.blockers.length || t.dependents.length) {
     const deps = el('div', 'bl-d-deps');
-    if (t.blockers.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', 'Waits on'), ...t.blockers.map(b => depChip(b.key))); deps.append(r); }
-    if (t.dependents.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', 'Blocks'), ...t.dependents.map(b => depChip(b.key))); deps.append(r); }
+    if (t.blockers.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', tr('Waits on')), ...t.blockers.map(b => depChip(b.key))); deps.append(r); }
+    if (t.dependents.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', tr('Blocks')), ...t.dependents.map(b => depChip(b.key))); deps.append(r); }
     box.append(deps);
   }
 
   if (t.prs?.length) {
-    box.append(el('h4', 'bl-d-h', 'Pull requests'));
+    box.append(el('h4', 'bl-d-h', tr('Pull requests')));
     const list = el('div', 'bl-d-prs');
     for (const pr of t.prs) {
       const gh = ctx.getPr ? ctx.getPr(pr.url) : null;
       const a = el('a', `bl-d-pr st-${gh?.state || 'UNKNOWN'}`); a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
-      a.append(el('span', 'num', `${(pr.repo || '').split('/').pop()} #${pr.number}`), el('span', 'bl-d-pr-title', gh?.title || ''), el('span', 'bl-d-pr-state', (gh?.state || '').toLowerCase()));
+      a.append(el('span', 'num', `${(pr.repo || '').split('/').pop()} #${pr.number}`), el('span', 'bl-d-pr-title', gh?.title || ''), el('span', 'bl-d-pr-state', gh?.state ? PR_STATE[gh.state] || gh.state.toLowerCase() : ''));
       list.append(a);
     }
     box.append(list);
   }
   if (t.sessions.length) {
-    box.append(el('h4', 'bl-d-h', 'Sessions'));
+    box.append(el('h4', 'bl-d-h', tr('Sessions')));
     const list = el('div', 'bl-d-sessions');
     for (const s of t.sessions) {
       const a = el('a', 'bl-d-sess');
       a.href = `/s/${s.id}`;
       a.addEventListener('click', e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); ctx.openSession(s.id); });
       a.innerHTML = SESSION_ICON;
-      a.append(el('span', 'bl-d-sess-title', s.title || (s.missing ? 'Transcript not found' : s.id.slice(0, 8))), factRow('bl-d-sess-meta', s.role, s.lastTime ? `${ctx.fmtRel(s.lastTime)} ago` : ''));
+      a.append(el('span', 'bl-d-sess-title', s.title || (s.missing ? tr('Transcript not found') : s.id.slice(0, 8))), factRow('bl-d-sess-meta', ROLE[s.role] || s.role, s.lastTime ? ctx.fmtRelAgo(s.lastTime) : ''));
       list.append(a);
     }
     box.append(list);
@@ -1358,21 +1369,21 @@ function drawDrawer(box, t) {
   if (t.result) {
     const failed = t.result.startsWith('FAILED');
     const rb = el('section', `bl-d-result${failed ? ' failed' : ''}`);
-    rb.append(el('h4', 'bl-d-h', failed ? 'Last failure' : 'Result'), md(t.result));
+    rb.append(el('h4', 'bl-d-h', failed ? tr('Last failure') : tr('Result')), md(t.result));
     box.append(rb);
   }
-  box.append(el('h4', 'bl-d-h', 'Spec'));
-  box.append(t.body ? md(t.body) : el('p', 'bl-d-empty', 'No body. The title is the spec.'));
+  box.append(el('h4', 'bl-d-h', tr('Spec')));
+  box.append(t.body ? md(t.body) : el('p', 'bl-d-empty', tr('No body. The title is the spec.')));
 
   if (t.events.length) {
-    box.append(el('h4', 'bl-d-h', 'Activity'));
+    box.append(el('h4', 'bl-d-h', tr('Activity')));
     const ev = el('ol', 'bl-d-events');
     for (const e of [...t.events].reverse()) {
       const li = el('li', `ev-${e.kind}`);
       const head = el('div', 'bl-ev-head');
-      const when = el('span', 'num', ctx.fmtRel(e.at) + ' ago'); when.title = ctx.fmtDateTime(e.at);
-      head.append(el('b', null, e.kind), el('span', null, e.actor || ''), when);
-      if (e.session_id) head.append(sessionLink({ id: e.session_id, title: 'Open the session that wrote this' }));
+      const when = el('span', 'num', ctx.fmtRelAgo(e.at)); when.title = ctx.fmtDateTime(e.at);
+      head.append(el('b', null, EVENT[e.kind] || e.kind), el('span', null, e.actor || ''), when);
+      if (e.session_id) head.append(sessionLink({ id: e.session_id, title: tr('Open the session that wrote this') }));
       if (e.data?.log) { const lg = el('span', 'num bl-ev-log', e.data.log.split('/').pop()); lg.title = e.data.log; head.append(lg); }
       li.append(head);
       if (e.body) li.append(e.kind === 'comment' ? md(e.body) : el('div', 'bl-ev-body', e.body));
@@ -1427,12 +1438,12 @@ export function backlogRefreshCount() { return loadBacklog(); }
 
 function ticketActions(t) {
   const box = el('div', 'bl-d-actions');
-  if (['failed', 'canceled', 'done'].includes(t.state)) box.append(actBtn('Reopen', 'ticket-reopen', t.key, null, { primary: t.state === 'failed', title: 'Back to todo with attempts reset' }));
-  if (t.assignee === 'human' && !FINAL.has(t.state)) box.append(actBtn('Mark done', 'ticket-resolve', t.key, null, { primary: true, title: 'Close this human ticket as done (bl resolve)' }));
-  if (t.state === 'in_review') box.append(actBtn('Approve', 'ticket-approve', t.key, null, { primary: true, title: 'Mark done (after the PR is merged)' }));
-  if (t.state === 'backlog') box.append(actBtn('Move to todo', 'ticket-move', t.key, 'todo', { primary: true }));
-  if (t.state === 'todo') box.append(actBtn('Move to backlog', 'ticket-move', t.key, 'backlog'));
-  if (!['done', 'canceled'].includes(t.state)) box.append(actBtn('Cancel', 'ticket-cancel', t.key, null, { confirm: true, title: 'Cancel: dependents become unblocked' }));
+  if (['failed', 'canceled', 'done'].includes(t.state)) box.append(actBtn(tr('Reopen'), 'ticket-reopen', t.key, null, { primary: t.state === 'failed', title: tr('Back to todo with attempts reset') }));
+  if (t.assignee === 'human' && !FINAL.has(t.state)) box.append(actBtn(tr('Mark done'), 'ticket-resolve', t.key, null, { primary: true, title: tr('Close this human ticket as done (bl resolve)') }));
+  if (t.state === 'in_review') box.append(actBtn(tr('Approve'), 'ticket-approve', t.key, null, { primary: true, title: tr('Mark done (after the PR is merged)') }));
+  if (t.state === 'backlog') box.append(actBtn(tr('Move to todo'), 'ticket-move', t.key, 'todo', { primary: true }));
+  if (t.state === 'todo') box.append(actBtn(tr('Move to backlog'), 'ticket-move', t.key, 'backlog'));
+  if (!['done', 'canceled'].includes(t.state)) box.append(actBtn(tr('Cancel'), 'ticket-cancel', t.key, null, { confirm: true, title: tr('Cancel: dependents become unblocked') }));
   const sel = (label, action, options, cur) => {
     const wrap = el('label', 'bl-sel'); wrap.append(el('span', null, label));
     const s = el('select');
@@ -1440,11 +1451,11 @@ function ticketActions(t) {
     s.addEventListener('change', () => act(action, t.key, s.value));
     wrap.append(s); return wrap;
   };
-  box.append(sel('Priority', 'ticket-priority', [[0, 'Urgent'], [1, 'High'], [2, 'Normal'], [3, 'Low'], [4, 'None']], t.priority));
-  box.append(sel('Model', 'ticket-model', [['', 'Default (opus)'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']], t.meta?.model || ''));
-  box.append(sel('Assignee', 'ticket-assignee', [['', 'Agents'], ['human', 'Human']], t.assignee === 'human' ? 'human' : ''));
+  box.append(sel(tr('Priority'), 'ticket-priority', PRIO.map((x, i) => [i, x]), t.priority));
+  box.append(sel(tr('Model'), 'ticket-model', [['', tr('Default (opus)')], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']], t.meta?.model || ''));
+  box.append(sel(tr('Assignee'), 'ticket-assignee', [['', tr('Agents')], ['human', tr('Human')]], t.assignee === 'human' ? 'human' : ''));
   const pms = (bl.data?.milestones || []).filter(m => m.project === t.project && m.status !== 'canceled');
-  if (pms.length && !t.meta?.showcase_for) box.append(sel('Milestone', 'ticket-milestone', [['', 'None'], ...pms.map(m => [m.key, `${m.key.slice(t.project.length + 1)} ${m.title}`])], t.milestone || ''));
+  if (pms.length && !t.meta?.showcase_for) box.append(sel(tr('Milestone'), 'ticket-milestone', [['', tr('None')], ...pms.map(m => [m.key, `${m.key.slice(t.project.length + 1)} ${m.title}`])], t.milestone || ''));
   return box;
 }
 
@@ -1469,15 +1480,15 @@ function handoffView(t) {
   if (!h || (!h.packet && h.phase !== 'preparing')) return null;
   const box = el('section', `bl-handoff ph-${h.phase || 'awaiting'}`);
   const head = el('div', 'bl-ho-head');
-  head.append(el('b', null, 'Handoff'), el('span', `bl-ho-phase ph-${h.phase}`, PHASE[h.phase] || h.phase || ''));
-  if (h.ready_at) { const w = el('span', 'bl-ho-when', `ready ${ctx.fmtRel(h.ready_at)} ago`); w.title = ctx.fmtDateTime(h.ready_at); head.append(w); }
+  head.append(el('b', null, tr('Handoff')), el('span', `bl-ho-phase ph-${h.phase}`, PHASE[h.phase] || h.phase || ''));
+  if (h.ready_at) { const w = el('span', 'bl-ho-when', tr('ready {ago}', { ago: ctx.fmtRelAgo(h.ready_at) })); w.title = ctx.fmtDateTime(h.ready_at); head.append(w); }
   box.append(head);
-  if (!h.packet) { box.append(el('p', 'bl-d-empty', 'The AI is compiling what was done, how to see it and what to test. You will be notified.')); return box; }
+  if (!h.packet) { box.append(el('p', 'bl-d-empty', tr('The AI is compiling what was done, how to see it and what to test. You will be notified.'))); return box; }
   const pk = h.packet;
   box.append(el('p', 'bl-ho-summary', pk.summary));
   if (pk.see) {
     const see = el('div', 'bl-ho-see');
-    if (pk.see.url) { const a = el('a', 'btn primary', 'Open the preview'); a.href = pk.see.url; a.target = '_blank'; a.rel = 'noopener'; see.append(a, el('code', null, pk.see.url)); }
+    if (pk.see.url) { const a = el('a', 'btn primary', tr('Open the preview')); a.href = pk.see.url; a.target = '_blank'; a.rel = 'noopener'; see.append(a, el('code', null, pk.see.url)); }
     if (pk.see.how) see.append(el('div', 'bl-ho-how', pk.see.how));
     box.append(see);
   }
@@ -1487,9 +1498,9 @@ function handoffView(t) {
     box.append(l);
   }
   if (pk.body) box.append(Object.assign(md(pk.body), { className: 'md bl-ho-body' }));
-  if (pk.checklist?.length) box.append(el('h4', 'bl-d-h', pk.checklist_title || 'Checklist'), tickList(`handoff.${t.key}.check`, pk.checklist.map(x => typeof x === 'string' ? { item: x } : x), x => [el('span', 'bl-ho-step', x.item), x.detail ? el('span', 'bl-ho-detail', x.detail) : null]));
+  if (pk.checklist?.length) box.append(el('h4', 'bl-d-h', pk.checklist_title || tr('Checklist')), tickList(`handoff.${t.key}.check`, pk.checklist.map(x => typeof x === 'string' ? { item: x } : x), x => [el('span', 'bl-ho-step', x.item), x.detail ? el('span', 'bl-ho-detail', x.detail) : null]));
   if (pk.done?.length) {
-    box.append(el('h4', 'bl-d-h', "What's done and new"));
+    box.append(el('h4', 'bl-d-h', tr("What's done and new")));
     const ol = el('ol', 'bl-ho-done');
     for (const d0 of pk.done) { const d = typeof d0 === 'string' ? { title: d0 } : d0; const li = el('li'); li.append(el('b', null, d.title)); if (d.ref) li.append(' ', el('span', 'num', d.ref)); if (d.what) li.append(el('div', null, d.what)); ol.append(li); }
     box.append(ol);
@@ -1497,7 +1508,7 @@ function handoffView(t) {
   if (pk.tests?.length) {
     const key = `handoff.${t.key}`;
     const ticked = store.get(key, []);
-    box.append(el('h4', 'bl-d-h', 'What to test'));
+    box.append(el('h4', 'bl-d-h', tr('What to test')));
     const ul = el('ul', 'bl-ho-tests');
     pk.tests.forEach((x0, i) => {
       const x = typeof x0 === 'string' ? { step: x0 } : x0;
@@ -1505,32 +1516,32 @@ function handoffView(t) {
       const cb = el('input'); cb.type = 'checkbox'; cb.checked = ticked.includes(i); cb.id = `ho-${t.key}-${i}`;
       cb.addEventListener('change', () => { const now = store.get(key, []).filter(v => v !== i); if (cb.checked) now.push(i); store.set(key, now); li.classList.toggle('ticked', cb.checked); });
       const lab = el('label'); lab.htmlFor = cb.id; lab.append(el('span', 'bl-ho-step', x.step));
-      if (x.good) lab.append(el('span', 'bl-ho-good', `Good: ${x.good}`));
-      if (x.bad) lab.append(el('span', 'bl-ho-bad', `Bad: ${x.bad}`));
+      if (x.good) lab.append(el('span', 'bl-ho-good', tr('Good: {text}', { text: x.good })));
+      if (x.bad) lab.append(el('span', 'bl-ho-bad', tr('Bad: {text}', { text: x.bad })));
       li.append(cb, lab); if (cb.checked) li.classList.add('ticked');
       ul.append(li);
     });
     box.append(ul);
   }
   if (pk.gaps?.length) {
-    box.append(el('h4', 'bl-d-h', 'Known gaps'));
+    box.append(el('h4', 'bl-d-h', tr('Known gaps')));
     const ul = el('ul', 'bl-ho-gaps'); for (const g of pk.gaps) ul.append(el('li', null, g)); box.append(ul);
   }
   if (pk.questions?.length) {
-    box.append(el('h4', 'bl-d-h', 'Asked of you'));
+    box.append(el('h4', 'bl-d-h', tr('Asked of you')));
     const ol = el('ol', 'bl-ho-questions'); for (const q of pk.questions) ol.append(el('li', null, q)); box.append(ol);
   }
   const asks = (pk.asks || []).map(a => typeof a === 'string' ? { q: a } : a);
   const sess = answerSession(bl.byKey.get(t.key) || t);
   if (asks.length && !(sess && t.state !== 'done')) {
-    box.append(el('h4', 'bl-d-h', 'Asked of you'));
+    box.append(el('h4', 'bl-d-h', tr('Asked of you')));
     const ol = el('ol', 'bl-ho-questions'); for (const a of asks) ol.append(el('li', null, a.q)); box.append(ol);
   }
   if (sess && t.state !== 'done') {
     const form = el('form', 'bl-ho-reply');
     const answers = asks.map(() => ({ v: '' }));
     if (asks.length) {
-      form.append(el('h4', 'bl-d-h', 'Asked of you'));
+      form.append(el('h4', 'bl-d-h', tr('Asked of you')));
       asks.forEach((a, i) => {
         const f = el('fieldset', 'bl-ask');
         f.append(el('legend', null, `${i + 1}. ${a.q}`));
@@ -1544,7 +1555,7 @@ function handoffView(t) {
           });
           f.append(g);
         } else {
-          const inp = el('input', 'bl-ask-text'); inp.type = 'text'; inp.placeholder = 'Your answer';
+          const inp = el('input', 'bl-ask-text'); inp.type = 'text'; inp.placeholder = tr('Your answer');
           inp.addEventListener('input', () => { answers[i].v = inp.value.trim(); });
           inp.addEventListener('keydown', e => e.stopPropagation());
           f.append(inp);
@@ -1552,12 +1563,12 @@ function handoffView(t) {
         form.append(f);
       });
     }
-    const ta = el('textarea'); ta.rows = 4; ta.placeholder = asks.length ? 'Anything else, in your own words (optional when the choices above say it all).' : 'Your feedback, answers or "go". It goes to the handoff session, which files fixes and closes the ticket.';
+    const ta = el('textarea'); ta.rows = 4; ta.placeholder = asks.length ? tr('Anything else, in your own words (optional when the choices above say it all).') : tr('Your feedback, answers or "go". It goes to the handoff session, which files fixes and closes the ticket.');
     const row = el('div', 'bl-ho-reply-row');
-    const send = el('button', 'btn primary', 'Send to the session'); send.type = 'submit';
-    const term = el('button', 'btn', 'Answer in terminal'); term.type = 'button';
+    const send = el('button', 'btn primary', tr('Send to the session')); send.type = 'submit';
+    const term = el('button', 'btn', tr('Answer in terminal')); term.type = 'button';
     term.addEventListener('click', () => openInTerminal(sess.id));
-    row.append(sessionLink(sess, sess.title || 'Session'), term, send);
+    row.append(sessionLink(sess, sess.title || tr('Session')), term, send);
     form.append(ta, row);
     form.addEventListener('submit', async e => {
       e.preventDefault();
@@ -1570,9 +1581,9 @@ function handoffView(t) {
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || r.statusText);
         ta.value = ''; for (const a of answers) a.v = '';
-        ctx.toast(j.action === 'typed' ? 'Typed into the live session' : 'Resumed the session in your terminal with your message');
+        ctx.toast(j.action === 'typed' ? tr('Typed into the live session') : tr('Resumed the session in your terminal with your message'));
         act('ticket-handoff', t.key, 'discussing');
-      } catch (err) { ctx.toast(`Not sent: ${err.message}`); }
+      } catch (err) { ctx.toast(tr('Not sent: {error}', { error: err.message })); }
       send.disabled = false;
     });
     box.append(form);
