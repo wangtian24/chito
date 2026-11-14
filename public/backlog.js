@@ -29,11 +29,20 @@ const SESSION_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><pa
 
 let ctx = null;          // { openSession, toast, fmtRel, fmtRelAgo, fmtDateTime, getPr }
 const bl = { data: null, byKey: new Map(), blockers: new Map(), dependents: new Map(), depth: new Map(), order: new Map(), error: null, timer: null, ticket: null, ticketKey: null };
-// Lane collapse lives for this page load only: the Projects tab always opens with every lane expanded
-// (Overview carries the compact, collapsed list).
-const ui = { closed: store.get('blClosed2', 'recent'), q: '', sort: store.get('blSort', { col: 'order', dir: 1 }), milestone: null,
-  collapsed: new Set() };
-try { localStorage.removeItem('chito.blCollapsed'); } catch { }
+// View settings are per page and remembered per browser, each under its own key so nothing leaks between pages:
+// the project page defaults to All tickets sorted by last updated (newest first); the Projects tab to every lane
+// expanded and Open; Overview's list is fixed (collapsed, open tickets) and reads none of them.
+const CLOSED_OPTS = ['none', 'recent', 'all', 'finished'];
+const VIEW_KEYS = { project: ['blProjClosed', 'all'], lanes: ['blLanesClosed', 'none'] };
+const savedClosed = pg => { const [k, d] = VIEW_KEYS[pg]; const v = store.get(k, d); return CLOSED_OPTS.includes(v) ? v : d; };
+const savedSort = () => { const v = store.get('blProjSort', null); return v && typeof v.col === 'string' && (v.dir === 1 || v.dir === -1) ? v : { col: 'updated', dir: -1 }; };
+const savedCollapsed = () => { const v = store.get('blLanesCollapsed', []); return new Set(Array.isArray(v) ? v : []); };
+const ui = { page: 'lanes', closedBy: { project: savedClosed('project'), lanes: savedClosed('lanes') }, q: '', sort: savedSort(), milestone: null,
+  collapsed: savedCollapsed(),
+  get closed() { return this.closedBy[this.page] || 'none'; } };
+function setClosed(v) { if (!VIEW_KEYS[ui.page]) return; ui.closedBy[ui.page] = v; store.set(VIEW_KEYS[ui.page][0], v); }
+const saveCollapsed = () => store.set('blLanesCollapsed', [...ui.collapsed]);
+try { for (const k of ['blCollapsed', 'blClosed2', 'blSort']) localStorage.removeItem('chito.' + k); } catch { }
 ui.refresh = store.get('blRefresh', 60);
 ui.finSort = { col: 'finished', dir: -1 };
 
@@ -170,6 +179,7 @@ export function renderBacklog() {
     return;
   }
   const project = route.project && bl.data.projects.find(p => p.key === route.project.toUpperCase());
+  ui.page = route.project ? 'project' : currentTab() === 'overview' ? 'overview' : 'lanes';
   if (route.project && !project) { root.append(head(tr('Projects'), ''), el('div', 'prs-empty', tr('No project {key}.', { key: route.project }))); }
   else if (project) { document.title = `${project.key} · ${tr('Projects')} · chito`; renderProject(root, project); }
   else { document.title = `${tr('Projects')} · chito`; renderLanes(root); }
@@ -200,7 +210,7 @@ function controls(withSearch = true) {
   const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup');
   for (const [v, label, tip] of [['none', tr('Open|tickets'), tr('Open tickets only')], ['recent', tr('+ 24h'), tr('Open, plus tickets closed in the last 24 hours')], ['all', tr('All'), tr('Every ticket, however old')], ['finished', tr('Finished'), tr('Only tickets finished (done, canceled or failed) in the last 7 days, across all projects, newest first')]]) {
     const b = el('button', null, label); b.setAttribute('aria-checked', String(ui.closed === v)); b.title = tip;
-    b.addEventListener('click', () => { ui.closed = v; store.set('blClosed2', v); renderBacklog(); });
+    b.addEventListener('click', () => { setClosed(v); renderBacklog(); });
     seg.append(b);
   }
   const cap = el('span', 'bl-cap', tr('Tickets')); row.append(cap, seg);
@@ -839,7 +849,7 @@ function renderLanes(root) {
   const allCollapsed = visible.length && visible.every(k => ui.collapsed.has(k));
   const tog = el('button', 'btn bl-collapse-all', allCollapsed ? tr('Expand all') : tr('Collapse all'));
   tog.title = allCollapsed ? tr("Show every project's tickets") : tr('Show projects only');
-  tog.addEventListener('click', () => { if (allCollapsed) visible.forEach(k => ui.collapsed.delete(k)); else visible.forEach(k => ui.collapsed.add(k)); renderBacklog(); });
+  tog.addEventListener('click', () => { if (allCollapsed) visible.forEach(k => ui.collapsed.delete(k)); else visible.forEach(k => ui.collapsed.add(k)); saveCollapsed(); renderBacklog(); });
   ctl.insertBefore(tog, ctl.querySelector('.bl-cap'));
   root.append(ctl);
   if (finishedMode()) {   // one flat list across projects, newest finished first
@@ -871,7 +881,7 @@ function renderLanes(root) {
     const chev = el('button', `bl-chev${collapsed ? '' : ' open'}`);
     chev.type = 'button'; chev.title = collapsed ? tr('Show tickets') : tr('Hide tickets');
     chev.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
-    chev.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (collapsed) ui.collapsed.delete(p.key); else ui.collapsed.add(p.key); renderBacklog(); });
+    chev.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (collapsed) ui.collapsed.delete(p.key); else ui.collapsed.add(p.key); saveCollapsed(); renderBacklog(); });
     const name = linkTo(el('a', 'bl-lane-name'), projPath(p.key));
     name.append(el('span', 'bl-lane-key num', p.key), el('span', 'bl-lane-title', p.name));
     const nameRow = el('div', 'bl-lane-namerow'); nameRow.append(chev, name);
@@ -1175,7 +1185,7 @@ function table(tks) {
     if (sort.col === id) { th.setAttribute('aria-sort', sort.dir > 0 ? 'ascending' : 'descending'); b.append(el('span', 'bl-sort', sort.dir > 0 ? '↑' : '↓')); }
     b.addEventListener('click', () => {
       const next = { col: id, dir: sort.col === id ? -sort.dir : (id === 'updated' || id === 'finished' ? -1 : 1) };
-      if (fin) ui.finSort = next; else { ui.sort = next; store.set('blSort', ui.sort); }
+      if (fin) ui.finSort = next; else { ui.sort = next; store.set('blProjSort', ui.sort); }
       renderBacklog();
     });
     th.append(b); hr.append(th);

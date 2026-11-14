@@ -58,19 +58,74 @@ test('Overview has the open-projects list and no In flight section', { skip }, a
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'overview.png'), fullPage: true });
 });
 
-test('Projects tab opens with every lane expanded', { skip }, async () => {
-  await page.evaluate(() => localStorage.setItem('chito.blCollapsed', JSON.stringify(['CHITO'])));
+const checked = () => page.$eval('.board-controls .seg [aria-checked="true"]', b => b.textContent.trim());
+const fresh = async () => { await page.goto(BASE + '/projects?tab=overview'); await page.evaluate(() => localStorage.clear()); };
+
+test('Projects tab defaults to every lane expanded and Open', { skip }, async () => {
+  await fresh();
   await page.goto(BASE + '/projects?tab=projects');
   await page.waitForSelector('.bl-lanes .bl-chev');
   assert.equal(await page.locator('.bl-lanes .bl-chev:not(.open)').count(), 0);
+  assert.equal(await checked(), 'Open');
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'projects.png'), fullPage: true });
-  await page.click('.bl-collapse-all');
-  await page.waitForSelector('.bl-lane-compact');
-  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'projects-collapsed.png'), fullPage: true });
 });
 
-test('project page loads at /projects/<KEY>', { skip }, async () => {
+test('project page defaults to All, sorted by Updated newest first', { skip }, async () => {
+  await fresh();
   await page.goto(BASE + '/projects/CHITO');
-  await page.waitForSelector('.bl-back');
+  await page.waitForSelector('.bl-table');
+  assert.equal(await checked(), 'All');
+  assert.equal(await page.getAttribute('.bl-table th.c-updated', 'aria-sort'), 'descending');
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'project.png') });
+});
+
+test('Projects tab remembers collapse and filter; the project page and Overview ignore them', { skip }, async () => {
+  await fresh();
+  await page.goto(BASE + '/projects?tab=projects');
+  await page.waitForSelector('.bl-collapse-all');
+  await page.click('.bl-collapse-all');
+  await page.click('.board-controls .seg button:has-text("+ 24h")');
+  await page.reload();
+  await page.waitForSelector('.bl-lane-compact');
+  assert.equal(await page.locator('.bl-lanes .bl-chev.open').count(), 0, 'lanes stay collapsed');
+  assert.equal(await checked(), '+ 24h');
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'projects-remembered.png'), fullPage: true });
+  await page.goto(BASE + '/projects/CHITO');
+  await page.waitForSelector('.bl-table');
+  assert.equal(await checked(), 'All', 'project page keeps its own filter');
+  await page.goto(BASE + '/projects?tab=overview');
+  await page.waitForSelector('.bl-open-projects');
+  assert.equal(await page.locator('#backlog .board-controls').count(), 0, 'Overview has no controls');
+  assert.equal(await page.locator('.bl-open-projects .bl-chev').count(), 0);
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'overview.png'), fullPage: true });
+});
+
+test('project page remembers its filter and sort; the Projects tab ignores them', { skip }, async () => {
+  await fresh();
+  await page.goto(BASE + '/projects/CHITO');
+  await page.waitForSelector('.bl-table');
+  await page.click('.board-controls .seg button:has-text("Open")');
+  await page.click('.bl-table th.c-key button');
+  await page.reload();
+  await page.waitForSelector('.bl-table');
+  assert.equal(await checked(), 'Open');
+  assert.equal(await page.getAttribute('.bl-table th.c-key', 'aria-sort'), 'ascending');
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'project-remembered.png') });
+  await page.goto(BASE + '/projects?tab=projects');
+  await page.waitForSelector('.bl-lanes .bl-chev');
+  assert.equal(await checked(), 'Open');
+  assert.equal(await page.locator('.bl-lanes .bl-chev:not(.open)').count(), 0);
+});
+
+test('the board still works with storage blocked', { skip }, async () => {
+  const ctx2 = await browser.newContext();
+  await ctx2.addInitScript(() => { Object.defineProperty(window, 'localStorage', { get() { throw new Error('blocked'); } }); });
+  const p2 = await ctx2.newPage();
+  const errs = []; p2.on('pageerror', e => errs.push(e.message));
+  await p2.goto(BASE + '/projects/CHITO');
+  await p2.waitForSelector('.bl-table');
+  await p2.click('.board-controls .seg button:has-text("Open")');
+  assert.equal(await p2.$eval('.board-controls .seg [aria-checked="true"]', b => b.textContent.trim()), 'Open');
+  await ctx2.close();
+  assert.deepEqual(errs, []);
 });
