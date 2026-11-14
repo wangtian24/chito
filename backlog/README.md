@@ -1,6 +1,6 @@
 # Backlog
 
-A local ticket DAG that Claude Code sessions and background agents share as their source of truth. `bl` is the CLI, orchestrator and daemon; chito's `/backlog` page is the board. See [docs/design.md](docs/design.md).
+A local ticket DAG that Claude Code sessions and background agents share as their source of truth. `bl` is the CLI, orchestrator and daemon; chito's `/projects` page is the board. See [docs/design.md](docs/design.md).
 
 Install everything (chito + backlog) with `scripts/install.sh` at the repo root, or only the backlog with:
 
@@ -9,7 +9,7 @@ backlog/install.sh            # bl wrapper in ~/.local/bin, skill symlinks, hook
 bl project add Q "Chores" --executor daemon --evergreen --review self   # modes: session (SO), auto (DSO), daemon (DQ)
 bl add Q "Rename the old screenshots" --model sonnet
 bl project start Q            # the daemon picks it up
-bl status                     # or open http://localhost:8791/backlog
+bl status                     # or open http://localhost:8791/projects
 ```
 
 | Path | What |

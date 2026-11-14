@@ -57,6 +57,7 @@ const STATIC = {
   '/app.js': ['public/app.js', 'text/javascript'],
   '/style.css': ['public/style.css', 'text/css'],
   '/backlog.js': ['public/backlog.js', 'text/javascript'],
+  '/keys.js': ['public/keys.js', 'text/javascript'],
   '/favicon.svg': ['public/favicon.svg', 'image/svg+xml'],
   '/vendor/marked.js': ['node_modules/marked/lib/marked.esm.js', 'text/javascript'],
   '/vendor/purify.js': ['node_modules/dompurify/dist/purify.es.mjs', 'text/javascript'],
@@ -183,7 +184,12 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   try {
-    if (p === '/' || p.startsWith('/s/') || p === '/artifacts' || p === '/backlog' || p.startsWith('/backlog/')) {
+    // The board moved from /backlog to /projects; old links (bookmarks, bl output, PR bodies) still land.
+    if (p === '/backlog' || p.startsWith('/backlog/')) {
+      res.writeHead(301, { location: '/projects' + p.slice('/backlog'.length) + url.search });
+      return res.end();
+    }
+    if (p === '/' || p.startsWith('/s/') || p === '/artifacts' || p === '/projects' || p.startsWith('/projects/')) {
       return send(res, 200, fs.readFileSync(path.join(ROOT, 'public/index.html')), 'text/html; charset=utf-8');
     }
     if (STATIC[p]) {

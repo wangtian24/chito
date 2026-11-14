@@ -1,5 +1,6 @@
 import { marked } from '/vendor/marked.js';
 import DOMPurify from '/vendor/purify.js';
+import { makeChords } from '/keys.js';
 import { initBacklog, renderBacklog, parseBacklogPath, startBacklogPolling, stopBacklogPolling, closeDrawer } from '/backlog.js';
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -1139,7 +1140,7 @@ $('#board-refresh').addEventListener('click', async () => { toast('Refreshing fr
 document.querySelectorAll('.views .view-tab').forEach(t => t.addEventListener('click', e => {
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
-  const path = { artifacts: '/artifacts', backlog: '/backlog' }[t.dataset.view] || '/';
+  const path = { artifacts: '/artifacts', backlog: '/projects' }[t.dataset.view] || '/';
   if (location.pathname !== path) history.pushState({}, '', path);
   route();
 }));
@@ -1219,6 +1220,9 @@ function openSettings(tab) {
 function closeSettings() { $('#settings').hidden = true; }
 
 // ---------- keyboard ----------
+const chord = makeChords({
+  'g p': () => { if (location.pathname !== '/projects') history.pushState({}, '', '/projects'); route(); },
+});
 document.addEventListener('keydown', e => {
   const inSearch = document.activeElement === $('#q');
   const settingsOpen = !$('#settings').hidden;
@@ -1255,7 +1259,7 @@ document.addEventListener('keydown', e => {
     '?': () => openSettings('keyboard'),
     ',': () => openSettings(),
     P: () => { const path = state.view === 'artifacts' ? '/' : '/artifacts'; history.pushState({}, '', path); route(); },
-    B: () => { const path = state.view === 'backlog' ? '/' : '/backlog'; history.pushState({}, '', path); route(); },
+    B: () => { const path = state.view === 'backlog' ? '/' : '/projects'; history.pushState({}, '', path); route(); },
     f: () => togglePin(),
     j: () => moveCursor(1),
     k: () => moveCursor(-1),
@@ -1281,6 +1285,8 @@ document.addEventListener('keydown', e => {
     ' ': () => convo.scrollBy({ top: (e.shiftKey ? -1 : 1) * convo.clientHeight * 0.85 }),
     '[': () => document.querySelector('.app').classList.toggle('collapsed'),
   };
+  const seq = chord(e.key);
+  if (seq) { e.preventDefault(); seq(); return; }
   const fn = keys[e.key];
   if (fn) { e.preventDefault(); fn(); }
 });

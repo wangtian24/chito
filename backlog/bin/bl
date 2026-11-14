@@ -30,7 +30,7 @@ DEFAULTS = {
     "brief_humans": True,       # the daemon prepares a briefing session for every unblocked human ticket
     "brief_model": "opus",
     "notify_human_cmd": "",     # how to tell the human a handoff is ready; empty = a macOS notification ($BL_MSG, $BL_TICKET, $BL_URL)
-    "board_url": "http://localhost:8791/backlog",
+    "board_url": "http://localhost:8791/projects",
     "quota_backoff_minutes": 30, # when a worker hits a usage limit and no reset time is given
     "quota_until": "",          # set automatically when a usage limit is hit; claims wait until then
     "max_attempts": 2,

@@ -76,7 +76,7 @@ A long-horizon task becomes a **project**: tickets, each roughly one PR, with de
 - **Caps:** at most 6 tickets in flight across everything; adjustable.
 - **Per-ticket usage:** turns, tokens and nominal cost, read from the transcripts.
 
-**The board** (`B`, `/backlog`):
+**The board** (`g p` or `B`, `/projects`; old `/backlog` links redirect):
 - the daemon's status, with pause and resume, and a usage-limit banner;
 - every ticket in flight, with who runs it and a link to its session;
 - a swim lane per project, collapsible to one compact row;
@@ -125,7 +125,7 @@ If you're an AI agent asked to install chito and the backlog on this machine, do
 4. **Verify.**
    - `bl status`: the first line should read `daemon: running`.
    - `curl -s localhost:8791/api/backlog | head -c 80`: should contain `"available":true`.
-   - Open http://localhost:8791/backlog.
+   - Open http://localhost:8791/projects.
    - In a new Claude Code session, `/backlog` should load.
 5. **Smoke test (optional; spends a few cents).** Create a DQ project with a tiny ticket, and archive it afterwards:
 

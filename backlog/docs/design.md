@@ -16,7 +16,7 @@ A lightweight, Linear-like backlog in one SQLite file. Many Claude Code sessions
 | Skills | `backlog/skills/{backlog,backlog-run,backlog-worker}` | `/backlog` (master triage), `/backlog-run` (execute), `backlog-worker` (the per-ticket contract) |
 | Hooks | `~/.claude/settings.json` → `bl hook session-start / stop / beat` | Inject the ticket into worker sessions, block a worker from stopping before it reports, renew leases and ownership |
 | Daemon | LaunchAgent `com.chito.backlog-daemon` → `bl daemon run` | Drains executing daemon projects |
-| Board | chito `/backlog`, `/backlog/<PROJ>`, `/backlog/<PROJ>/<KEY>` | Swim lanes, in-flight tickets, dependency graph, ticket table, drawer, and controls (which call `bl`) |
+| Board | chito `/projects`, `/projects/<PROJ>`, `/projects/<PROJ>/<KEY>` (old `/backlog` URLs redirect) | Swim lanes, in-flight tickets, dependency graph, ticket table, drawer, and controls (which call `bl`) |
 | Local overlay | `~/.backlog/LOCAL.md` (not in the repo) | Machine-specific conventions the skills read: doc store, review policy per repo, notifications |
 
 ## 2. Data model
