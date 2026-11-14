@@ -2,7 +2,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { scan, getMeta, getOtherItems, HOME, PROJECTS_DIR } from './lib/index.js';
 import { loadTranscript } from './lib/transcript.js';
@@ -83,6 +83,69 @@ function resumeCommand(meta, prompt, fork = false) {
   if (meta.source === 'pi') return `cd ${shq(dir)} && pi ${fork ? '--fork' : '--session'} ${shq(meta.file)}${prompt ? ' ' + shq(prompt) : ''}`;
   if (meta.source === 'codex') return `cd ${shq(dir)} && codex resume ${shq(meta.id)}${prompt ? ' ' + shq(prompt) : ''}`;
   return `cd ${shq(dir)} && claude --resume ${meta.id}${fork ? ' --fork-session' : ''}${CLAUDE_FLAGS ? ' ' + CLAUDE_FLAGS : ''}${prompt ? ' ' + shq(prompt) : ''}`;
+}
+
+// Background sends: resume the session headless (claude -p / codex exec / pi -p) with no terminal window.
+// The reply lands in the session's own transcript, which the open view already polls. One run per session at a time.
+const BG_LOG_DIR = process.env.CHITO_BG_LOG_DIR || path.join(HOME, '.cache', 'chito', 'bg');
+const BG_BIN = { claude: process.env.CHITO_CLAUDE_BIN || 'claude', codex: process.env.CHITO_CODEX_BIN || 'codex', pi: process.env.CHITO_PI_BIN || 'pi' };
+const bgRuns = new Map(); // session id -> { pid, startedAt, log, harness }
+
+// A headless turn can't answer permission prompts, so it runs in the mode the session itself last used
+// (recorded on each user entry of a Claude transcript). CHITO_BG_PERMISSION_MODE overrides it.
+function lastPermissionMode(file) {
+  if (process.env.CHITO_BG_PERMISSION_MODE) return process.env.CHITO_BG_PERMISSION_MODE;
+  try {
+    const fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size, len = Math.min(size, 512 * 1024), buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    fs.closeSync(fd);
+    const all = [...buf.toString('utf8').matchAll(/"permissionMode":"([A-Za-z]+)"/g)];
+    return all.length ? all[all.length - 1][1] : null;
+  } catch { return null; }
+}
+
+function backgroundArgs(meta, prompt) {
+  if (meta.source === 'pi') return [BG_BIN.pi, ['--session', meta.file, '-p', prompt]];
+  if (meta.source === 'codex') return [BG_BIN.codex, ['exec', 'resume', meta.id, prompt]];
+  const mode = lastPermissionMode(meta.file);
+  const flags = CLAUDE_FLAGS ? CLAUDE_FLAGS.split(/\s+/).filter(Boolean) : [];
+  return [BG_BIN.claude, ['--resume', meta.id, ...flags, ...(mode ? ['--permission-mode', mode] : []), '-p', prompt]];
+}
+
+function bgInfo(id) {
+  const r = bgRuns.get(id);
+  return r ? { pid: r.pid, startedAt: r.startedAt, log: r.log, harness: r.harness } : null;
+}
+
+// Don't let chito's own environment (if it was started inside a Claude Code session) leak into the run.
+function bgEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (/^(BL_|CLAUDE_CODE_)|^(CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT)$/.test(k)) delete env[k];
+  return env;
+}
+
+function startBackground(meta, prompt) {
+  const dir = meta.cwd && fs.existsSync(meta.cwd) ? meta.cwd : HOME;
+  const [bin, args] = backgroundArgs(meta, prompt);
+  fs.mkdirSync(BG_LOG_DIR, { recursive: true });
+  const log = path.join(BG_LOG_DIR, `${meta.id}-${Date.now()}.log`);
+  const fd = fs.openSync(log, 'a');
+  fs.writeSync(fd, `# chito background send ${new Date().toISOString()}\n# cwd: ${dir}\n# ${[bin, ...args.slice(0, -1)].join(' ')} <message>\n\n`);
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, { cwd: dir, detached: true, stdio: ['ignore', fd, fd], env: bgEnv() });
+    fs.closeSync(fd);
+    child.once('error', e => { bgRuns.delete(meta.id); reject(new Error(`could not start ${bin}: ${e.message}`)); });
+    child.once('spawn', () => {
+      bgRuns.set(meta.id, { pid: child.pid, startedAt: new Date().toISOString(), log, harness: meta.source || 'claude' });
+      child.unref();
+      resolve(bgInfo(meta.id));
+    });
+    child.once('exit', code => {
+      bgRuns.delete(meta.id);
+      try { fs.appendFileSync(log, `\n# exited ${code}\n`); } catch { }
+    });
+  });
 }
 
 function readBody(req, limit = 200_000) {
@@ -215,7 +278,7 @@ const server = http.createServer(async (req, res) => {
       const list = scan();
       const live = liveSessions();
       return send(res, 200, {
-        sessions: list.map(m => ({ ...listItem(m), live: live.get(m.id) || null })),
+        sessions: list.map(m => ({ ...listItem(m), live: live.get(m.id) || null, bg: bgInfo(m.id) })),
         projectsDir: PROJECTS_DIR, terminal: TERMINAL,
       });
     }
@@ -279,12 +342,18 @@ const server = http.createServer(async (req, res) => {
       if (m[2] === '/send') {
         if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
         let text = '';
-        try { text = String(JSON.parse(await readBody(req)).text || '').trim(); } catch { return send(res, 400, { error: 'bad body' }); }
+        let background = false;
+        try { const b = JSON.parse(await readBody(req)); text = String(b.text || '').trim(); background = b.background === true; } catch { return send(res, 400, { error: 'bad body' }); }
         if (!text) return send(res, 400, { error: 'empty message' });
+        if (bgRuns.has(id)) return send(res, 409, { error: `A background send is still running (pid ${bgRuns.get(id).pid}); wait for it to finish` });
         // A typed newline would submit early in the live TUI, so flatten for that path.
         const existing = meta.source ? null : await focusExisting(id, text.replace(/\s*\n\s*/g, ' '));
         if (existing?.state === 'focused') return send(res, 200, { ok: true, action: 'typed', terminal: TERMINAL, ...existing });
         if (existing?.state === 'running-elsewhere') return send(res, 409, { error: `It is running in the background (pid ${existing.pid}) with no terminal to type into; open it to get a forked copy, or wait for it to finish` });
+        if (background) {
+          const bg = await startBackground(meta, text);
+          return send(res, 200, { ok: true, action: 'background', bg });
+        }
         await openInTerminal(resumeCommand(meta, text));
         return send(res, 200, { ok: true, action: 'resumed', terminal: TERMINAL });
       }
@@ -306,7 +375,7 @@ const server = http.createServer(async (req, res) => {
       }
       const items = meta.source ? getOtherItems(id) : loadTranscript(meta.file);
       const live = meta.source ? null : liveSessions().get(id) || null;
-      return send(res, 200, { meta: { ...meta, live, resumeCommand: resumeCommand(meta), cwdExists: !!meta.cwd && fs.existsSync(meta.cwd) }, items });
+      return send(res, 200, { meta: { ...meta, live, bg: bgInfo(id), resumeCommand: resumeCommand(meta), cwdExists: !!meta.cwd && fs.existsSync(meta.cwd) }, items });
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {

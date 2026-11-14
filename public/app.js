@@ -290,6 +290,10 @@ function renderList(searching, follow = true) {
       const dot = el('span', 'live-dot' + (s.live.status === 'busy' ? ' busy' : ''));
       dot.title = t('Running now ({status}, pid {pid})', { status: { busy: t('busy'), idle: t('idle') }[s.live.status] || s.live.status || t('live'), pid: s.live.pid });
       ti.append(dot);
+    } else if (s.bg) {
+      const dot = el('span', 'live-dot busy');
+      dot.title = t('Running in the background (pid {pid})', { pid: s.bg.pid });
+      ti.append(dot);
     }
     ti.append(highlight(s.title, terms));
     ti.title = s.title;
@@ -663,14 +667,17 @@ function renderThread(items, token, targetId, { stickBottom = false, keepScroll 
 async function refreshActive() {
   const id = state.activeId;
   if (!id || !state.active || document.hidden) return;
-  const live = state.sessions.find(s => s.id === id)?.live;
-  if (!live && Date.now() > (state.watchUntil || 0)) return;
+  const cur = state.sessions.find(s => s.id === id);
+  if (!cur?.live && !cur?.bg && !state.active.meta?.bg && Date.now() > (state.watchUntil || 0)) return;
   let data;
   try { const r = await fetch(`/api/sessions/${id}`); if (!r.ok) return; data = await r.json(); } catch { return; }
   if (id !== state.activeId) return;
   const old = state.active.items;
   const last = x => x.length ? JSON.stringify(x[x.length - 1]).length + ':' + x.length : '0';
   const busy = x => x?.meta?.live?.status === 'busy';
+  const bgChanged = !!state.active.meta?.bg !== !!data.meta?.bg;
+  if (cur) cur.bg = data.meta?.bg || null;
+  if (bgChanged) { state.active.meta = data.meta; updateComposerHint(); autosize(); if (!data.meta?.bg) loadList(); }
   if (last(old) === last(data.items) && busy(state.active) === busy(data)) { state.active.meta = data.meta; return; }
   const convo = $('#convo');
   const thread = $('#thread');
@@ -698,33 +705,54 @@ function autosize() {
   const t = $('#compose');
   t.style.height = 'auto';
   t.style.height = Math.min(t.scrollHeight, 240) + 'px';
-  $('#send').disabled = !t.value.trim();
+  $('#send').disabled = !t.value.trim() || !!state.active?.meta?.bg;
 }
 
 function updateComposerHint() {
   const meta = state.active?.meta;
   const live = meta && (state.sessions.find(s => s.id === meta.id)?.live ?? meta.live);
   const app = state.terminal === 'terminal' ? 'Terminal' : 'iTerm';
-  $('#compose-hint').textContent = !meta ? '' : live
+  const hint = $('#compose-hint');
+  const bg = meta?.bg;
+  hint.classList.toggle('bg-running', !!bg);
+  // A live session is typed into whatever the toggle says, so the toggle only matters when it is not running.
+  $('#compose-bg').closest('label').hidden = !meta || !!live;
+  hint.textContent = !meta ? '' : bg
+    ? t('Running in the background (pid {pid}); the reply appears here as it is written.', { pid: bg.pid })
+    : live
     ? t('Typed into the running session in {app}. Enter sends, Shift+Enter adds a line (sent as spaces).', { app })
+    : $('#compose-bg').checked
+    ? t('Resumes this session headless, with no terminal window; the reply appears here. Option+Enter opens {app} instead.', { app })
     : t('Resumes this session in a new {app} window with your message. Enter sends, Shift+Enter adds a line.', { app });
 }
 
-async function sendMessage() {
+$('#compose-bg').checked = store.get('sendBackground', true);
+$('#compose-bg').addEventListener('change', e => { store.set('sendBackground', e.target.checked); updateComposerHint(); });
+
+async function sendMessage(flip = false) {
   const box = $('#compose');
   const text = box.value.trim();
-  if (!text || !state.activeId) return;
+  if (!text || !state.activeId || state.active?.meta?.bg) return;
+  const background = $('#compose-bg').checked !== flip;
   $('#send').disabled = true;
   try {
     const r = await fetch(`/api/sessions/${state.activeId}/send`, {
-      method: 'POST', headers: { 'x-chito': '1', 'content-type': 'application/json' }, body: JSON.stringify({ text }),
+      method: 'POST', headers: { 'x-chito': '1', 'content-type': 'application/json' }, body: JSON.stringify({ text, background }),
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error);
     box.value = '';
     autosize();
     state.watchUntil = Date.now() + 10 * 60 * 1000;
-    toast(j.action === 'typed' ? t('Sent to running session ({tty})', { tty: j.tty }) : t('Resumed in a new terminal window'));
+    if (j.action === 'background' && state.active?.meta) {
+      state.active.meta.bg = j.bg;
+      const cur = state.sessions.find(s => s.id === state.activeId);
+      if (cur) cur.bg = j.bg;
+      updateComposerHint();
+      autosize();
+    }
+    toast(j.action === 'typed' ? t('Sent to running session ({tty})', { tty: j.tty })
+      : j.action === 'background' ? t('Running in the background') : t('Resumed in a new terminal window'));
     setTimeout(() => loadList(), 2500);
   } catch (e) {
     toast(t('Send failed: {error}', { error: e.message }));
@@ -734,7 +762,7 @@ async function sendMessage() {
 
 $('#compose').addEventListener('input', autosize);
 $('#compose').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(e.altKey); }
   else if (e.key === 'Escape') { e.preventDefault(); $('#compose').blur(); }
 });
 $('#composer').addEventListener('submit', e => { e.preventDefault(); sendMessage(); });
