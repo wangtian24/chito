@@ -55,6 +55,7 @@ function blArgs(b) {
       return choice && ['set', k, `harness=${choice.harness}`, `model=${choice.model}`];
     }
     case 'milestone-reach': case 'milestone-cancel': return k && ['milestone', action.slice(10), k];
+    case 'milestone-accept': case 'milestone-reopen': return k && ['milestone', action.slice(10), k, '--note', 'from chito'];
     case 'ticket-milestone': return k && (value === '' || KEY_RE.test(String(value))) && ['set', k, `milestone=${value || ''}`];
     case 'ticket-handoff': return k && ['preparing', 'awaiting', 'discussing'].includes(value) && ['handoff', k, '--phase', value];
     case 'ticket-assignee': return k && ['', 'human'].includes(value) && ['set', k, `assignee=${value}`];

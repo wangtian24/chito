@@ -346,6 +346,13 @@ SHOWCASE_HOW = {
                  "`bl milestone showcase {m} --kind localhost --url http://localhost:PORT --note \"how to start, what to try\"`.",
     "link": "Record the live link(s) where the result can be seen: `bl milestone showcase {m} --kind link --url URL --note \"...\"`.",
 }
+# On top of the pieces above, every showcase is one page on arti that the human reads in full (chito's milestone card is too small).
+SHOWCASE_PAGE = ("**Showcase page (required):** also publish one page to arti for the human to review: an HTML page with the milestone's title, "
+                 "a short summary, then one section per done ticket: what changed, where to find it in the app, how to try it, and its screenshots "
+                 "embedded inline at a readable size (data: URIs or package files; never links to local files). Publish it with the Arti MCP "
+                 "`add_artifact` (named_slug `{slug}`, content_type text/html, labels showcase,{project}); republishing the slug makes a new version. "
+                 "Then record it: `bl milestone showcase {m} --kind link --url https://arti.voltcouch.com/s/{slug} --note \"Showcase page\"`. "
+                 "chito shows that link as the milestone's Open showcase button, next to Accept and Reopen.")
 
 def milestone(c, key):
     m = c.execute("SELECT * FROM milestones WHERE key=?", (key.upper(),)).fetchone()
@@ -935,6 +942,7 @@ def build_prompt(c, t, compact=False):
                 L += [f"## Showcase for milestone {m['key']}: {m['title']}",
                       "This ticket produces the portfolio piece for the milestone: proof of what was built, for a human to look at.",
                       SHOWCASE_HOW.get(m["showcase_kind"], SHOWCASE_HOW["screenshot"]).format(m=m["key"]),
+                      SHOWCASE_PAGE.format(m=m["key"], slug=f"{m['key'].lower()}-showcase", project=m["project"].lower()),
                       "Cover every ticket below that is done; say what changed and how to see it. Files are copied into the backlog's showcase folder.",
                       *[f"- {w['key']} [{w['state']}] {w['title']}: {(w['result'] or '')[:300]}" for w in work], ""]
         if t["parent"]:
