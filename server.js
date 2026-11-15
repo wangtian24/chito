@@ -39,7 +39,7 @@ function blArgs(b) {
     }
     case 'project-evergreen': return k && ['project', 'set', k, `evergreen=${value ? 1 : 0}`];
     case 'daemon-pause': case 'daemon-resume': return ['daemon', action.slice(7)];
-    case 'quota-clear': return ['quota', 'clear'];
+    case 'quota-clear': return key == null ? ['quota', 'clear'] : k && ['config', k, 'quota_until', '""'];
     case 'ticket-reopen': case 'ticket-cancel': case 'ticket-approve': return k && [action.slice(7), k, '--reason', 'from chito'];
     case 'ticket-resolve': return k && ['resolve', k];
     case 'project-instructions': {
