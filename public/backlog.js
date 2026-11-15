@@ -671,11 +671,22 @@ function prChips(t, max = 3) {
 
 // ---- milestones ----
 const PR_STATE = { OPEN: tr('open'), DRAFT: tr('draft'), MERGED: tr('merged'), CLOSED: tr('closed'), UNKNOWN: tr('unknown') };
-const MS_LABEL = { planned: tr('Planned'), active: tr('Active|milestone'), reached: tr('Reached'), showcased: tr('Showcased'), canceled: tr('Canceled') };
+const MS_LABEL = { planned: tr('Planned'), active: tr('Active|milestone'), reached: tr('Reached'), showcased: tr('Showcased'), accepted: tr('Accepted'), canceled: tr('Canceled') };
 function msTrigger(m) {
   if (m.trigger === 'deploy') return tr('On deploy ({gate})', { gate: m.gate || '?' });
   if (m.trigger === 'manual') return tr('Manual');
   return tr('When all done');
+}
+// The showcase page on arti (the newest one recorded), if the showcase has one.
+function showcasePage(m) { return [...(m.showcases || [])].reverse().find(sc => sc.url && /arti\.voltcouch\.com\/s\//.test(sc.url))?.url || null; }
+// Open showcase · Accept · Reopen, for a milestone whose showcase waits on you.
+function msActions(m) {
+  const box = el('div', 'bl-ms-acts');
+  const page = showcasePage(m);
+  if (page) { const a = el('a', 'btn bl-act', tr('Open showcase')); a.href = page; a.target = '_blank'; a.rel = 'noopener'; a.title = tr('The showcase page on arti'); box.append(a); }
+  box.append(actBtn(tr('Accept'), 'milestone-accept', m.key, null, { primary: true, title: tr('The showcase looks good: mark the milestone accepted') }),
+    actBtn(tr('Reopen'), 'milestone-reopen', m.key, null, { confirm: true, title: tr('Not good enough: put the milestone back to active') }));
+  return box;
 }
 function msTickets(m) { return bl.data.tickets.filter(t => t.milestone === m.key && t.key !== m.showcase_ticket); }
 function showcaseItems(m, big) {
@@ -701,10 +712,11 @@ function roadmap(p) {
   const wrap = el('div', 'bl-roadmap');
   for (const m of ms) {
     const tks = msTickets(m);
-    const card = el('button', `bl-ms ms-${m.status}${ui.milestone === m.key ? ' on' : ''}`);
-    card.type = 'button';
+    const card = el('div', `bl-ms ms-${m.status}${ui.milestone === m.key ? ' on' : ''}`);
+    card.setAttribute('role', 'button'); card.tabIndex = 0;
+    card.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === card) { e.preventDefault(); card.click(); } });
     card.title = ui.milestone === m.key ? tr('Show all tickets') : tr("Show only this milestone's tickets");
-    card.addEventListener('click', e => { if (e.target.closest('a')) return; ui.milestone = ui.milestone === m.key ? null : m.key; renderBacklog(); });
+    card.addEventListener('click', e => { if (e.target.closest('a, button')) return; ui.milestone = ui.milestone === m.key ? null : m.key; renderBacklog(); });
     const top = el('div', 'bl-ms-top');
     top.append(el('span', 'num bl-ms-key', m.key.slice(p.key.length + 1)), el('span', `bl-ms-state ms-${m.status}`, MS_LABEL[m.status] || m.status));
     if (m.due) { const due = el('span', 'bl-ms-due', tr('due {date}', { date: m.due })); if (m.due < new Date().toISOString().slice(0, 10) && !['reached', 'showcased'].includes(m.status)) due.classList.add('late'); top.append(due); }
@@ -712,6 +724,7 @@ function roadmap(p) {
     const meta = el('div', 'bl-ms-meta'); meta.append(el('span', null, msTrigger(m)));
     if (m.showcase_kind && m.showcase_kind !== 'none') meta.append(el('span', null, tr('showcase: {kind}', { kind: m.showcase_kind })));
     card.append(meta, progress(tks));
+    if (m.status === 'showcased') card.append(msActions(m));
     if (m.showcases?.length) card.append(showcaseItems(m));
     else if (m.showcase_ticket) {
       const st = bl.byKey.get(m.showcase_ticket);
@@ -800,7 +813,9 @@ function needsYouPanel(tks) {
   for (const m of ms) {
     const row = el('div', 'bl-needs-row');
     const title = linkTo(el('a', 'bl-needs-title'), projPath(m.project)); title.append(el('span', 'num', m.key), el('span', null, m.title));
-    row.append(title, el('span', 'bl-needs-why', tr('Review the showcase, then accept or reopen')), el('div', 'bl-needs-act'));
+    const act = msActions(m); act.className = 'bl-needs-act';
+    if (!showcasePage(m)) { const a = linkTo(el('a', 'btn bl-act', tr('See showcase')), projPath(m.project)); a.title = tr("The milestone card on the project's roadmap"); act.prepend(a); }
+    row.append(title, el('span', 'bl-needs-why', tr('Review the showcase, then accept or reopen')), act);
     box.append(row);
   }
   return box;

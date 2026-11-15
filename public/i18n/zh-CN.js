@@ -568,4 +568,12 @@ export default {
   "Needs me": "需要我",
   "Tickets waiting on you: reviews, decisions and handoffs": "等你处理的工单：审阅、决定和交接",
   "Tickets that failed and need a retry, a fix or a cancel": "失败的工单，需要重试、修复或取消",
+  "Accepted": "已接受",
+  "Accept": "接受",
+  "Open showcase": "打开成果展示",
+  "See showcase": "查看成果展示",
+  "The showcase page on arti": "arti 上的成果展示页",
+  "The showcase looks good: mark the milestone accepted": "成果展示没问题：把里程碑标为已接受",
+  "Not good enough: put the milestone back to active": "还不够好：把里程碑退回进行中",
+  "The milestone card on the project's roadmap": "项目路线图上的里程碑卡片",
 };
