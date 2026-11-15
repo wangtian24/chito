@@ -722,6 +722,8 @@ function roadmap(p) {
     if (m.due) { const due = el('span', 'bl-ms-due', tr('due {date}', { date: m.due })); if (m.due < new Date().toISOString().slice(0, 10) && !['reached', 'showcased'].includes(m.status)) due.classList.add('late'); top.append(due); }
     card.append(top, el('div', 'bl-ms-title', m.title));
     const meta = el('div', 'bl-ms-meta'); meta.append(el('span', null, msTrigger(m)));
+    // When it was reached: '3h ago', the exact time on hover.
+    if (m.reached && ['reached', 'showcased', 'accepted'].includes(m.status)) { const d = el('span', 'bl-ms-done', tr('done {ago}', { ago: ctx.fmtRelAgo(m.reached) })); d.title = ctx.fmtDateTime(m.reached); meta.append(d); }
     if (m.showcase_kind && m.showcase_kind !== 'none') meta.append(el('span', null, tr('showcase: {kind}', { kind: m.showcase_kind })));
     card.append(meta, progress(tks));
     if (m.status === 'showcased') card.append(msActions(m));
