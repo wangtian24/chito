@@ -129,3 +129,21 @@ test('the board still works with storage blocked', { skip }, async () => {
   await ctx2.close();
   assert.deepEqual(errs, []);
 });
+
+test('search finds a ticket by key and Enter opens it; the session header links back to it', { skip }, async t => {
+  const b = await (await fetch(BASE + '/api/backlog')).json();
+  const tk = b.available && b.tickets.find(x => (x.sessions || []).some(s => s.role === 'worker' && !s.missing));
+  if (!tk) return t.skip('no backlog with linked sessions here');
+  const sid = tk.sessions.find(s => s.role === 'worker' && !s.missing).id;
+  await page.goto(BASE + '/');
+  await page.fill('#q', tk.key);
+  await page.waitForSelector(`.ticket-hit[href="/projects/${tk.project}/${tk.key}"]`);
+  await page.press('#q', 'Enter');
+  await page.waitForURL(u => new URL(u).pathname === `/projects/${tk.project}/${tk.key}`);
+  await page.waitForSelector(`#bl-drawer:not([hidden]) .bl-d-sess[href="/s/${sid}"]`);
+  await page.click(`.bl-d-sess[href="/s/${sid}"]`);
+  await page.waitForURL(u => new URL(u).pathname === `/s/${sid}`);
+  assert.ok(await page.locator('#bl-drawer').isHidden(), 'the ticket panel closes when you leave the board');
+  await page.waitForSelector(`#session-tickets .session-ticket[href="/projects/${tk.project}/${tk.key}"]`);
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'session-tickets.png') });
+});

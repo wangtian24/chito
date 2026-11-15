@@ -48,3 +48,41 @@ test('keys.js is served', async () => {
   assert.equal(r.status, 200);
   assert.match(r.headers.get('content-type'), /javascript/);
 });
+
+// Tickets in search and on sessions. These read the real backlog DB and transcripts, so they skip when there is none.
+async function linkedTicket() {
+  const b = await (await get('/api/backlog')).json();
+  if (!b.available) return null;
+  for (const tk of b.tickets) {
+    const s = (tk.sessions || []).find(x => x.role === 'worker' && !x.missing);
+    if (s) return { tk, sid: s.id };
+  }
+  return null;
+}
+
+test('ticket search finds a key exactly, then by title words', async t => {
+  const hit = await linkedTicket();
+  if (!hit) return t.skip('no backlog with linked sessions here');
+  const { tk } = hit;
+  const byKey = await (await get(`/api/backlog/search?q=${encodeURIComponent(tk.key.toLowerCase())}`)).json();
+  assert.equal(byKey.tickets[0].key, tk.key);
+  assert.equal(byKey.tickets[0].exact, true);
+  assert.equal(byKey.tickets[0].project, tk.project);
+  const words = tk.title.split(/\s+/).filter(w => w.length > 3).slice(0, 2).join(' ');
+  if (words) {
+    const byTitle = await (await get(`/api/backlog/search?q=${encodeURIComponent(words)}`)).json();
+    assert.ok(byTitle.tickets.length <= 8);
+    assert.ok(byTitle.tickets.every(x => (x.key + ' ' + x.title).toLowerCase().includes(words.split(' ')[0].toLowerCase())));
+  }
+  assert.deepEqual((await (await get('/api/backlog/search?q=')).json()).tickets, []);
+});
+
+test('a session lists the tickets it is linked to', async t => {
+  const hit = await linkedTicket();
+  if (!hit) return t.skip('no backlog with linked sessions here');
+  const s = await (await get(`/api/sessions/${hit.sid}`)).json();
+  const mine = s.meta.tickets.find(x => x.key === hit.tk.key);
+  assert.ok(mine, `session ${hit.sid} should link ${hit.tk.key}`);
+  assert.equal(mine.project, hit.tk.project);
+  assert.ok(['worker', 'created', 'touched', 'mentioned'].includes(mine.role));
+});

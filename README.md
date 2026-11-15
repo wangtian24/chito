@@ -33,6 +33,8 @@ scripts/install-launchagent.sh     # start at login; CHITO_NODE=/path/to/node CH
 - Reads `~/.claude/projects/*/*.jsonl`, `~/.pi/agent/sessions/**/*.jsonl`, and `~/.codex/sessions/**/*.jsonl`. Changed transcripts are re-parsed; Claude metadata is also cached on disk in `~/.cache/chito/`.
 - Titles come from `/rename` (`custom-title`), then the AI title, then the first prompt.
 - Search ranks title matches first, then project and first prompt. `p:myapp` filters by project. The query is kept in the URL (`/?q=...`).
+- Search also finds backlog tickets by key (`MC-STYLE-36`) or title words; they list above the sessions and link to the ticket's page, and `↵` on an exact key opens it.
+- A session's header links the tickets it is tied to: the one it worked on (claimed, or its worker prompt), tickets it filed or updated (bl records the session id on each event), and ticket keys named in its title, first prompt, directory or branch. A ticket's side panel lists its sessions the other way.
 - The chat view renders Markdown, collapsible tool calls (input and result loaded when expanded), thinking, images, compaction dividers, background-task notes and PR links.
 - **Details** (`i`) shows start time, last turn time, duration, name, ID, directory, branch, prompt, reply and tool counts, models, tokens, top tools, PRs, CLI version and transcript path.
 - **Open in terminal** (`o`) opens iTerm (or Terminal.app) with the corresponding CLI's resume command. The sidebar's source menu shows all sessions or one CLI at a time.

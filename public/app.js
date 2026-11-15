@@ -2,7 +2,7 @@ import { marked } from '/vendor/marked.js';
 import DOMPurify from '/vendor/purify.js';
 import { makeChords } from '/keys.js';
 import { t, tp, lang, LOCALE, setLang, applyStatic } from '/i18n.js';
-import { initBacklog, renderBacklog, parseBacklogPath, startBacklogPolling, stopBacklogPolling, closeDrawer } from '/backlog.js';
+import { initBacklog, renderBacklog, parseBacklogPath, startBacklogPolling, stopBacklogPolling, closeDrawer, stateIcon } from '/backlog.js';
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -23,6 +23,7 @@ const store = {
 const state = {
   sessions: [],
   filtered: [],
+  ticketHits: [],
   cursor: -1,
   activeId: null,
   active: null, // { meta, items }
@@ -125,9 +126,56 @@ function parseQuery(q) {
   return { terms, proj };
 }
 
+// ---------- ticket search ----------
+// The sidebar search also looks up backlog tickets by key or title; matches show above the sessions.
+const ticketPath = tk => `/projects/${encodeURIComponent(tk.project)}/${encodeURIComponent(tk.key)}`;
+function openTicket(tk) {
+  history.pushState({}, '', ticketPath(tk));
+  route();
+}
+let ticketQ = null, ticketTimer = null;
+function searchTicketsSoon(q) {
+  q = q.trim();
+  if (q === ticketQ) return;
+  ticketQ = q;
+  clearTimeout(ticketTimer);
+  if (!q) { state.ticketHits = []; return; }
+  ticketTimer = setTimeout(async () => {
+    let hits = [];
+    try { hits = (await (await fetch(`/api/backlog/search?q=${encodeURIComponent(q)}`)).json()).tickets || []; } catch { }
+    if (q !== ticketQ) return;
+    state.ticketHits = hits;
+    renderList(true, false);
+  }, 120);
+}
+function ticketHitsSection(terms) {
+  const box = el('div', 'ticket-hits');
+  box.append(el('div', 'group', t('Tickets')));
+  for (const tk of state.ticketHits) {
+    const a = el('a', 'item ticket-hit');
+    a.href = ticketPath(tk);
+    a.title = `${tk.key}: ${tk.title}`;
+    const ti = el('div', 'item-title');
+    const key = el('span', 'ticket-key'), title = el('span', 'ticket-title');
+    key.append(highlight(tk.key, terms));
+    title.append(highlight(tk.title || '', terms));
+    ti.append(stateIcon(tk.state), key, title);
+    a.append(ti);
+    a.addEventListener('click', e => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      openTicket(tk);
+    });
+    box.append(a);
+  }
+  box.append(el('div', 'group', t('Sessions')));
+  return box;
+}
+
 function applyFilter(resetCursor = true, follow = true) {
   const q = $('#q').value;
   const { terms, proj } = parseQuery(q);
+  searchTicketsSoon(terms.length ? q : '');
   let list = state.sessions.filter(s => (state.source === 'all' || (s.source || 'claude') === state.source) && (state.showAgents || !s.agent || s.id === state.activeId));
   if (proj) list = list.filter(s => (s.project || '').toLowerCase().includes(proj));
   if (terms.length) {
@@ -265,6 +313,7 @@ function renderList(searching, follow = true) {
   const shown = state.sessions.filter(s => (state.source === 'all' || (s.source || 'claude') === state.source) && (state.showAgents || !s.agent)).length;
   $('#count').textContent = searching ? `${state.filtered.length} / ${shown}` : `${shown}`;
   if (!searching) list.append(pinZone());
+  if (searching && state.ticketHits?.length) list.append(ticketHitsSection(terms));
   if (!state.filtered.length && !state.olderCount) { list.append(el('div', 'list-empty', t('No sessions match.'))); return; }
   let lastGroup = null;
   let olderShown = false;
@@ -411,7 +460,7 @@ function setHeader(meta) {
   $('#actions').hidden = !meta;
   $('#composer').hidden = !meta;
   if (meta) updateComposerHint();
-  if (!meta) { $('#title').textContent = t('Select a session'); $('#subtitle').textContent = ''; return; }
+  if (!meta) { $('#title').textContent = t('Select a session'); $('#subtitle').textContent = ''; renderSessionTickets(null); return; }
   $('#title').textContent = meta.title;
   $('#title').title = meta.title;
   const sub = $('#subtitle');
@@ -425,11 +474,48 @@ function setHeader(meta) {
   const n = el('span', 'count');
   n.append(el('span', 'num', String(meta.userTurns)), meta.userTurns === 1 ? t(' prompt') : t(' prompts'));
   sub.append(n);
+  renderSessionTickets(meta.tickets);
   updateToolsButton();
   updatePinButton();
   const live = meta.live ?? state.sessions.find(s => s.id === meta.id)?.live;
   $('#b-open span').textContent = live ? t('Focus terminal') : t('Open in terminal');
   $('#b-open').title = live ? t('Running now (pid {pid}): focus its terminal (o)', { pid: live.pid }) : t('Reopen in terminal (o)');
+}
+
+// The backlog tickets this session worked on, filed or mentions, as links to their pages.
+// The server lists them worked-on first, then named, then updated, then filed; titles show when there are few.
+const SESSION_TICKET_MAX = 6;
+function renderSessionTickets(tickets) {
+  const box = $('#session-tickets');
+  box.textContent = '';
+  box.hidden = !tickets?.length;
+  if (!tickets?.length) return;
+  const roleLabel = { worker: t('worked on here'), created: t('filed here'), touched: t('updated here'), mentioned: t('named in this session') };
+  const main = tickets.filter(x => x.role !== 'created'), filed = tickets.filter(x => x.role === 'created');
+  const withTitles = main.length <= 2;
+  const link = (tk, showTitle) => {
+    const a = el('a', 'session-ticket');
+    a.href = ticketPath(tk);
+    a.title = `${tk.key}: ${tk.title} (${roleLabel[tk.role] || tk.role})`;
+    a.append(stateIcon(tk.state), el('span', 'ticket-key', tk.key));
+    if (showTitle) a.append(el('span', 'ticket-title', tk.title));
+    a.addEventListener('click', e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); openTicket(tk); });
+    return a;
+  };
+  const all = [...main.map(x => [x, withTitles]), ...filed.map(x => [x, false])];
+  const expanded = box.dataset.expanded === state.activeId;
+  const shown = expanded ? all : all.slice(0, SESSION_TICKET_MAX);
+  box.append(el('span', 'session-tickets-label', main.length ? tp(main.length, 'Ticket', 'Tickets') : t('Filed')));
+  shown.forEach(([tk, showTitle], i) => {
+    if (main.length && tk.role === 'created' && (i === 0 || shown[i - 1][0].role !== 'created')) box.append(el('span', 'session-tickets-label', t('Filed')));
+    box.append(link(tk, showTitle));
+  });
+  if (all.length > shown.length) {
+    const more = el('button', 'chip', t('+{n} more', { n: all.length - shown.length }));
+    more.type = 'button';
+    more.addEventListener('click', () => { box.dataset.expanded = state.activeId; renderSessionTickets(tickets); });
+    box.append(more);
+  }
 }
 
 function toolArg(name, input) {
@@ -1172,6 +1258,8 @@ function setView(view) {
   document.body.classList.toggle('view-backlog', view === 'backlog');
   $('#board').hidden = view !== 'artifacts';
   $('#backlog').hidden = view !== 'backlog';
+  // A ticket's side panel belongs to the board; leaving the board (say, through one of its session links) closes it.
+  if (view !== 'backlog') $('#bl-drawer').hidden = true;
   if (view === 'backlog') { renderBacklog(); startBacklogPolling(); } else stopBacklogPolling();
   document.querySelectorAll('.views .view-tab').forEach(t => {
     if (t.dataset.view === view) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
@@ -1289,7 +1377,12 @@ document.addEventListener('keydown', e => {
   if (inSearch) {
     if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) { e.preventDefault(); moveCursor(1); }
     else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) { e.preventDefault(); moveCursor(-1); }
-    else if (e.key === 'Enter') { e.preventDefault(); const s = state.filtered[state.cursor]; if (s) { openSession(s.id); $('#q').blur(); } }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      const exact = state.ticketHits?.find(x => x.exact && x.key.toLowerCase() === $('#q').value.trim().toLowerCase());
+      if (exact) { openTicket(exact); $('#q').blur(); return; }
+      const s = state.filtered[state.cursor]; if (s) { openSession(s.id); $('#q').blur(); }
+    }
     return;
   }
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input, textarea')) return;

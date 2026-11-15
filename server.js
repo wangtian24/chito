@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { scan, getMeta, getOtherItems, HOME, PROJECTS_DIR } from './lib/index.js';
 import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
-import { backlogSummary, backlogTicket, showcaseFile } from './lib/backlog.js';
+import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, searchTickets } from './lib/backlog.js';
 import { workerModel } from './lib/worker-models.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -301,6 +301,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { prs, github: { ok: !error, error } });
     }
     if (p === '/api/backlog' && req.method === 'GET') return send(res, 200, { ...(await backlogSummary()), artiBase: ARTI_BASE });
+    if (p === '/api/backlog/search' && req.method === 'GET') return send(res, 200, { tickets: await searchTickets(url.searchParams.get('q') || '') });
     if (p === '/api/backlog/showcase' && req.method === 'GET') {
       let file = null;
       try { file = showcaseFile(url.searchParams.get('f') || ''); } catch { file = null; }
@@ -376,7 +377,8 @@ const server = http.createServer(async (req, res) => {
       }
       const items = meta.source ? getOtherItems(id) : loadTranscript(meta.file);
       const live = meta.source ? null : liveSessions().get(id) || null;
-      return send(res, 200, { meta: { ...meta, live, bg: bgInfo(id), resumeCommand: resumeCommand(meta), cwdExists: !!meta.cwd && fs.existsSync(meta.cwd) }, items });
+      const tickets = await sessionTickets(meta).catch(() => []);
+      return send(res, 200, { meta: { ...meta, live, bg: bgInfo(id), tickets, resumeCommand: resumeCommand(meta), cwdExists: !!meta.cwd && fs.existsSync(meta.cwd) }, items });
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {
