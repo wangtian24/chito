@@ -2,6 +2,7 @@ import { marked } from '/vendor/marked.js';
 import DOMPurify from '/vendor/purify.js';
 import { makeChords } from '/keys.js';
 import { t, tp, lang, LOCALE, setLang, applyStatic } from '/i18n.js';
+import { initDeploy, renderDeploy, startDeployPolling, stopDeployPolling } from '/deploy.js';
 import { initBacklog, renderBacklog, parseBacklogPath, startBacklogPolling, stopBacklogPolling, closeDrawer, stateIcon } from '/backlog.js';
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -1256,11 +1257,14 @@ function setView(view) {
   state.view = view;
   document.body.classList.toggle('view-artifacts', view === 'artifacts');
   document.body.classList.toggle('view-backlog', view === 'backlog');
+  document.body.classList.toggle('view-deploy', view === 'deploy');
   $('#board').hidden = view !== 'artifacts';
   $('#backlog').hidden = view !== 'backlog';
   // A ticket's side panel belongs to the board; leaving the board (say, through one of its session links) closes it.
   if (view !== 'backlog') $('#bl-drawer').hidden = true;
+  $('#deploy').hidden = view !== 'deploy';
   if (view === 'backlog') { renderBacklog(); startBacklogPolling(); } else stopBacklogPolling();
+  if (view === 'deploy') { document.title = `${t('Deployment')} · chito`; renderDeploy(); startDeployPolling(); } else stopDeployPolling();
   document.querySelectorAll('.views .view-tab').forEach(t => {
     if (t.dataset.view === view) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
   });
@@ -1274,7 +1278,7 @@ $('#board-refresh').addEventListener('click', async () => { toast(t('Refreshing 
 document.querySelectorAll('.views .view-tab').forEach(t => t.addEventListener('click', e => {
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
-  const path = { artifacts: '/artifacts', backlog: '/projects' }[t.dataset.view] || '/';
+  const path = { artifacts: '/artifacts', backlog: '/projects', deploy: '/deploy' }[t.dataset.view] || '/';
   if (location.pathname !== path) history.pushState({}, '', path);
   route();
 }));
@@ -1332,7 +1336,7 @@ function syncSettings() {
   const cur = document.documentElement.dataset.theme;
   document.querySelectorAll('#presets .preset').forEach(b => b.setAttribute('aria-checked', String(b.dataset.preset === cur)));
   const val = { work: state.workMode, tools: state.toolMode, agents: state.showAgents ? 'show' : 'hide' };
-  document.querySelectorAll('#settings .seg').forEach(seg => seg.querySelectorAll('button').forEach(b => {
+  document.querySelectorAll('#settings .seg[data-opt]').forEach(seg => seg.querySelectorAll('button').forEach(b => {
     b.setAttribute('role', 'radio');
     b.setAttribute('aria-checked', String(b.dataset.v === val[seg.dataset.opt]));
   }));
@@ -1356,6 +1360,7 @@ function closeSettings() { $('#settings').hidden = true; }
 // ---------- keyboard ----------
 const chord = makeChords({
   'g p': () => { if (location.pathname !== '/projects') history.pushState({}, '', '/projects'); route(); },
+  'g d': () => { if (location.pathname !== '/deploy') history.pushState({}, '', '/deploy'); route(); },
 });
 document.addEventListener('keydown', e => {
   const inSearch = document.activeElement === $('#q');
@@ -1435,7 +1440,6 @@ applyStatic();
 document.querySelectorAll('#lang-switch button').forEach(b => {
   b.setAttribute('role', 'radio');
   b.setAttribute('aria-checked', String(b.dataset.lang === lang));
-  b.title = b.dataset.lang === 'zh' ? '切换到中文' : 'Switch to English';
   b.addEventListener('click', () => { if (b.dataset.lang !== lang) setLang(b.dataset.lang); });
 });
 $('#q').addEventListener('input', () => {
@@ -1479,6 +1483,7 @@ if (qTheme && PRESETS.some(p => p.id === qTheme)) document.documentElement.datas
 updateWorkButton();
 $('#b-open').addEventListener('click', reopen);
 $('#b-pin').addEventListener('click', () => togglePin());
+initDeploy({ toast, fmtRelAgo, fmtDateTime, navigate: p => { history.pushState({}, '', p); route(); } });
 initBacklog({ openSession: id => openSession(id), toast, fmtRel: fmtRelShow, fmtRelAgo, fmtDateTime, getPr: url => state.prMap.get(url)?.gh || null });
 $('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, t('resume command')));
 $('#b-link').addEventListener('click', () => copy(`${location.origin}/s/${state.activeId}`, t('permalink')));
@@ -1490,7 +1495,8 @@ function route() {
   const m = location.pathname.match(/^\/s\/([0-9a-f-]{36})/i);
   const artifacts = location.pathname === '/artifacts';
   const backlog = !!parseBacklogPath(location.pathname);
-  setView(artifacts ? 'artifacts' : backlog ? 'backlog' : 'sessions');
+  const deploy = location.pathname === '/deploy';
+  setView(artifacts ? 'artifacts' : backlog ? 'backlog' : deploy ? 'deploy' : 'sessions');
   if (m) {
     if (m[1] !== state.activeId) openSession(m[1], { push: false });
     else if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) scrollWithin($('#convo'), t); }
@@ -1500,7 +1506,7 @@ function route() {
     document.body.classList.remove('has-session');
     $('#thread').textContent = '';
     setHeader(null);
-    if (!artifacts && !backlog) { document.title = 'chito'; renderLanding(); }
+    if (!artifacts && !backlog && !deploy) { document.title = 'chito'; renderLanding(); }
   }
 }
 window.addEventListener('popstate', route);
