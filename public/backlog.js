@@ -72,6 +72,26 @@ function index(d) {
     if (bl.blockers.has(e.ticket)) bl.blockers.get(e.ticket).push(e.blocker);
     if (bl.dependents.has(e.blocker)) bl.dependents.get(e.blocker).push(e.ticket);
   }
+  // Direct links only, for display: a blocker reached through another of the ticket's blockers is
+  // left out (A waits on B and C, and C waits on B: A shows only C). Same for the tickets it blocks.
+  const reach = (edges) => {
+    const memo = new Map();
+    const of = (k, seen = new Set()) => {
+      if (memo.has(k)) return memo.get(k);
+      if (seen.has(k)) return new Set(); seen.add(k);
+      const r = new Set();
+      for (const n of edges.get(k) || []) { r.add(n); for (const x of of(n, seen)) r.add(x); }
+      memo.set(k, r); return r;
+    };
+    return of;
+  };
+  const anc = reach(bl.blockers), desc = reach(bl.dependents);
+  const direct = (list, far) => list.filter(b => !list.some(c => c !== b && far(c).has(b)));
+  bl.directBlockers = new Map(); bl.directDependents = new Map();
+  for (const t of d.tickets) {
+    bl.directBlockers.set(t.key, direct(bl.blockers.get(t.key), anc));
+    bl.directDependents.set(t.key, direct(bl.dependents.get(t.key), desc));
+  }
   // Depth = longest chain of blockers inside the graph; order = topological, then priority, then id.
   bl.depth = new Map();
   const visit = (k, seen = new Set()) => {
@@ -835,7 +855,7 @@ function card(t, inPlace = false) {
   if (t.priority <= 1) top.append(el('span', `bl-prio p${t.priority}`, t.priority === 0 ? tr('Urgent') : tr('High')));
   c.append(top, el('div', 'bl-card-title', t.title));
   const meta = el('div', 'bl-card-meta');
-  const bs = (bl.blockers.get(t.key) || []).filter(b => !FINAL.has(bl.byKey.get(b)?.state ?? 'done'));
+  const bs = (bl.directBlockers.get(t.key) || []).filter(b => !FINAL.has(bl.byKey.get(b)?.state ?? 'done'));
   if (t.state === 'todo') {
     if (bs.length) meta.append(el('span', 'wait', tr('Waits on {keys}', { keys: bs.map(b => b.startsWith(t.project + '-') ? b.slice(t.project.length + 1) : b).join(', ') })));
     else if (t.assignee === 'human') meta.append(el('span', 'bad', tr('Needs you')));
@@ -1240,8 +1260,8 @@ const COLS = [
   ['key', tr('Key'), t => [t.project, t.id]],
   ['title', tr('Title'), t => t.title.toLowerCase()],
   ['state', tr('State'), t => STATES.indexOf(t.state)],
-  ['deps', tr('Waits on'), t => (bl.blockers.get(t.key) || []).length],
-  ['blocks', tr('Blocks'), t => (bl.dependents.get(t.key) || []).length],
+  ['deps', tr('Waits on'), t => (bl.directBlockers.get(t.key) || []).length],
+  ['blocks', tr('Blocks'), t => (bl.directDependents.get(t.key) || []).length],
   ['priority', tr('P'), t => t.priority],
   ['attempts', tr('Tries'), t => t.attempts],
   ['who', tr('Who'), t => t.claimed_by || t.assignee || ''],
@@ -1360,8 +1380,8 @@ function table(tks) {
       const dot = el('i', `bl-node-dot bl-${t.state}`); dot.style.left = `${x(g.depth) - DOT}px`; tcell.append(dot);
     }
     td('c-state', statePill(t.state), ...(needsYou(t) ? [el('span', 'bl-needs-tag', tr('Needs you'))] : isReady(t) ? [el('span', 'bl-ready', tr('ready'))] : isBlocked(t) ? [el('span', 'bl-blocked', tr('blocked'))] : []));
-    if (on('deps')) td('c-deps', ...(bl.blockers.get(t.key) || []).map(k => depChip(k, t.project)));
-    if (on('blocks')) td('c-blocks', ...(bl.dependents.get(t.key) || []).map(k => depChip(k, t.project)));
+    if (on('deps')) td('c-deps', ...(bl.directBlockers.get(t.key) || []).map(k => depChip(k, t.project)));
+    if (on('blocks')) td('c-blocks', ...(bl.directDependents.get(t.key) || []).map(k => depChip(k, t.project)));
     if (on('priority')) td(`c-priority num p${t.priority}`, String(t.priority));
     if (on('attempts')) td('c-attempts num', t.attempts ? `${t.attempts}${t.max_attempts ? '/' + t.max_attempts : ''}` : '');
     if (on('who')) td('c-who', el('span', 'bl-who', t.claimed_by ? executorOf(t)[0] : (t.assignee || '')));
@@ -1454,8 +1474,10 @@ function drawDrawer(box, t) {
 
   if (t.blockers.length || t.dependents.length) {
     const deps = el('div', 'bl-d-deps');
-    if (t.blockers.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', tr('Waits on')), ...t.blockers.map(b => depChip(b.key))); deps.append(r); }
-    if (t.dependents.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', tr('Blocks')), ...t.dependents.map(b => depChip(b.key))); deps.append(r); }
+    const near = (list, m) => { const k = m?.get(t.key); return k ? list.filter(b => k.includes(b.key)) : list; };
+    const wb = near(t.blockers, bl.directBlockers), bk = near(t.dependents, bl.directDependents);
+    if (wb.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', tr('Waits on')), ...wb.map(b => depChip(b.key))); deps.append(r); }
+    if (bk.length) { const r = el('div'); r.append(el('span', 'bl-d-lbl', tr('Blocks')), ...bk.map(b => depChip(b.key))); deps.append(r); }
     box.append(deps);
   }
 
