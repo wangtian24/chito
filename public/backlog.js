@@ -544,6 +544,10 @@ function execLine(p, compact) {
   const ex = p.execution || {};
   const box = el('div', 'bl-execline');
   if (p.status !== 'executing') return null;
+  if (p.quota?.until) {
+    box.classList.add('warn');
+    box.append(el('span', null, tr('Usage limit: new work paused until {until}', { until: ctx.fmtDateTime(p.quota.until) })));
+  }
   if (p.executor === 'auto') {
     const d = bl.data.daemon;
     const o = ex.orchestrator;
@@ -1031,6 +1035,12 @@ function renderProject(root, p) {
   const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), lifecycleButtons(p, false));
   root.append(ctl);
   const exl = execLine(p, false); if (exl) root.append(exl);
+  if (p.quota?.until) {
+    const q = el('div', 'bl-quota');
+    q.append(el('b', null, tr('Usage limit hit.')), tr(' New tickets in this project wait until {until}. Running work can finish.', { until: ctx.fmtDateTime(p.quota.until) }));
+    q.append(actBtn(tr('Retry now'), 'quota-clear', p.quota.scope === 'project' ? p.key : null, null, { title: tr('Clear the pause; the next claims try again') }));
+    root.append(q);
+  }
   root.append(instructionsBox(p));
   if (tks.some(t => t.state === 'in_progress')) root.append(el('h2', 'bl-h2', tr('In flight')), inFlight(tks));
 

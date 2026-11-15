@@ -282,6 +282,8 @@ export default {
   "{n} runs today": "今天运行 {n} 次",
   "up to {n} at once": "最多同时 {n} 个",
   "Usage limit hit.": "用量已达上限。",
+  "Usage limit: new work paused until {until}": "用量已达上限：新任务暂停至 {until}",
+  " New tickets in this project wait until {until}. Running work can finish.": " 该项目的新工单等待至 {until}。正在运行的工作可以完成。",
   " Nothing new starts until {until}; the tickets that hit it went back to todo without using an attempt.": " {until} 之前不会启动新任务；触发上限的工单已退回待开始，不计尝试次数。",
   " Last: {key}.": " 最近一个：{key}。",
   "Retry now": "立即重试",
