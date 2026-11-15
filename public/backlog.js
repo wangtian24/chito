@@ -58,7 +58,7 @@ export function statePill(st) {
   s.append(LABEL[st] || st);
   return s;
 }
-const stateIcon = st => { const s = el('span', `bl-ico bl-${st}`); s.title = LABEL[st] || st; s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[st] || ICON.todo}</svg>`; return s; };
+export const stateIcon = st => { const s = el('span', `bl-ico bl-${st}`); s.title = LABEL[st] || st; s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[st] || ICON.todo}</svg>`; return s; };
 
 // A row of facts separated by space, not punctuation.
 const factRow = (cls, ...parts) => { const m = el('span', `bl-meta${cls ? ' ' + cls : ''}`); for (const x of parts.filter(v => v != null && v !== '')) m.append(typeof x === 'string' ? el('span', null, x) : x); return m; };
