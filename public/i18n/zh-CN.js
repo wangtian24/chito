@@ -563,4 +563,9 @@ export default {
   "A simple web UI for Claude Code, Pi, and Codex. It lists the sessions on this machine, shows each one as a conversation, gives every session and message a permalink, and reopens a session in your terminal.": "一个简单的 Claude Code、Pi 和 Codex 网页界面。它列出本机上的会话，把每个会话显示为对话，为每个会话和消息提供永久链接，并能在终端中重新打开会话。",
   "It runs locally and reads transcripts from each CLI's session directory. Nothing is sent anywhere.": "它在本地运行，读取各个 CLI 会话目录中的记录，不会向任何地方发送数据。",
   "chito is open source and public under the MIT license. Code, issues and changes live at <a href=\"https://github.com/wangtian24/chito\" target=\"_blank\" rel=\"noopener\">github.com/wangtian24/chito</a>.": "chito 以 MIT 许可证开源。代码、问题和变更都在 <a href=\"https://github.com/wangtian24/chito\" target=\"_blank\" rel=\"noopener\">github.com/wangtian24/chito</a>。",
+  "Show under collapsed projects": "折叠的项目下显示",
+  "Tickets running now": "正在运行的工单",
+  "Needs me": "需要我",
+  "Tickets waiting on you: reviews, decisions and handoffs": "等你处理的工单：审阅、决定和交接",
+  "Tickets that failed and need a retry, a fix or a cancel": "失败的工单，需要重试、修复或取消",
 };
