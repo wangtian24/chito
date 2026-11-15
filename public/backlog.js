@@ -43,6 +43,11 @@ const ui = { page: 'lanes', closedBy: { project: savedClosed('project'), lanes: 
   get closed() { return this.closedBy[this.page] || 'none'; } };
 function setClosed(v) { if (!VIEW_KEYS[ui.page]) return; ui.closedBy[ui.page] = v; store.set(VIEW_KEYS[ui.page][0], v); }
 const saveCollapsed = () => store.set('blLanesCollapsed', [...ui.collapsed]);
+// What a collapsed lane lists under its project row: tickets in flight, ones that need you, failed ones. All on by default.
+const ROW_KINDS = ['flight', 'you', 'failed'];
+const savedRows = () => { const v = store.get('blLanesRows', ROW_KINDS); return new Set(Array.isArray(v) ? v.filter(k => ROW_KINDS.includes(k)) : ROW_KINDS); };
+ui.rows = savedRows();
+const saveRows = () => store.set('blLanesRows', [...ui.rows]);
 try { for (const k of ['blCollapsed', 'blClosed2', 'blSort']) localStorage.removeItem('chito.' + k); } catch { }
 ui.refresh = store.get('blRefresh', 60);
 ui.finSort = { col: 'finished', dir: -1 };
@@ -137,7 +142,7 @@ export function parseBacklogPath(pathname) {
 }
 
 function go(path) {
-  if (location.pathname !== path) history.pushState({}, '', path);
+  if (location.pathname + location.search !== path) history.pushState({}, '', path);
   renderBacklog();
 }
 
@@ -151,6 +156,9 @@ function linkTo(a, path) {
 }
 const projPath = p => `/projects/${encodeURIComponent(p)}`;
 const ticketPath = t => `/projects/${encodeURIComponent(t.project)}/${encodeURIComponent(t.key)}`;
+// On the Projects tab a ticket opens in the side panel right there (?ticket=KEY), without going into its project.
+const inPlacePath = t => { const u = new URL(location.href); u.searchParams.set('ticket', t.key); return u.pathname + u.search; };
+const queryTicket = () => new URLSearchParams(location.search).get('ticket');
 
 function sessionLink(s, label) {
   const a = el('a', 'bl-sess');
@@ -184,7 +192,8 @@ export function renderBacklog() {
   if (route.project && !project) { root.append(head(tr('Projects'), ''), el('div', 'prs-empty', tr('No project {key}.', { key: route.project }))); }
   else if (project) { document.title = `${project.key} · ${tr('Projects')} · chito`; renderProject(root, project); }
   else { document.title = `${tr('Projects')} · chito`; renderLanes(root); }
-  renderDrawer(route.ticket ? route.ticket.toUpperCase() : null);
+  const inPlace = !route.project && queryTicket();
+  renderDrawer(route.ticket ? route.ticket.toUpperCase() : inPlace ? inPlace.toUpperCase() : null);
 }
 
 function head(title, sub, extra) {
@@ -800,9 +809,9 @@ function needsYouPanel(tks) {
 // ---- swim lanes ----
 const LANE_COLS = ['backlog', 'todo', 'in_progress', 'in_review', 'failed', 'done'];
 
-function card(t) {
-  const c = el('a', `bl-card bl-${t.state}${isBlocked(t) ? ' blocked' : ''}${needsYou(t) ? ' needs-you' : ''}`);
-  linkTo(c, ticketPath(t));
+function card(t, inPlace = false) {
+  const c = el('a', `bl-card bl-${t.state}${isBlocked(t) ? ' blocked' : ''}${needsYou(t) ? ' needs-you' : ''}${inPlace && queryTicket() === t.key ? ' sel' : ''}`);
+  linkTo(c, inPlace ? inPlacePath(t) : ticketPath(t));
   const top = el('div', 'bl-card-top');
   const kk = el('span', 'bl-key num', t.key.slice(t.project.length + 1)); kk.title = t.key;
   top.append(stateIcon(t.state), kk);
@@ -888,6 +897,7 @@ function renderLanes(root) {
   tog.title = allCollapsed ? tr("Show every project's tickets") : tr('Show projects only');
   tog.addEventListener('click', () => { if (allCollapsed) visible.forEach(k => ui.collapsed.delete(k)); else visible.forEach(k => ui.collapsed.add(k)); saveCollapsed(); renderBacklog(); });
   ctl.insertBefore(tog, ctl.querySelector('.bl-cap'));
+  if (visible.some(k => ui.collapsed.has(k)) && !finishedMode()) ctl.insertBefore(rowToggles(), tog);
   root.append(ctl);
   if (finishedMode()) {   // one flat list across projects, newest finished first
     tog.remove();
@@ -905,7 +915,7 @@ function renderLanes(root) {
     const n = visibleTickets(all).filter(t => t.state === st && matches(t)).length; if (n) h.append(el('span', 'num', String(n)));
     hdr.append(h);
   }
-  if (!(visible.length && visible.every(k => ui.collapsed.has(k)))) grid.append(hdr);
+  if (!(visible.length && visible.every(k => ui.collapsed.has(k)))) grid.append(hdr); else grid.classList.add('all-collapsed');
   if (!projects.length) grid.append(el('div', 'prs-empty', tr('No projects yet. Create one with bl project add.')));
   for (const p of projects) {
     const tks = all.filter(t => t.project === p.key);
@@ -922,7 +932,7 @@ function renderLanes(root) {
     const name = linkTo(el('a', 'bl-lane-name'), projPath(p.key));
     name.append(el('span', 'bl-lane-key num', p.key), el('span', 'bl-lane-title', p.name));
     const nameRow = el('div', 'bl-lane-namerow'); nameRow.append(chev, name);
-    if (collapsed) { grid.append(compactLane(p, tks, shown, nameRow)); continue; }
+    if (collapsed) { grid.append(compactLane(p, tks, shown, nameRow, true)); continue; }
     const badges = el('div', 'bl-lane-badges'); badges.append(...laneBadges(p));
     side.append(nameRow, badges, progress(tks));
     const nm = nextMilestone(p);
@@ -944,7 +954,7 @@ function renderLanes(root) {
       let list = shown.filter(t => t.state === st).sort((a, b) => bl.order.get(a.key) - bl.order.get(b.key));
       if (st === 'done') list = list.sort((a, b) => ((b.finished || '') > (a.finished || '') ? 1 : -1));
       const cap = st === 'done' ? 4 : 50;
-      for (const t of list.slice(0, cap)) col.append(card(t));
+      for (const t of list.slice(0, cap)) col.append(card(t, true));
       if (list.length > cap) col.append(linkTo(el('a', 'bl-more', tr('{n} more', { n: list.length - cap })), projPath(p.key)));
       lane.append(col);
     }
@@ -955,7 +965,7 @@ function renderLanes(root) {
 
 // ---- compact project rows: the collapsed lanes on Projects, and the read-only list on Overview ----
 // One row per project (name, mode chip, state counts, progress) with its in-flight tickets under it.
-function compactLane(p, tks, shown, nameRow) {
+function compactLane(p, tks, shown, nameRow, inPlace = false) {
   const lane = el('div', 'bl-lane');
   const row = el('div', 'bl-lane-compact');
   const head = el('div', 'bl-compact-head');
@@ -968,17 +978,54 @@ function compactLane(p, tks, shown, nameRow) {
   head.append(counts, progress(tks));
   row.append(head);
   const run = shown.filter(t => t.state === 'in_progress').sort((a, b) => (a.started || '') < (b.started || '') ? -1 : 1);
-  if (run.length) {
+  if (!inPlace) {   // Overview: in flight only, as before
+    if (run.length) { const list = el('div', 'bl-compact-run'); for (const t of run) list.append(flightRow(t, p)); row.append(list); }
+    lane.append(row);
+    return lane;
+  }
+  const q = ui.q.trim() ? tks.filter(matches) : tks;
+  const byTime = (a, b) => ((b.changed || b.updated || '') > (a.changed || a.updated || '') ? 1 : -1);
+  const groups = [
+    ['flight', run],
+    ['you', q.filter(t => needsYou(t) && t.state !== 'failed').sort(byTime)],
+    ['failed', q.filter(t => t.state === 'failed').sort(byTime)],
+  ].filter(([k, list]) => ui.rows.has(k) && list.length);
+  if (groups.length) {
     const list = el('div', 'bl-compact-run');
-    for (const t of run) list.append(flightRow(t, p));
+    for (const [k, ts] of groups) for (const t of ts) list.append(k === 'flight' ? flightRow(t, p, true) : waitRow(t, p, k));
     row.append(list);
   }
   lane.append(row);
   return lane;
 }
+// The three toggles for what a collapsed lane lists.
+function rowToggles() {
+  const g = el('div', 'seg bl-row-toggles'); g.setAttribute('role', 'group'); g.setAttribute('aria-label', tr('Show under collapsed projects'));
+  for (const [k, label, tip] of [['flight', tr('In flight'), tr('Tickets running now')], ['you', tr('Needs me'), tr('Tickets waiting on you: reviews, decisions and handoffs')], ['failed', tr('Failed'), tr('Tickets that failed and need a retry, a fix or a cancel')]]) {
+    const b = el('button', `bl-row-tog bl-row-${k}`, label); b.type = 'button'; b.title = tip;
+    b.setAttribute('aria-pressed', String(ui.rows.has(k)));
+    b.addEventListener('click', () => { if (ui.rows.has(k)) ui.rows.delete(k); else ui.rows.add(k); saveRows(); renderBacklog(); });
+    g.append(b);
+  }
+  return g;
+}
+// A ticket waiting on you or failed: key, title, what's asked, how long it has waited, and where to answer.
+function waitRow(t, p, kind) {
+  const r = linkTo(el('a', `bl-compact-row bl-compact-${kind}${queryTicket() === t.key ? ' sel' : ''}`), inPlacePath(t));
+  const kk = el('span', 'num', t.key.slice(p.key.length + 1)); kk.title = t.key;
+  const why = el('span', 'bl-compact-why', needReason(t));
+  const extra = el('span', 'bl-compact-exec', t.state === 'failed' ? trp(t.attempts, '{n} attempt', '{n} attempts') : t.assignee === 'human' ? tr('Human') : LABEL[t.state]);
+  const at = t.changed || t.updated;
+  const ago = el('span', 'num bl-compact-since', at ? ctx.fmtRel(at) : ''); ago.title = at ? ctx.fmtDateTime(at) : '';
+  r.append(stateIcon(t.state), kk, el('span', 'bl-compact-title', t.title), why, extra, ago);
+  const s = t.assignee === 'human' ? answerSession(t) : workerSession(t);
+  if (s?.id) { const a = sessionLink(s, s.title || s.kind || s.id.slice(0, 8)); a.classList.add('bl-compact-sess'); r.append(a); }
+  else r.append(el('span', 'bl-compact-sess none', ''));
+  return r;
+}
 // An in-flight ticket: key, title, the worker's model and executor, how long it has run, and its session.
-function flightRow(t, p) {
-  const r = linkTo(el('a', 'bl-compact-row'), ticketPath(t));
+function flightRow(t, p, inPlace = false) {
+  const r = linkTo(el('a', `bl-compact-row${inPlace && queryTicket() === t.key ? ' sel' : ''}`), inPlace ? inPlacePath(t) : ticketPath(t));
   const [ex] = executorOf(t);
   const since = t.spawn?.at || t.started;
   const model = el('span', 'bl-compact-model', t.spawn?.model || t.meta?.model || '');
@@ -1347,6 +1394,7 @@ function closeBtn() {
 export function closeDrawer() {
   const r = parseBacklogPath(location.pathname);
   if (r?.ticket) { go(projPath(r.project)); return true; }
+  if (r && !r.project && queryTicket()) { const u = new URL(location.href); u.searchParams.delete('ticket'); go(u.pathname + u.search); return true; }
   return false;
 }
 
@@ -1467,7 +1515,7 @@ export function initBacklog(c) {
   document.addEventListener('click', e => {
     const d = $('#bl-drawer');
     if (!d || d.hidden || !e.isTrusted) return;
-    if (e.target.closest('#bl-drawer, .bl-card, .bl-node, .bl-table tbody tr, .bl-chip, .bl-flight-row, .toast, .modal, a[href^="/projects/"]')) return;
+    if (e.target.closest('#bl-drawer, .bl-card, .bl-node, .bl-table tbody tr, .bl-chip, .bl-flight-row, .bl-compact-row, .bl-row-toggles, .toast, .modal, a[href^="/projects/"]')) return;
     if (!document.body.contains(e.target)) return; // re-rendered under the click
     closeDrawer();
   });

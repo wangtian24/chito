@@ -1348,3 +1348,13 @@ html:lang(zh-CN) { --meta-style: normal; }
 html:lang(zh-CN) body :not(.brand-name):not(.about-head b) { letter-spacing: normal; }
 html:lang(zh-CN) .work-summary .ws-act::after { content: "展开"; }
 html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"; }
+
+/* Collapsed lanes on Projects: what each lists (in flight, needs me, failed), and rows that open the side panel in place. */
+.bl-row-toggles button[aria-pressed="true"] { background: var(--color-sheet); color: var(--color-ink); box-shadow: var(--shadow-raised); }
+.bl-row-toggles button[aria-pressed="false"] { color: var(--color-muted); }
+.bl-lanes.all-collapsed > .bl-lane:first-child .bl-lane-compact { border-top: 2px solid var(--color-rule-2); }
+.bl-compact-row.bl-compact-you { --c: var(--bl-in_review); }
+.bl-compact-row.bl-compact-failed { --c: var(--bl-failed); }
+.bl-compact-why { font: 500 11.5px var(--font-body); color: var(--bl-failed); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 18rem; }
+.bl-compact-row.sel, .bl-card.sel { background: var(--color-well); box-shadow: inset 2px 0 0 var(--c, var(--color-accent)); }
+@media (max-width: 900px) { .bl-compact-why { display: none; } }
