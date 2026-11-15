@@ -796,6 +796,8 @@ async function openInTerminal(id) {
     ctx.toast(j.action === 'focused' ? tr('Focused its terminal') : j.action === 'forked' ? tr('Still running in the background, so this opened a forked copy; the running session will not see what you type there') : tr('Opened in a terminal'));
   } catch (e) { ctx.toast(tr('Could not open: {error}', { error: e.message })); }
 }
+// '· created 3h ago', the exact time on hover.
+const ago = iso => { const s = el('span', 'bl-needs-ago', ' · ' + tr('created {ago}', { ago: ctx.fmtRelAgo(iso) })); s.title = ctx.fmtDateTime(iso); return s; };
 function needsYouPanel(tks) {
   const items = tks.filter(needsYou);
   const ms = (bl.data.milestones || []).filter(m => m.status === 'showcased' && tks.some(t => t.project === m.project));
@@ -815,6 +817,7 @@ function needsYouPanel(tks) {
     const title = linkTo(el('a', 'bl-needs-title'), ticketPath(t));
     title.append(el('span', 'num', t.key), el('span', null, t.title));
     const why = el('span', 'bl-needs-why', needReason(t));
+    if (t.created) why.append(ago(t.created));
     const act = el('div', 'bl-needs-act');
     const b = t.meta?.brief;
     const sess = answerSession(t);
@@ -837,7 +840,9 @@ function needsYouPanel(tks) {
     const title = linkTo(el('a', 'bl-needs-title'), projPath(m.project)); title.append(el('span', 'num', m.key), el('span', null, m.title));
     const act = msActions(m); act.className = 'bl-needs-act';
     if (!showcasePage(m)) { const a = linkTo(el('a', 'btn bl-act', tr('See showcase')), projPath(m.project)); a.title = tr("The milestone card on the project's roadmap"); act.prepend(a); }
-    row.append(title, el('span', 'bl-needs-why', tr('Review the showcase, then accept or reopen')), act);
+    const mwhy = el('span', 'bl-needs-why', tr('Review the showcase, then accept or reopen'));
+    if (m.created) mwhy.append(ago(m.created));
+    row.append(title, mwhy, act);
     box.append(row);
   }
   return box;

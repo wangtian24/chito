@@ -205,6 +205,7 @@ export default {
   "Only tickets finished (done, canceled or failed) in the last 7 days, across all projects, newest first": "只看最近 7 天结束（完成、取消或失败）的工单，跨所有项目，最新的在前",
   "Tickets": "工单",
   "{n}m ago": "{n}分钟前",
+  "created {ago}": "{ago}创建",
   "done {ago}": "{ago}完成",
   "{n}h ago": "{n}小时前",
   "{h}h {m}m ago": "{h}小时{m}分钟前",

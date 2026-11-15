@@ -1195,6 +1195,7 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-needs-title span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bl-needs-title:hover span:last-child { text-decoration: underline; text-decoration-color: var(--color-accent); }
 .bl-needs-why { font: 400 12.5px var(--font-body); color: var(--color-ink-2); white-space: nowrap; }
+.bl-needs-ago { color: var(--color-muted); }
 .bl-needs-act { display: flex; align-items: center; gap: var(--space-sm); justify-self: end; }
 .bl-needs-act .bl-sess { margin-left: 0; }
 .bl-needs-act .bl-sess span { font: 500 12.5px var(--font-display); }
