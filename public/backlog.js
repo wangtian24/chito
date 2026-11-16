@@ -43,6 +43,38 @@ const ui = { page: 'lanes', closedBy: { project: savedClosed('project'), lanes: 
   get closed() { return this.closedBy[this.page] || 'none'; } };
 function setClosed(v) { if (!VIEW_KEYS[ui.page]) return; ui.closedBy[ui.page] = v; store.set(VIEW_KEYS[ui.page][0], v); }
 const saveCollapsed = () => store.set('blLanesCollapsed', [...ui.collapsed]);
+// How the Projects tab orders its lanes; latest activity first unless picked otherwise (remembered per browser).
+const PROJ_SORTS = [['latest', tr('Latest update')], ['waiting', tr('Waiting on you')], ['active', tr('In progress')], ['name', tr('Name')]];
+ui.projSort = PROJ_SORTS.some(([k]) => k === store.get('blProjSort')) ? store.get('blProjSort') : 'latest';
+function lastActivity(p, tks) {
+  let m = p.updated || p.created || '';
+  for (const t of tks) if ((t.updated || '') > m) m = t.updated;
+  return m;
+}
+function sortProjects(projects, all) {
+  const by = new Map(projects.map(p => [p.key, all.filter(t => t.project === p.key)]));
+  const latest = p => lastActivity(p, by.get(p.key));
+  const count = (p, f) => by.get(p.key).filter(f).length;
+  const cmp = {
+    latest: (a, b) => latest(b).localeCompare(latest(a)),
+    waiting: (a, b) => count(b, needsYou) - count(a, needsYou) || latest(b).localeCompare(latest(a)),
+    active: (a, b) => count(b, t => t.state === 'in_progress') - count(a, t => t.state === 'in_progress') || latest(b).localeCompare(latest(a)),
+    name: (a, b) => (a.name || a.key).localeCompare(b.name || b.key),
+  }[ui.projSort] || (() => 0);
+  return [...projects].sort(cmp);
+}
+function projSortControl() {
+  const wrap = el('div', 'bl-proj-sort');
+  wrap.append(el('span', 'bl-cap', tr('Sort')));
+  const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', tr('Sort projects'));
+  for (const [k, label] of PROJ_SORTS) {
+    const b = el('button', null, label); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(ui.projSort === k));
+    b.addEventListener('click', () => { ui.projSort = k; store.set('blProjSort', k); renderBacklog(); });
+    seg.append(b);
+  }
+  wrap.append(seg);
+  return wrap;
+}
 // What a collapsed lane lists under its project row: tickets in flight, ones that need you, failed ones. All on by default.
 const ROW_KINDS = ['flight', 'you', 'failed'];
 const savedRows = () => { const v = store.get('blLanesRows', ROW_KINDS); return new Set(Array.isArray(v) ? v.filter(k => ROW_KINDS.includes(k)) : ROW_KINDS); };
@@ -949,7 +981,7 @@ function tabBar(cur, counts) {
 
 function renderLanes(root) {
   const d = bl.data;
-  const projects = d.projects.filter(p => p.status !== 'archived');
+  let projects = d.projects.filter(p => p.status !== 'archived');
   const all = d.tickets;
   const running = all.filter(t => t.state === 'in_progress').length;
   const you = all.filter(needsYou).length;
@@ -967,6 +999,8 @@ function renderLanes(root) {
     return;
   }
   const ctl = controls();
+  projects = sortProjects(projects, all);
+  if (!finishedMode()) ctl.append(projSortControl());
   const visible = projects.map(p => p.key);
   const allCollapsed = visible.length && visible.every(k => ui.collapsed.has(k));
   const tog = el('button', 'btn bl-collapse-all', allCollapsed ? tr('Expand all') : tr('Collapse all'));
