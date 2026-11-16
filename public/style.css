@@ -1191,7 +1191,7 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 .bl-table tr.bl-done:hover td, .bl-table tr.bl-canceled:hover td { opacity: 1; }
 .bl-table tr.bl-in_progress td { background: color-mix(in oklch, var(--bl-in_progress-wash) 45%, transparent); }
 /* same tint as the Waiting on you panel above the table */
-.bl-table tr.needs-you td { background: color-mix(in oklch, var(--bl-failed-wash) 45%, var(--color-sheet)); }
+.bl-table tr.needs-you td { background: color-mix(in srgb, var(--bl-failed) 11%, var(--color-sheet)); }
 .bl-table tr.needs-you td.c-title .bl-tt { font-weight: 600; }
 .bl-needs-tag { margin-left: var(--space-sm); font: 600 11.5px var(--font-body); color: var(--bl-failed); }
 .bl-card.bl-done { opacity: .6; }
@@ -1603,9 +1603,9 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-h2-count { font: 400 13px var(--font-body); color: var(--color-muted); }
 .catchup-link { text-decoration: none; }
 /* Needs you: red; dismissed from the Waiting on you panel: a lighter, dimmer red. */
-.bl-card.needs-you { background: color-mix(in oklch, var(--bl-failed-wash) 55%, var(--color-sheet)); }
+.bl-card.needs-you { background: color-mix(in srgb, var(--bl-failed) 13%, var(--color-sheet)); }
 .bl-card.needs-you .bl-card-title { color: var(--bl-failed); }
-.bl-card.needs-you.dismissed { border-color: color-mix(in srgb, var(--bl-failed) 40%, var(--color-sheet)); box-shadow: none; background: color-mix(in srgb, var(--bl-failed-wash) 30%, var(--color-sheet)); }
+.bl-card.needs-you.dismissed { border-color: color-mix(in srgb, var(--bl-failed) 40%, var(--color-sheet)); box-shadow: none; background: color-mix(in srgb, var(--bl-failed) 5%, var(--color-sheet)); }
 .bl-card.needs-you.dismissed .bl-card-title, .bl-card.needs-you.dismissed .bad { color: color-mix(in srgb, var(--bl-failed) 60%, var(--color-sheet)); }
-.bl-table tr.needs-you.dismissed td { background: color-mix(in srgb, var(--bl-failed-wash) 25%, var(--color-sheet)); }
+.bl-table tr.needs-you.dismissed td { background: color-mix(in srgb, var(--bl-failed) 4%, var(--color-sheet)); }
 .bl-table tr.needs-you.dismissed td.c-title .bl-tt { font-weight: inherit; color: color-mix(in srgb, var(--bl-failed) 60%, var(--color-sheet)); }
