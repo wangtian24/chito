@@ -534,7 +534,7 @@ function workerPicker(key, action, harness, model, projectDefault = false) {
 function lifecycleButtons(p, compact) {
   const box = el('div', 'bl-ctl');
   if (p.status === 'planning') box.append(actBtn(tr('Start'), 'project-start', p.key, null, { primary: true, title: tr('Move to executing so its executor picks up ready tickets') }));
-  if (p.status === 'executing') box.append(actBtn(tr('Pause'), 'project-pause', p.key, null, { title: tr('Running work finishes; nothing new is claimed') }));
+  if (p.status === 'executing') box.append(actBtn(tr('Pause'), 'project-pause', p.key, null, { title: tr('Stops everything in this project now (orchestrators, workers, their dev servers); in-flight tickets go back to todo') }));
   if (p.status === 'paused') box.append(actBtn(tr('Resume'), 'project-resume', p.key, null, { primary: true }));
   if (!compact) {
     if (p.status !== 'planning') box.append(actBtn(tr('Back to planning'), 'project-plan', p.key));

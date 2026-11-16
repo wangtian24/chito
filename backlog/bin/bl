@@ -463,6 +463,84 @@ def assign_milestone(c, tkey, mkey):
     else:
         c.execute("UPDATE tickets SET milestone=NULL WHERE key=?", (tkey,))
 
+def project_processes(key, orchestrators_only=False):
+    """Live processes working on a project: orchestrator and worker sessions (by their prompt's first line) and
+    anything they started that carries BL_ORCH_PROJECT / BL_TICKET in its environment (dev servers, test runs).
+    Never this process or its ancestors."""
+    mine, pid = set(), os.getpid()
+    while pid > 1:
+        mine.add(pid)
+        try:
+            pid = int(subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip() or 0)
+        except ValueError:
+            break
+    k = re.escape(key)
+    pats = [rf"# Backlog orchestrator for {k}:", rf"\bBL_ORCH_PROJECT={k}(\s|$)"]
+    if not orchestrators_only:
+        pats += [rf"-p # Backlog ticket {k}-\d+:", rf"\bBL_TICKET={k}-\d+(\s|$)"]
+    rx = re.compile("|".join(pats))
+    try:
+        out = subprocess.run(["ps", "-axE", "-o", "pid=,command="], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return []
+    found = []
+    for line in out.splitlines():
+        head, _, rest = line.strip().partition(" ")
+        if head.isdigit() and int(head) not in mine and rx.search(rest):
+            found.append(int(head))
+    return found
+
+def kill_pids(pids):
+    """SIGTERM each process (its whole group when it leads one), then SIGKILL what is left after 3 s."""
+    for p in pids:
+        try:
+            os.killpg(p, signal.SIGTERM) if os.getpgid(p) == p else os.kill(p, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.time() + 3
+    while time.time() < deadline and any(alive(p) for p in pids):
+        time.sleep(0.2)
+    for p in pids:
+        if alive(p):
+            try: os.kill(p, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError): pass
+
+def alive(pid):
+    try:
+        os.kill(pid, 0); return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+def stop_project_work(c, key, reason, orchestrators_only=False):
+    """Stop a project's running work now: kill its orchestrators (and, unless orchestrators_only, its workers and
+    whatever they started), then put the tickets they held back to todo without using an attempt. Tickets held by
+    an interactive session (cc:...) are left to it. Returns (killed process count, released ticket keys)."""
+    p = project_row(c, key)
+    pids = set(project_processes(p["key"], orchestrators_only))
+    for r in c.execute("SELECT pid FROM runs WHERE project=? AND status='running' AND kind!='daemon'", (p["key"],)):
+        if r["pid"] and r["pid"] != os.getpid():
+            pids.add(r["pid"])
+    held = "claimed_by LIKE 'orch%'" if orchestrators_only else "(claimed_by LIKE 'orch%' OR claimed_by LIKE 'daemon:%')"
+    for t in c.execute(f"SELECT key FROM tickets WHERE project=? AND state='in_progress' AND {held}", (p["key"],)).fetchall():
+        e = c.execute("SELECT data FROM events WHERE ticket=? AND kind='spawn' ORDER BY id DESC LIMIT 1", (t["key"],)).fetchone()
+        wp = json.loads(e["data"]).get("pid") if e and not orchestrators_only else None
+        if wp:
+            pids.add(int(wp))
+    pids = [x for x in pids if alive(x)]
+    kill_pids(pids)
+    released = []
+    with tx(c):
+        for t in c.execute(f"SELECT * FROM tickets WHERE project=? AND state='in_progress' AND {held}", (p["key"],)).fetchall():
+            release_ticket(c, t, reason, count_failure=False)
+            released.append(t["key"])
+        c.execute("UPDATE runs SET status='stopped', ended=? WHERE project=? AND status='running' AND kind!='daemon'", (now(), p["key"]))
+        c.execute("UPDATE projects SET owner=NULL WHERE key=? AND owner LIKE 'orch%'", (p["key"],))
+        if pids or released:
+            event(c, "project", project=p["key"], body=f"stopped {len(pids)} processes, released {', '.join(released) or 'no tickets'}: {reason}")
+    return len(pids), released
+
 def set_project_status(c, key, new, reason=""):
     p = project_row(c, key)
     if p["status"] == new:
@@ -618,7 +696,12 @@ def cmd_project(a):
                "archive": "archived", "done": "done"}[a.action]
         with tx(c):
             set_project_status(c, a.key, new, " ".join(([a.name] if a.name else []) + a.fields))
-        print(new)
+        msg = new
+        if new in ("paused", "planning", "archived") and not getattr(a, "soft", False):
+            n, rel = stop_project_work(c, a.key, f"project {a.action}d" if a.action != "plan" else "project back to planning")
+            if n or rel:
+                msg += f" (stopped {n} processes; back to todo: {', '.join(rel) or 'none'})"
+        print(msg)
     elif a.action == "set":
         p = project_row(c, a.key)
         fields = ([a.name] if a.name else []) + a.fields   # `name` is positional for `add`; here it is the first field
@@ -637,7 +720,12 @@ def cmd_project(a):
                     v = 1 if v.lower() in ("1", "true", "yes", "on") else 0
                 c.execute(f"UPDATE projects SET {k}=?, updated=? WHERE key=?", (v if v != "" else None, now(), p["key"]))
                 event(c, "project", project=p["key"], body=f"{k}={v}" if k != "instructions" else f"instructions updated: {(v or '(cleared)')[:200]}")
-        print("ok")
+        msg = "ok"
+        if any(kv.split("=", 1) == ["executor", "daemon"] for kv in fields) and p["executor"] != "daemon":
+            n, rel = stop_project_work(c, p["key"], "switched to simple (no orchestrator)", orchestrators_only=True)
+            if n or rel:
+                msg += f" (stopped {n} orchestrator processes; back to todo: {', '.join(rel) or 'none'})"
+        print(msg)
 
 def cmd_add(a):
     c = connect()
@@ -2370,6 +2458,7 @@ def main():
     p.add_argument("action", choices=["add", "ls", "set", "start", "pause", "resume", "plan", "archive", "done"]); p.add_argument("key", nargs="?")
     p.add_argument("--executor", choices=["daemon", "session", "auto"]); p.add_argument("--evergreen", action="store_true")
     p.add_argument("name", nargs="?"); p.add_argument("--repo"); p.add_argument("--doc"); p.add_argument("--review", choices=["self", "pr", "ask"])
+    p.add_argument("--soft", action="store_true", help="pause/plan/archive: let running work finish instead of stopping it now")
     p.add_argument("fields", nargs="*")
     p = P("add", cmd_add); p.add_argument("project"); p.add_argument("title"); p.add_argument("-b", "--body"); p.add_argument("-f", "--file")
     p.add_argument("--after", help="blockers, comma-separated"); p.add_argument("--blocks", help="tickets that wait on this one")

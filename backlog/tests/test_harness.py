@@ -188,6 +188,20 @@ class TldrAndRepoScopeTest(HarnessTest):
         self.assertNotIn("Generate groups", p)
         self.assertIn("bl area A", bl["worker_instruction"](c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone()))
 
+    def test_stop_project_work_releases_held_tickets(self):
+        c, bl = self.c, self.bl
+        c.execute("UPDATE tickets SET state='in_progress', claimed_by='orchs:A:1', attempts=1 WHERE key='A-1'")
+        c.execute("INSERT INTO tickets(key,project,title,state,claimed_by,attempts,created,updated) VALUES('A-2','A','w','in_progress','daemon:9:1',1,'x','x')")
+        c.execute("INSERT INTO tickets(key,project,title,state,claimed_by,created,updated) VALUES('A-3','A','me','in_progress','cc:abcd','x','x')")
+        with patch.dict(bl["stop_project_work"].__globals__, project_processes=lambda *a, **k: []):
+            n, rel = bl["stop_project_work"](c, "A", "switched", orchestrators_only=True)
+            self.assertEqual(rel, ["A-1"])
+            n, rel = bl["stop_project_work"](c, "A", "paused")
+            self.assertEqual(rel, ["A-2"])
+        st = dict(c.execute("SELECT key, state FROM tickets WHERE project='A'").fetchall())
+        self.assertEqual(st, {"A-1": "todo", "A-2": "todo", "A-3": "in_progress"})
+        self.assertEqual(c.execute("SELECT attempts FROM tickets WHERE key='A-2'").fetchone()[0], 0)
+
     def test_project_cap_unlimited_by_default(self):
         self.assertIsNone(self.bl["project_cap"](self.c, "A"))
         self.c.execute("INSERT INTO settings VALUES('project:A','max_parallel','2')")
