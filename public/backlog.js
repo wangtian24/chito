@@ -161,7 +161,9 @@ function index(d) {
 
 const isBlocked = t => t.state === 'todo' && (bl.blockers.get(t.key) || []).some(b => !FINAL.has(bl.byKey.get(b)?.state ?? 'done'));
 const isReady = t => t.state === 'todo' && !isBlocked(t) && t.assignee !== 'human';
-const needsYou = t => t.state === 'failed' || t.state === 'in_review' || (t.state === 'todo' && t.assignee === 'human' && !isBlocked(t));
+// An approved review is the agent's to merge; if it is still unmerged two hours later, it is back on the human's plate.
+const approvedRecently = t => !!t.meta?.approved?.at && Date.now() - new Date(t.meta.approved.at).getTime() < 2 * 3600e3;
+const needsYou = t => t.state === 'failed' || (t.state === 'in_review' && !approvedRecently(t)) || (t.state === 'todo' && t.assignee === 'human' && !isBlocked(t));
 
 export async function loadBacklog() {
   try {
@@ -1634,6 +1636,7 @@ function drawDrawer(box, t) {
   if (projLink) top.append(projLink);
   top.append(closeBtn());
   box.append(top, el('h3', 'bl-d-title', t.title), ticketActions(t));
+  if (ui.notesFor === t.key && t.state === 'in_review') box.append(approveNotesForm(t));
   if (t.meta?.tldr?.text) {
     const tb = el('section', 'bl-d-tldr');
     tb.append(el('h4', 'bl-d-h', tr('TL;DR')), md(t.meta.tldr.text));
@@ -1776,7 +1779,7 @@ export function startBacklogPolling() {
   bl.timer = setInterval(async () => {
     if (document.hidden) return;
     await loadBacklog();
-    if (document.activeElement?.id === 'blq') return; // don't steal focus mid-typing
+    if (document.activeElement?.id === 'blq' || document.activeElement?.closest?.('.bl-approve-notes')) return; // don't steal focus mid-typing
     const scroller = $('#backlog'); const y = scroller.scrollTop;
     renderBacklog();
     scroller.scrollTop = y;
@@ -1785,11 +1788,84 @@ export function startBacklogPolling() {
 export function stopBacklogPolling() { clearInterval(bl.timer); bl.timer = null; }
 export function backlogRefreshCount() { return loadBacklog(); }
 
+// Approve with notes: the notes go on the ticket as a comment, the ticket is approved, and the notes are sent to
+// the session that did the work (its worker, else the project's orchestrator), resumed in the background.
+ui.notesFor = null; ui.notesDraft = {};
+function notesTarget(t) {
+  const ws = workerSession(t);
+  if (ws && !ws.missing) return { ...ws, kind: tr('Worker session') };
+  const p = bl.data.projects.find(x => x.key === t.project);
+  const o = p?.execution?.orchestrator || p?.orchSessions?.[0];
+  return o ? { ...o, kind: tr('Orchestrator session') } : null;
+}
+// Approve = go. The approval (and notes) go on the ticket; the session that did the work is resumed in the background
+// and told to merge its PR, then close the ticket. With no session to resume, or if sending fails, the ticket goes
+// back to todo and a fresh worker picks it up: worker prompts include the ticket's comments, the approval among them.
+async function approveGo(t, notes) {
+  const post = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-chito': '1' }, body: JSON.stringify(body) })
+    .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; });
+  const prs = (t.prs || []).filter(p => ((ctx.getPr ? ctx.getPr(p.url) : null)?.state || '').toUpperCase() !== 'MERGED').map(p => p.url || p).filter(Boolean);
+  const prText = prs.length ? prs.join(', ') : tr('its PR');
+  const ask = `APPROVED by the human in chito: merge ${prText} now (rebase on main if needed, run the repo's checks, squash-merge), then close the ticket with \`bl done ${t.key} -m "merged <PR>"\`.`
+    + (notes ? `\n\nTheir notes:\n${notes}\n\nAct on the notes: a small change can go into this PR before merging; anything bigger, file it with \`bl add ${t.project} "<title>" -b "<details>" --after ${t.key}\`.` : '')
+    + ` Record what you did with \`bl comment ${t.key} "..."\`.`;
+  const target = notesTarget(t);
+  let how;
+  try {
+    await post('/api/backlog/action', { action: 'ticket-comment', key: t.key, value: ask });
+    await post('/api/backlog/action', { action: 'ticket-approved', key: t.key, value: notes });
+    if (target) {
+      try { await post(`/api/sessions/${target.id}/send`, { text: `${t.key} (${t.title}): ${ask}`, background: true }); how = tr('approved; sent to the {kind} to merge', { kind: target.kind.toLowerCase() }); }
+      catch (err) { how = null; ctx.toast(tr('Could not reach the session ({error}); a fresh worker will merge it', { error: err.message })); }
+    }
+    if (!how) { await post('/api/backlog/action', { action: 'ticket-reopen', key: t.key }); how = tr('approved; back to todo, a worker will merge it'); }
+    ctx.toast(`${t.key}: ${how}`);
+    ui.notesFor = null; delete ui.notesDraft[t.key];
+  } catch (err) { ctx.toast(tr('Failed: {error}', { error: err.message })); }
+  await loadBacklog(); bl.ticket = null; renderBacklog();
+}
+function approveNotesForm(t) {
+  const f = el('form', 'bl-approve-notes');
+  const ta = el('textarea'); ta.id = 'bl-approve-notes'; ta.rows = 4; ta.value = ui.notesDraft[t.key] || '';
+  ta.placeholder = tr('Notes for the agent as it merges: what to change first, what to keep, what to follow up');
+  ta.addEventListener('input', () => { ui.notesDraft[t.key] = ta.value; });
+  const target = notesTarget(t);
+  const to = el('div', 'bl-approve-to');
+  to.textContent = target ? tr('Goes to {kind}: {title}', { kind: target.kind, title: target.title || target.id.slice(0, 8) }) : tr('No session found: the notes stay on the ticket as a comment.');
+  const go = el('button', 'btn primary', tr('Approve and send')); go.type = 'submit'; go.title = tr('The agent merges the PR, with your notes');
+  const no = el('button', 'btn', tr('Cancel')); no.type = 'button';
+  no.addEventListener('click', () => { ui.notesFor = null; renderBacklog(); });
+  const row = el('div', 'bl-approve-row'); row.append(to, no, go);
+  f.append(ta, row);
+  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); f.requestSubmit(); } if (e.key === 'Escape') { e.stopPropagation(); no.click(); } });
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const notes = ta.value.trim();
+    if (!notes) { ta.focus(); return; }
+    go.disabled = true; go.textContent = tr('Sending…');
+    await approveGo(t, notes);
+  });
+  return f;
+}
+
 function ticketActions(t) {
   const box = el('div', 'bl-d-actions');
   if (['failed', 'canceled', 'done'].includes(t.state)) box.append(actBtn(tr('Reopen'), 'ticket-reopen', t.key, null, { primary: t.state === 'failed', title: tr('Back to todo with attempts reset') }));
   if (t.assignee === 'human' && !FINAL.has(t.state)) box.append(actBtn(tr('Mark done'), 'ticket-resolve', t.key, null, { primary: true, title: tr('Close this human ticket as done (bl resolve)') }));
-  if (t.state === 'in_review') box.append(actBtn(tr('Approve'), 'ticket-approve', t.key, null, { primary: true, title: tr('Mark done (after the PR is merged)') }));
+  if (t.state === 'in_review' && approvedRecently(t)) {
+    const s = el('span', 'bl-approved', tr('Approved {ago}: the agent is merging', { ago: ctx.fmtRelAgo(t.meta.approved.at) }));
+    s.title = t.meta.approved.notes ? tr('Your notes: {notes}', { notes: t.meta.approved.notes }) : tr('Approved without notes');
+    box.append(s);
+  } else if (t.state === 'in_review') {
+    const ap = el('button', 'btn primary bl-act', tr('Approve')); ap.type = 'button';
+    ap.title = tr('Go: the agent that did the work merges its PR and closes the ticket');
+    ap.addEventListener('click', e => { e.preventDefault(); ap.disabled = true; approveGo(t, ''); });
+    box.append(ap);
+    const wn = el('button', `btn bl-act${ui.notesFor === t.key ? ' on' : ''}`, tr('Approve with notes')); wn.type = 'button';
+    wn.title = tr('Approve, with notes for the agent as it merges and follows up');
+    wn.addEventListener('click', e => { e.preventDefault(); ui.notesFor = ui.notesFor === t.key ? null : t.key; renderBacklog(); if (ui.notesFor) setTimeout(() => $('#bl-approve-notes')?.focus(), 0); });
+    box.append(wn);
+  }
   if (t.state === 'backlog') box.append(actBtn(tr('Move to todo'), 'ticket-move', t.key, 'todo', { primary: true }));
   if (t.state === 'todo') box.append(actBtn(tr('Move to backlog'), 'ticket-move', t.key, 'backlog'));
   if (!['done', 'canceled'].includes(t.state)) box.append(actBtn(tr('Cancel'), 'ticket-cancel', t.key, null, { confirm: true, title: tr('Cancel: dependents become unblocked') }));
