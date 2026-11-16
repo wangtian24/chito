@@ -1286,7 +1286,7 @@ function rowToggles() {
 }
 // A ticket waiting on you or failed: key, title, what's asked, how long it has waited, and where to answer.
 function waitRow(t, p, kind) {
-  const r = linkTo(el('a', `bl-compact-row bl-compact-${kind}${queryTicket() === t.key ? ' sel' : ''}`), inPlacePath(t));
+  const r = linkTo(el('a', `bl-compact-row bl-compact-${kind}${kind === 'you' ? needsCls(t) : ''}${queryTicket() === t.key ? ' sel' : ''}`), inPlacePath(t));
   const kk = el('span', 'num', t.key.slice(p.key.length + 1)); kk.title = t.key;
   const why = el('span', 'bl-compact-why', needReason(t));
   const extra = el('span', 'bl-compact-exec', t.state === 'failed' ? trp(t.attempts, '{n} attempt', '{n} attempts') : t.assignee === 'human' ? tr('Human') : LABEL[t.state]);

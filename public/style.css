@@ -1609,3 +1609,8 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-card.needs-you.dismissed .bl-card-title, .bl-card.needs-you.dismissed .bad { color: color-mix(in srgb, var(--bl-failed) 60%, var(--color-sheet)); }
 .bl-table tr.needs-you.dismissed td { background: color-mix(in srgb, var(--bl-failed) 4%, var(--color-sheet)); }
 .bl-table tr.needs-you.dismissed td.c-title .bl-tt { font-weight: inherit; color: color-mix(in srgb, var(--bl-failed) 60%, var(--color-sheet)); }
+/* Collapsed-lane rows: needs you = red, dismissed = light pink. */
+.bl-compact-row.needs-you { background: color-mix(in srgb, var(--bl-failed) 14%, var(--color-sheet)); border-radius: var(--radius-ctl); }
+.bl-compact-row.needs-you .bl-compact-title { color: var(--bl-failed); font-weight: 600; }
+.bl-compact-row.needs-you.dismissed { background: color-mix(in srgb, var(--bl-failed) 6%, var(--color-sheet)); }
+.bl-compact-row.needs-you.dismissed .bl-compact-title { color: color-mix(in srgb, var(--bl-failed) 55%, var(--color-sheet)); font-weight: inherit; }
