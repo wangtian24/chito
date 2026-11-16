@@ -1508,3 +1508,8 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-needs-row.dismissed:hover { opacity: 1; }
 .bl-needs-none { display: block; font: 400 13px var(--font-body); font-style: var(--meta-style); color: var(--color-muted); }
 @media (max-width: 900px) { .bl-needs-x { justify-self: end; } }
+/* Waiting-on-you actions: Open handoff, then two small icons (read the session, answer in terminal). */
+.bl-needs-why { font-variant-numeric: tabular-nums; color: var(--color-muted); min-width: 4.5em; text-align: right; }
+.bl-needs-act .bl-needs-ic { width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--color-rule-sheet); border-radius: var(--radius-ctl); color: var(--color-ink-2); background: transparent; }
+.bl-needs-act .bl-needs-ic:hover { color: var(--color-ink); background: var(--color-well); }
+.bl-needs-act .bl-needs-ic .ic { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }

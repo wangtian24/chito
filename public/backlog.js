@@ -26,6 +26,8 @@ const ICON = {
   failed: '<circle cx="12" cy="12" r="9" fill="currentColor" stroke="none"/><path d="M9 9l6 6M15 9l-6 6" stroke="var(--color-sheet)" stroke-width="2.4"/>',
   canceled: '<circle cx="12" cy="12" r="8"/><path d="M8 16L16 8"/>',
 };
+const SCREEN_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16.5V20"/></svg>';
+const TERM_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-6l-4.5 3.5V17H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3z"/><path d="M7.5 9l2.5 2-2.5 2M12.5 13.5h4"/></svg>';
 const SESSION_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5h14a2 2 0 0 1 2 2V15a2 2 0 0 1-2 2h-6l-4 3.5V17H5a2 2 0 0 1-2-2V8.5a2 2 0 0 1 2-2z"/></svg>';
 
 let ctx = null;          // { openSession, toast, fmtRel, fmtRelAgo, fmtDateTime, getPr }
@@ -887,17 +889,24 @@ function needRow(t) {
   if (openKey() === t.key) row.classList.add('sel');
   const title = linkTo(el('a', 'bl-needs-title'), openPath(t));
   title.append(el('span', 'num', t.key), el('span', null, t.title));
-  const why = el('span', 'bl-needs-why', needReason(t));
-  if (t.created) why.append(ago(t.created));
+  // Just how long it has waited; what it is (ready, in discussion, failed, review) is on hover.
+  const why = el('span', 'bl-needs-why', t.created ? ctx.fmtRelAgo(t.created) : '');
+  why.title = `${needReason(t)}${t.created ? ' · ' + tr('created {ago}', { ago: ctx.fmtDateTime(t.created) }) : ''}`;
   const act = el('div', 'bl-needs-act');
   const b = t.meta?.brief;
   const sess = answerSession(t);
   if (t.meta?.handoff?.packet) act.append(linkTo(el('a', 'btn primary bl-open-handoff', tr('Open handoff')), openPath(t)));
   else if (b?.pending) act.append(el('span', 'bl-needs-pending', tr('Preparing a briefing')));
   if (sess) {
-    const open = sessionLink(sess, sess.kind === 'Briefing' ? tr('Read the briefing') : SESS_KIND[sess.kind] || sess.kind);
-    const term = el('button', `btn${sess.kind === 'Briefing' && !t.meta?.handoff?.packet ? ' primary' : ''}`, tr('Answer in terminal')); term.type = 'button';
+    // Two small icons: read the session in chito (a screen), answer it in a terminal (the prompt bubble).
+    const open = sessionLink(sess, null);
+    open.classList.add('bl-needs-ic'); open.innerHTML = SCREEN_ICON;
+    open.title = `${sess.kind === 'Briefing' ? tr('Read the briefing') : SESS_KIND[sess.kind] || sess.kind}${sess.title ? ': ' + sess.title : ''}`;
+    open.setAttribute('aria-label', open.title);
+    const term = el('button', 'btn icon bl-needs-ic'); term.type = 'button';
+    term.innerHTML = TERM_ICON;
     term.title = sess.title ? tr('Resume {title} in your terminal and reply there', { title: sess.title }) : tr('Resume the session in your terminal and reply there');
+    term.setAttribute('aria-label', term.title);
     term.addEventListener('click', e => { e.stopPropagation(); openInTerminal(sess.id); });
     act.append(open, term);
   } else if (!b?.pending) act.append(el('span', 'bl-needs-pending', tr('No session yet')));
