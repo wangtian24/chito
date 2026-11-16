@@ -683,4 +683,5 @@ export default {
   "All states": "全部状态",
   "Showing all states": "显示全部状态",
   "{n} of {total} tickets": "{total} 个工单中的 {n} 个",
+  "Columns": "列",
 };

@@ -1459,12 +1459,17 @@ const COLS = [
   ['updated', tr('Updated'), t => new Date(shownAt(t) || 0).getTime()],
 ];
 // The Tickets tab: every column a project's table has (but its per-project # order), plus Project and Created.
+const colOf = id => COLS.find(c => c[0] === id);
 const ALL_COLS = [
-  ...COLS.filter(([id]) => id === 'key'),
+  colOf('key'),
   ['project', tr('Project'), t => (bl.data.projects.find(x => x.key === t.project)?.name || t.project).toLowerCase()],
-  ...COLS.filter(([id]) => !['order', 'key'].includes(id)),
+  colOf('title'), colOf('state'),
   ['created', tr('Created'), t => new Date(t.created || 0).getTime()],
+  colOf('updated'), colOf('priority'), colOf('who'), colOf('prs'), colOf('cost'), colOf('ms'), colOf('attempts'), colOf('deps'), colOf('blocks'),
 ];
+// Columns the Tickets tab can hide; Waits on, Blocks, Tries and Milestone start hidden. Key, title and state always show.
+const TK_OPTIONAL = ['project', 'created', 'updated', 'priority', 'who', 'prs', 'cost', 'ms', 'attempts', 'deps', 'blocks'];
+ui.tkHidden = (() => { const v = store.get('blTicketsHidden', null); return new Set(Array.isArray(v) ? v : ['deps', 'blocks', 'attempts', 'ms']); })();
 const FIN_COLS = [
   ...COLS.filter(([id]) => ['key', 'title', 'state', 'who', 'ms', 'prs', 'cost'].includes(id)),
   ['finished', tr('Finished'), closedAt],
@@ -1501,7 +1506,7 @@ function table(tks, all = false) {
   if (fin) tbl.classList.add('bl-fin');
   if (all) tbl.classList.add('bl-all');
   const sort = all ? ui.tkSort : fin ? ui.finSort : ui.sort;
-  const cols = (all ? ALL_COLS : fin ? FIN_COLS : COLS).filter(([id]) => !(id === 'ms' && !has.ms) && !(id === 'prs' && !has.prs) && !(id === 'cost' && !has.usage) && !(id === 'who' && !has.who));
+  const cols = (all ? ALL_COLS.filter(([id]) => !ui.tkHidden.has(id)) : fin ? FIN_COLS : COLS).filter(([id]) => !(id === 'ms' && !has.ms) && !(id === 'prs' && !has.prs) && !(id === 'cost' && !has.usage) && !(id === 'who' && !has.who));
   const on = id => cols.some(c => c[0] === id);
   for (const [id, label] of cols) {
     const th = el('th', `c-${id}`); const b = el('button', null, label);
@@ -1538,7 +1543,9 @@ function table(tks, all = false) {
     const r = el('tr', `bl-${t.state}${openKey === t.key ? ' sel' : ''}${needsYou(t) ? ' needs-you' : ''}`); r.dataset.key = t.key;
     r.addEventListener('click', e => { if (e.target.closest('a')) return; go(openPath(t)); });
     bl.rowOrder.push(t);
-    const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); r.append(c); return c; };
+    // Cells are built by column id and laid out in the columns' order (so a tab can reorder or hide them).
+    const cells = {};
+    const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); cells[cls.split(' ')[0].slice(2)] = c; return c; };
     if (on('order')) td('c-order num', String(bl.order.get(t.key) - Math.min(...tks.map(x => bl.order.get(x.key))) + 1));
     const kl = linkTo(el('a', null, fin || all ? t.key : t.key.slice(t.project.length + 1)), openPath(t)); kl.title = t.key;
     td('c-key num', kl);
@@ -1583,15 +1590,16 @@ function table(tks, all = false) {
     if (on('attempts')) td('c-attempts num', t.attempts ? `${t.attempts}${t.max_attempts ? '/' + t.max_attempts : ''}` : '');
     if (on('who')) td('c-who', el('span', 'bl-who', t.claimed_by ? executorOf(t)[0] : (t.assignee || '')));
     const ms = bl.milestones.get(t.milestone);
-    if (on('ms')) { td('c-ms', ...(ms ? [el('span', `bl-ms-chip ms-${ms.status}`, ms.key.slice(t.project.length + 1))] : [])); if (ms) r.lastChild.title = ms.title; }
+    if (on('ms')) { const mc = td('c-ms', ...(ms ? [el('span', `bl-ms-chip ms-${ms.status}`, ms.key.slice(t.project.length + 1))] : [])); if (ms) mc.title = ms.title; }
     if (on('prs')) td('c-prs', ...prChips(t, 3));
     if (on('cost')) td('c-cost num', fmtCost(t.usage)).title = usageTitle(t.usage);
-    if (on('created')) td('c-created', fmtAgo(t.created)).title = t.created ? tr('Created {when}', { when: ctx.fmtDateTime(t.created) }) : '';
+    if (on('created')) td('c-created', all ? ctx.fmtRelAgo(t.created) : fmtAgo(t.created)).title = t.created ? tr('Created {when}', { when: ctx.fmtDateTime(t.created) }) : '';
     if (fin) { const at = t.finished || t.updated; td('c-updated c-finished', fmtAgo(at)).title = tr('Finished {when}', { when: ctx.fmtDateTime(at) }); }
     else {
       const at = shownAt(t);
-      td('c-updated', fmtAgo(at)).title = at ? (ENDED.has(t.state) && t.finished ? tr('Finished {when}', { when: ctx.fmtDateTime(at) }) : t.changed ? tr('State changed {when}', { when: ctx.fmtDateTime(at) }) : tr('Updated {when}', { when: ctx.fmtDateTime(at) })) : '';
+      td('c-updated', all && at ? ctx.fmtRelAgo(at) : fmtAgo(at)).title = at ? (ENDED.has(t.state) && t.finished ? tr('Finished {when}', { when: ctx.fmtDateTime(at) }) : t.changed ? tr('State changed {when}', { when: ctx.fmtDateTime(at) }) : tr('Updated {when}', { when: ctx.fmtDateTime(at) })) : '';
     }
+    for (const [id] of cols) { const c = cells[id] || (id === 'finished' ? cells.updated : null); r.append(c || el('td', `c-${id}`)); }
     tbody.append(r);
   }
   if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', fin ? (ui.q.trim() ? tr('No ticket finished in the last 7 days matches that search.') : tr('Nothing finished (done, canceled or failed) in the last 7 days.')) : ui.q ? tr('No tickets match that search.') : ui.closed === 'none' ? tr('No open tickets. Switch to + 24h or All to see finished ones.') : tr('Nothing open or closed in the last 24 hours. Switch to All, or search.')); c.colSpan = cols.length; r.append(c); tbody.append(r); }
@@ -1604,6 +1612,21 @@ const TK_KEY = 'blTicketsFilter';
 ui.tkSort = (() => { const v = store.get('blTicketsSort', null); return v && typeof v.col === 'string' && (v.dir === 1 || v.dir === -1) ? v : { col: 'created', dir: -1 }; })();
 ui.tk = (() => { const v = store.get(TK_KEY, {}) || {}; return { q: '', states: Array.isArray(v.states) ? v.states : [], project: v.project || '', who: v.who || '' }; })();
 const saveTk = () => store.set(TK_KEY, { states: ui.tk.states, project: ui.tk.project, who: ui.tk.who });
+function colsChooser() {
+  const d = el('details', 'bl-cols');
+  if (ui.tkColsOpen) d.open = true;
+  d.addEventListener('toggle', () => { ui.tkColsOpen = d.open; });
+  const sum = el('summary', 'btn', tr('Columns')); d.append(sum);
+  const menu = el('div', 'bl-cols-menu');
+  for (const id of TK_OPTIONAL) {
+    const col = ALL_COLS.find(c => c[0] === id); if (!col) continue;
+    const lab = el('label'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = !ui.tkHidden.has(id);
+    cb.addEventListener('change', () => { if (cb.checked) ui.tkHidden.delete(id); else ui.tkHidden.add(id); store.set('blTicketsHidden', [...ui.tkHidden]); renderBacklog(); });
+    lab.append(cb, ' ', col[1]); menu.append(lab);
+  }
+  d.append(menu);
+  return d;
+}
 function renderTicketsTab(root, all, projects) {
   const f = ui.tk;
   const live = new Set(projects.map(p => p.key));
@@ -1628,6 +1651,7 @@ function renderTicketsTab(root, all, projects) {
     w.append(s); return w;
   };
   ctl.append(sel(tr('Project'), f.project, [['', tr('All projects')], ...[...projects].sort((a, b) => a.key.localeCompare(b.key)).map(p => [p.key, `${p.key} · ${p.name}`])], v => { f.project = v; }));
+  ctl.append(colsChooser());
   ctl.append(sel(tr('Who'), f.who, [['', tr('Anyone')], ['agents', tr('Agents')], ['human', tr('Human')], ['you', tr('Needs you')]], v => { f.who = v; }));
   root.append(ctl);
 

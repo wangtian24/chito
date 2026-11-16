@@ -1571,3 +1571,18 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-table .c-project a:hover { text-decoration: underline; text-decoration-color: var(--color-accent); }
 .bl-table .c-created { white-space: nowrap; color: var(--color-muted); }
 .bl-table.bl-all .c-key { white-space: nowrap; }
+/* Tickets tab: the title gets the room; a Columns chooser. */
+
+.bl-table.bl-all .c-created, .bl-table.bl-all .c-updated { white-space: nowrap; color: var(--color-muted); }
+.bl-cols { position: relative; }
+.bl-cols > summary { list-style: none; cursor: pointer; border: 1px solid var(--color-rule-sheet); }
+.bl-cols > summary::-webkit-details-marker { display: none; }
+.bl-cols[open] > summary { border-color: var(--color-accent); }
+.bl-cols-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: grid; gap: 2px; min-width: 160px; padding: var(--space-sm); background: var(--color-sheet); border: 1px solid var(--color-rule); border-radius: var(--radius-ctl); box-shadow: var(--shadow-node); }
+.bl-cols-menu label { display: flex; align-items: center; gap: 6px; padding: 3px 4px; font: 400 13px var(--font-display); color: var(--color-ink-2); cursor: pointer; white-space: nowrap; }
+.bl-cols-menu label:hover { background: var(--color-well); }
+.bl-table.bl-all th:not(.c-title), .bl-table.bl-all td:not(.c-title) { width: 1%; }
+.bl-table.bl-all td.c-prs, .bl-table.bl-all td.c-who { white-space: normal; min-width: 0; }
+.bl-table.bl-all td.c-prs .bl-pr { display: inline-block; }
+.bl-table.bl-all td.c-project a { max-width: 13ch; }
+.bl-table.bl-all td.c-title, .bl-table.bl-all th.c-title { width: 100%; min-width: 30ch; }
