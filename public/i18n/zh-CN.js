@@ -639,7 +639,6 @@ export default {
   "Menus and labels only": "仅菜单和标签",
   "Confirm: deploy main": "确认：部署 main",
   "TL;DR": "要点",
-  "No TL;DR yet; this is the full summary": "还没有要点；这是完整摘要",
   "Hide the sidebar ([)": "隐藏侧边栏 ([)",
   "Hide the sidebar": "隐藏侧边栏",
   "Show the sidebar ([)": "显示侧边栏 ([)",

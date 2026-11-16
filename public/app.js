@@ -130,8 +130,14 @@ function parseQuery(q) {
 // ---------- ticket search ----------
 // The sidebar search also looks up backlog tickets by key or title; matches show above the sessions.
 const ticketPath = tk => `/projects/${encodeURIComponent(tk.project)}/${encodeURIComponent(tk.key)}`;
+// On Projects already, the ticket opens in the side panel over the page you're on; from elsewhere, on its project.
 function openTicket(tk) {
-  history.pushState({}, '', ticketPath(tk));
+  if (state.view === 'backlog') {
+    const u = new URL(location.href);
+    const onIts = location.pathname.toUpperCase().startsWith(`/PROJECTS/${String(tk.project).toUpperCase()}`);
+    if (onIts) { u.searchParams.delete('ticket'); history.pushState({}, '', ticketPath(tk) + u.search); }
+    else { u.searchParams.set('ticket', tk.key); history.pushState({}, '', u.pathname + u.search); }
+  } else history.pushState({}, '', ticketPath(tk));
   route();
 }
 let ticketQ = null, ticketTimer = null;
