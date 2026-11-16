@@ -12,6 +12,15 @@ import { workerModel } from './lib/worker-models.js';
 import { deploySummary, triggerDeploy, startDeployBackup } from './lib/deploy.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+// Started by launchd, chito gets a bare PATH (/usr/bin:/bin:…) without the folders where claude, gh, codex and pi
+// live. Add the usual ones that exist, so background sends, Approve and the deploy backup can find their tools.
+{
+  const home = process.env.HOME || HOME;
+  const extra = [path.join(home, '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.pi/agent/bin'), path.join(home, '.claude/local')]
+    .filter(d => fs.existsSync(d));
+  const have = new Set((process.env.PATH || '').split(':'));
+  process.env.PATH = [...extra.filter(d => !have.has(d)), process.env.PATH || '/usr/bin:/bin'].join(':');
+}
 const PORT = Number(process.env.CHITO_PORT || 8791);
 const HOST = process.env.CHITO_HOST || '127.0.0.1';
 const TERMINAL = process.env.CHITO_TERMINAL || (fs.existsSync('/Applications/iTerm.app') ? 'iterm' : 'terminal');

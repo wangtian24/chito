@@ -57,7 +57,7 @@ Point to chito `/backlog` for the visual board.
 ## 2. Triage
 Go through the problem tickets one at a time, each with a one-line verdict and an action:
 - **failed**: read `bl show KEY` (the last `FAIL:` comment and the result). Then either `bl reopen KEY`, fix the spec (`bl set KEY body=…`) and reopen, split the ticket, or `bl cancel KEY` (which unblocks its dependents).
-- **in_review**: find the PR. If it's merged, run `bl approve KEY`. If it's open, drive it with your PR-review flow. If the review policy is `ask`, ask once whether this repo should be `self` or `pr`.
+- **in_review**: find the PR. If it's merged, run `bl approve KEY`. If it's open, it's the agent's to finish: tell its worker (or a new one) to self-test, resolve conflicts and merge it, then `bl done`. Never hand it to the user as a code review.
 - **Stale leases**: `bl next PROJ` reaps them. **Orphaned projects**: offer `/backlog-run PROJ` to resume, or `bl config global orphan_policy daemon` so the daemon adopts orphans.
 - **human tickets**: list exactly what the user must do.
 - **Hazards in the graph**: todo tickets that depend on failed or backlog tickets; tickets with no body; a project still in `planning` that the user thinks is running.
@@ -76,7 +76,7 @@ Act straight away on the obvious ones (approve a merged PR, reap a stale lease).
    - **Touches**: the files or areas involved
    - **Notes**: anything the worker needs to know
 3. Add edges only for real dependencies (`--after`). Use `--lock NAME` for things that must not run at the same time. Give a size hint with `--size`. Use `--model sonnet` only for genuinely simple, mechanical tickets.
-4. Anything only the user can do (deploys, spending money, signing in, decisions) gets `--assignee human`. The user reviews decisions, mocks, demos, directions and architecture choices: something major. They never review code, so never file a human ticket to review a PR or a diff; set the project's review policy to `self` (for Mapcouch every project inherits `bl config repo:/Users/wangtian/workspace/mapcouch review self`).
+4. Anything only the user can do (deploys, spending money, signing in, decisions) gets `--assignee human`. The user reviews decisions, mocks, demos, directions and architecture choices: something major. They never review code, so never file a human ticket to review a PR or a diff. Every agent self-tests, resolves conflicts and merges its own PRs: the review policy is `self` globally (`bl config global review self`), and a project should only override it with a stated reason.
 4b. **Deploys: not after every ticket.** Tickets merge to main and stop there; the repo's own scheduled deploys ship merged work. A project may still deploy on demand when it wants something live sooner (a milestone, a preview for the user, an urgent fix): one deploy ticket at that point, not one per ticket.
 4c. Guidance the user gives for a whole project ("deploy only at milestones", "always add tests") goes in its standing instructions, `bl instructions PROJ --set "…"` (or the box on the chito project page). Every orchestrator run and worker prompt gets them, and a running orchestrator re-reads them each round.
 5. Show `bl graph PROJ` and `bl run PROJ --dry-run`. The project stays in **planning**. End with "Start it?". Starting means `bl project start PROJ`, and then `/backlog-run` for session projects, or nothing more for daemon projects.

@@ -15,8 +15,8 @@ You hold a lease on one ticket in the shared backlog (`bl`, SQLite). You may hav
 3. **Decide how to work it.** Small tickets (s/m): do them directly. Large ones (l/xl, or several independent parts): you may dispatch subagents or a short workflow inside this ticket. You hold the lease and you report; subagents never call `bl` for this ticket.
 4. **Leave progress notes** between big steps: `bl comment $BL_TICKET "…"`, one line each. Leases renew automatically. During a very long single step, run `bl beat`.
 5. **Code work follows the repo's rules**: your worktree (orchestrator and daemon workers start inside it; otherwise `bl worktree $BL_TICKET`), the repo's branch and PR conventions, and its checks.
-   - Review policy `self`: test it yourself (actually run it) and merge as the repo allows.
-   - `pr` or `ask`: open the PR, get its checks green, and stop. Don't merge.
+   - Review policy `self` (the default everywhere): test it yourself (actually run it), rebase on main and resolve any conflicts, get the checks green, and merge your own PR as the repo allows. Nobody reviews your code for you; don't leave a PR open waiting for a human.
+   - `pr` or `ask` (only where a project sets it on purpose): open the PR, get its checks green, and stop. Don't merge.
    - **A ticket is done only once its PR is merged.** Never `bl done --final` with an open PR: `bl` checks every PR linked in the result and keeps the ticket in review ("needs you") until each one is merged. Approving it in chito doesn't skip this either.
 6. **Finish with exactly one** of:
    - `bl done $BL_TICKET -m "<what changed; PR url; how verified; what downstream should know>" --tldr "<for the human>"`
