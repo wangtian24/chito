@@ -92,7 +92,9 @@ function head() {
   left.append(el('h1', null, t('Deployment')));
   const p = el('p');
   p.append(ext('https://mapcouch.com', 'mapcouch.com'), ' · ', ext(ghBase(), data.repo), ' · ',
-    t('merges deploy at scheduled hours or when you press Deploy'));
+    data.schedule?.text === 'every hour' ? t('checks every hour and deploys only when main has something new; or press Deploy')
+      : data.schedule?.text ? t('checks on a schedule ({when}) and deploys only when main has something new; or press Deploy', { when: data.schedule.text })
+      : t('deploys when you press Deploy'));
   left.append(p);
   const right = el('div', 'bl-head-right');
   const rf = el('button', 'btn');
