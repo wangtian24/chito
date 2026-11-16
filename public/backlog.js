@@ -269,6 +269,18 @@ function renderBacklogInner(root) {
   renderDrawer(route.ticket ? route.ticket.toUpperCase() : inPlace ? inPlace.toUpperCase() : null);
 }
 
+// How many of a project's tickets may run at once. Unlimited = no cap of its own; the global cap still holds.
+const PAR_STEPS = [0, 1, 2, 3, 4, 6, 8];
+function parallelControl(p) {
+  const cur = Number(setting(p.key, 'max_parallel', 0)) || 0;
+  const w = el('label', 'bl-par'); w.title = tr('How many of this project\'s tickets run at once. Unlimited: only the overall cap ({n}) applies.', { n: setting(null, 'global_max_parallel', 6) });
+  w.append(el('span', null, tr('parallel')));
+  const s = el('select');
+  for (const v of PAR_STEPS.includes(cur) ? PAR_STEPS : [...PAR_STEPS, cur].sort((a, b) => a - b)) { const o = el('option', null, v ? String(v) : tr('unlimited')); o.value = String(v); if (v === cur) o.selected = true; s.append(o); }
+  s.addEventListener('change', () => act('project-parallel', p.key, s.value));
+  w.append(s);
+  return w;
+}
 function head(title, sub, extra) {
   const h = el('div', 'board-head');
   const left = el('div');
@@ -1292,7 +1304,7 @@ function renderProject(root, p) {
   root.append(back);
   const sub = [];
   if (p.repo) sub.push(el('span', 'num', p.repo.replace(/^\/Users\/[^/]+/, '~')));
-  sub.push(el('span', null, tr('review {policy}', { policy: setting(p.key, 'review', 'ask') })), el('span', null, tr('parallel {n}', { n: setting(p.key, 'max_parallel', 3) })));
+  sub.push(el('span', null, tr('review {policy}', { policy: setting(p.key, 'review', 'ask') })), parallelControl(p));
   if (p.doc_slug) {
     const base = bl.data.artiBase;
     if (base) { const a = el('a', null, tr('doc: {slug}', { slug: p.doc_slug })); a.href = `${base.replace(/\/$/, '')}/s/${encodeURIComponent(p.doc_slug)}`; a.target = '_blank'; a.rel = 'noopener'; sub.push(a); }

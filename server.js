@@ -47,6 +47,7 @@ function blArgs(b) {
       const v = String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
       return k && v && ['project', 'set', k, `name=${v}`];
     }
+    case 'project-parallel': return k && /^(0|[1-9]|[12][0-9]|3[0-2])$/.test(String(value)) && ['config', `project:${k}`, 'max_parallel', String(value)];
     case 'project-evergreen': return k && ['project', 'set', k, `evergreen=${value ? 1 : 0}`];
     case 'daemon-pause': case 'daemon-resume': return ['daemon', action.slice(7)];
     case 'quota-clear': return key == null ? ['quota', 'clear'] : k && ['config', k, 'quota_until', '""'];

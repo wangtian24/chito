@@ -18,7 +18,7 @@ SATISFIED = ("done", "canceled")          # states that unblock dependents
 ACTIVE = ("todo", "in_progress", "in_review", "failed")   # what `run --until done` waits on
 
 DEFAULTS = {
-    "max_parallel": 3,          # per project
+    "max_parallel": 0,          # per project; 0 = no project cap, only the global one
     "global_max_parallel": 6,   # tickets in flight across all projects and executors
     "daemon_enabled": True,
     "daemon_max_parallel": 6,   # daemon's share of the global cap
@@ -168,6 +168,14 @@ def event(c, kind, ticket=None, project=None, body="", data=None, actor=None):
         project = r["project"] if r else None
     c.execute("INSERT INTO events(ticket,project,kind,actor,body,data,at,session_id) VALUES(?,?,?,?,?,?,?,?)",
               (ticket, project, kind, actor or agent_id(), body, json.dumps(data or {}), now(), session_id()))
+
+def project_cap(c, project):
+    """A project's own cap on tickets in flight, or None: no cap of its own (the global cap still holds)."""
+    try:
+        v = int(setting(c, "max_parallel", project) or 0)
+    except (TypeError, ValueError):
+        v = 0
+    return v if v > 0 else None
 
 def setting(c, key, project=None, labels=()):
     repo = None
@@ -536,8 +544,8 @@ def claim(c, project=None, key=None, agent=None, lease=None, force=False, mode="
             if c.execute("SELECT count(*) FROM tickets WHERE state='in_progress'").fetchone()[0] >= gmax:
                 return None, f"global cap reached ({gmax} in progress)"
             if project:
-                pmax = setting(c, "max_parallel", project)
-                if c.execute("SELECT count(*) FROM tickets WHERE state='in_progress' AND project=?",
+                pmax = project_cap(c, project)
+                if pmax and c.execute("SELECT count(*) FROM tickets WHERE state='in_progress' AND project=?",
                              (project,)).fetchone()[0] >= pmax:
                     return None, f"project cap reached ({pmax} in progress in {project})"
         rows = ready(c, project, agent, key, None if force else mode, include_paused=force)
@@ -1296,7 +1304,7 @@ def cmd_resolve(a):
 
 def orchestrator_prompt(c, proj, agent):
     p = project_row(c, proj)
-    n = setting(c, "max_parallel", proj)
+    n = project_cap(c, proj) or setting(c, "global_max_parallel")
     docs = f"\nDesign doc: {p['doc_slug']} ({setting(c, 'doc_hint', proj)})." if p["doc_slug"] else ""
     ins = (p["instructions"] or "").strip()
     standing = (f"\n\n## Standing instructions from the user\nFollow these over the defaults below (the safety rule at the end still holds). Pass the ones that matter to each subagent.\n{ins}\n"
@@ -1661,7 +1669,7 @@ def cmd_run(a):
             c.execute("INSERT OR REPLACE INTO settings VALUES(?,?,?)", (f"project:{proj}", "max_parallel", json.dumps(a.parallel)))
     if a.dry_run:
         waves, by = levels(c, proj)
-        print(f"{proj}: max_parallel={setting(c, 'max_parallel', proj)} global={setting(c, 'global_max_parallel')} "
+        print(f"{proj}: max_parallel={project_cap(c, proj) or 'unlimited'} global={setting(c, 'global_max_parallel')} "
               f"review={setting(c, 'review', proj)} model={setting(c, 'model', proj)}")
         for i, w in enumerate(waves):
             runnable = [k for k in w if by[k]["state"] == "todo" and by[k]["assignee"] in (None, "")]
@@ -1699,7 +1707,7 @@ def cmd_run(a):
                 reap(c)
             collect_children(c, children, me, proj)
             # spawn
-            while len(children) < setting(c, "max_parallel", proj):
+            while len(children) < (project_cap(c, proj) or setting(c, "global_max_parallel")):
                 ag = f"{me}:{len(children)}:{int(time.time()) % 100000}"
                 t, why = claim(c, proj, agent=ag)
                 if not t:

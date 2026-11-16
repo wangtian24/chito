@@ -1586,3 +1586,5 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-table.bl-all td.c-prs .bl-pr { display: inline-block; }
 .bl-table.bl-all td.c-project a { max-width: 13ch; }
 .bl-table.bl-all td.c-title, .bl-table.bl-all th.c-title { width: 100%; min-width: 30ch; }
+.bl-par { display: inline-flex; align-items: center; gap: 4px; }
+.bl-par select { height: 22px; padding: 0 4px; border: 1px solid var(--color-rule); border-radius: var(--radius-ctl); background: var(--color-sheet); color: var(--color-ink); font: 500 12.5px var(--font-display); }

@@ -403,7 +403,6 @@ export default {
   "{n} more": "还有 {n} 个",
   "All projects": "所有项目",
   "review {policy}": "审核方式 {policy}",
-  "parallel {n}": "并行 {n}",
   "Total": "合计",
   "Orchestration and shared sessions": "编排与共享会话",
   "Nominal list prices from transcripts; not billed on a subscription.": "根据记录按标价估算；订阅制下不实际计费。",
@@ -684,4 +683,7 @@ export default {
   "Showing all states": "显示全部状态",
   "{n} of {total} tickets": "{total} 个工单中的 {n} 个",
   "Columns": "列",
+  "How many of this project's tickets run at once. Unlimited: only the overall cap ({n}) applies.": "这个项目同时运行的工单数。不限：只受总上限（{n}）约束。",
+  "parallel": "并行",
+  "unlimited": "不限",
 };
