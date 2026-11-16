@@ -1545,3 +1545,7 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-d-proj::after { content: "→"; color: var(--color-muted); }
 .bl-d-proj:hover { border-color: var(--color-accent); color: var(--color-ink); }
 .bl-d-proj + .btn.icon { margin-left: var(--space-xs); }
+.dp-backup { margin: -8px 0 var(--space-lg); font: 400 12.5px/1.45 var(--font-body); color: var(--color-muted); }
+.dp-backup a { color: var(--color-ink-2); }
+.dp-backup-err { color: var(--bl-failed); }
+.deploy-inner .board-head .btn { white-space: nowrap; }

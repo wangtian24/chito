@@ -655,4 +655,9 @@ export default {
   "Show {n} dismissed": "显示已忽略的 {n} 项",
   "Open in a new tab": "在新标签页中打开",
   "Go to project {key}": "前往项目 {key}",
+  "Backup off: chito does not start missed scheduled deploys (CHITO_DEPLOY_BACKUP=0).": "备援已关闭：chito 不会补发错过的计划部署（CHITO_DEPLOY_BACKUP=0）。",
+  "Backup: GitHub sometimes skips scheduled runs, so {n} minutes after each one chito checks; if it never started and main has something new, chito starts the deploy.": "备援：GitHub 有时会跳过计划运行，所以 chito 会在每次计划时间后 {n} 分钟检查；若那次没有启动且 main 有新内容，chito 会启动部署。",
+  "Last check {ago}: started one.": "上次检查（{ago}）：已启动一次部署。",
+  "Last check {ago}: nothing to do ({why}).": "上次检查（{ago}）：无需操作（{why}）。",
+  "Last check failed: {err}": "上次检查失败：{err}",
 };

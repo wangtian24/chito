@@ -179,6 +179,22 @@ function releaseKnot(rel, count, isLive) {
   return li;
 }
 
+// chito backs up GitHub's schedule: what it does, and what it did last.
+function backupLine() {
+  const b = data.backup || {};
+  const p = el('p', 'dp-backup');
+  if (!b.enabled) { p.textContent = t('Backup off: chito does not start missed scheduled deploys (CHITO_DEPLOY_BACKUP=0).'); return p; }
+  p.append(t('Backup: GitHub sometimes skips scheduled runs, so {n} minutes after each one chito checks; if it never started and main has something new, chito starts the deploy.', { n: b.afterMinutes || 30 }));
+  if (b.lastAt) {
+    const last = el('span', 'dp-backup-last');
+    last.append(' ', b.lastAction === 'started' ? t('Last check {ago}: started one.', { ago: ctx.fmtRelAgo(b.lastAt) }) : t('Last check {ago}: nothing to do ({why}).', { ago: ctx.fmtRelAgo(b.lastAt), why: String(b.lastAction || '').replace(/^skipped: /, '') }));
+    if (b.lastUrl) last.append(' ', ext(b.lastUrl, t('run')));
+    p.append(last);
+  }
+  if (b.lastError) p.append(' ', el('span', 'dp-backup-err', t('Last check failed: {err}', { err: b.lastError })));
+  return p;
+}
+
 function chain() {
   const ol = el('ol', 'dp-chain');
   const commits = data.commits;
@@ -243,5 +259,6 @@ export function renderDeploy() {
   if (!data) { root.append(el('div', 'board-status', t('Loading…'))); return; }
   root.append(head(), stats());
   if (data.runsError) root.append(el('div', 'board-status', t('GitHub run status unavailable: {err}', { err: data.runsError })));
+  root.append(backupLine());
   root.append(chain());
 }
