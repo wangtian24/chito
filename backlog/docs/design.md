@@ -113,6 +113,10 @@ Switches: `bl daemon pause|resume` (or the button in chito), `bl daemon status`,
 
 **Speculation (stacked branches)**, opt-in per project (`bl config project:P speculate true`): when a worker's code is written, pushed and its PR is open, it runs `bl stage KEY --branch B --pr URL` before its final tests. A ticket whose unfinished blockers are all staged then counts as ready; its worktree starts from `origin/B` and its prompt says so. It may not merge (the PreToolUse hook and `bl done` refuse) until every blocker is done; then it rebases onto main, re-runs its scoped tests and merges. Re-staging tells running followers to rebase; a staged ticket that goes back to todo or fails is unstaged and its followers are warned. This overlaps each ticket's test-and-merge tail with the next ticket's work on serial chains. Showcase tickets, tickets titled "Deploy…", and tickets with `meta.speculate=false` (`bl set KEY meta.speculate=false`) never start speculatively.
 
+**Parking (a merge queue)**, for self-merge: a worker whose PR is ready but may not merge yet (blockers unfinished, or main red) runs `bl park KEY --pr URL`. The ticket goes back to todo without using an attempt (a staged branch stays staged), its slot frees, and `ready()` skips it until what it waits for has happened (`meta.parked.until`: blockers, main or both); speculation doesn't wake it. The daemon then resumes the same session with a prompt to rebase onto main, re-test and merge. Claiming clears the flag.
+
+All the mechanisms on one page: [mechanisms.md](mechanisms.md).
+
 **Main health** (`bl main`): a job outside bl tests the repo's main and records `bl main red --sha … --green-sha … --suites … --ticket FIX` or `bl main green --sha …` (settings `repo:<path>` / `main_health`). While main is red, every worker prompt in that repo opens with a "MAIN IS RED" banner (work on the last green commit, don't chase others' failures, `bl main wait`, release a ready PR), and the PreToolUse hook (`bl hook pre-tool`) denies `gh pr merge` and rebases or pulls onto main for every ticket but the fix ticket. `bl main` exits 1 when red.
 
 ## 5b2. Human tickets get a briefing session

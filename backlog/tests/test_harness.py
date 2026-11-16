@@ -271,6 +271,29 @@ class TldrAndRepoScopeTest(HarnessTest):
         c.execute("UPDATE tickets SET state='done' WHERE key='A-1'")
         self.assertIsNone(bl["blockers_unfinished_reason"](c, "A-2"))
 
+    def test_park_waits_for_blockers_then_resumes(self):
+        c, bl = self.c, self.bl
+        c.execute("INSERT INTO tickets(key,project,title,state,created,updated) VALUES('A-2','A','follower','in_progress','x','x')")
+        c.execute("UPDATE tickets SET claimed_by='w2' WHERE key='A-2'")
+        c.execute("INSERT INTO deps(ticket,blocker) VALUES('A-2','A-1')")
+        c.execute("UPDATE tickets SET state='in_progress', claimed_by='w1' WHERE key='A-1'")
+        ns = lambda **k: type("A", (), {"force": False, "until": None, "pr": "https://x/pr/2", **k})
+        with patch.dict(os.environ, {"BL_AGENT": "w2"}):
+            bl["cmd_park"](ns(key="A-2"))
+        t2 = c.execute("SELECT * FROM tickets WHERE key='A-2'").fetchone()
+        self.assertEqual(t2["state"], "todo")
+        self.assertEqual(bl["park_waiting"](c, t2), "blockers")
+        c.execute("UPDATE tickets SET meta=json_set(meta,'$.staged',json('{\"branch\":\"f\"}')) WHERE key='A-2'")
+        bl["cmd_park"].__globals__["release_ticket"](c, c.execute("SELECT * FROM tickets WHERE key='A-2'").fetchone(), "parked: x", keep_staged=True)
+        self.assertIn("staged", json.loads(c.execute("SELECT meta FROM tickets WHERE key='A-2'").fetchone()[0]))
+        self.assertNotIn("A-2", [t["key"] for t in bl["ready"](c, "A")])
+        c.execute("INSERT INTO settings VALUES('project:A','speculate','true')")
+        c.execute("UPDATE tickets SET meta=? WHERE key='A-1'", (json.dumps({"staged": {"branch": "b"}}),))
+        self.assertNotIn("A-2", [t["key"] for t in bl["ready"](c, "A")])   # parked: speculation doesn't wake it
+        c.execute("UPDATE tickets SET state='done' WHERE key='A-1'")
+        self.assertIn("A-2", [t["key"] for t in bl["ready"](c, "A")])
+        self.assertIn("rebase your branch onto origin/main", bl["resume_prompt"](t2, "in_progress → todo: parked: PR ready"))
+
     def test_project_cap_unlimited_by_default(self):
         self.assertIsNone(self.bl["project_cap"](self.c, "A"))
         self.c.execute("INSERT INTO settings VALUES('project:A','max_parallel','2')")

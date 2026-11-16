@@ -262,7 +262,8 @@ WHERE t.state='todo' {proj} {mode}
   AND (t.assignee IS NULL OR t.assignee=:agent)
   AND NOT EXISTS (SELECT 1 FROM deps d JOIN tickets b ON b.key=d.blocker
                   WHERE d.ticket=t.key AND b.state NOT IN ('done','canceled')
-                    AND NOT (b.state='in_progress' AND json_extract(b.meta,'$.staged.branch') IS NOT NULL
+                    AND NOT ((b.state='in_progress' OR json_extract(b.meta,'$.parked') IS NOT NULL)
+                             AND json_extract(b.meta,'$.staged.branch') IS NOT NULL
                              -- never speculative: showcases, deploys, and tickets with meta.speculate=false
                              AND json_extract(t.meta,'$.showcase_for') IS NULL AND lower(t.title) NOT LIKE 'deploy%'
                              AND coalesce(json_extract(t.meta,'$.speculate'), 1) NOT IN (0, 'false')
@@ -294,7 +295,48 @@ def ready(c, project=None, agent=None, only=None, mode=None, include_paused=Fals
                            mode=MODE_SQL[mode].replace("{orphan}", orphan_sql(c)))
     rows = c.execute(sql, {"project": project, "agent": agent or agent_id(), "only": only,
                            "adopt": 1 if setting(c, "orphan_policy") == "daemon" else 0}).fetchall()
+    rows = [t for t in rows if not park_waiting(c, t)]
     return rows if include_paused else [t for t in rows if not quota_until(c, t["project"])]
+
+# ---------------------------------------------------------------- parking (a merge queue)
+# A worker whose PR is ready but may not merge yet (blockers unfinished, or main red) runs `bl park KEY --pr URL`.
+# The ticket goes back to todo without using an attempt, the slot frees, and it stays out of ready() until what it
+# waits for has happened. Then the daemon resumes the same session (claude --resume) to rebase, re-test and merge.
+def park_waiting(c, t):
+    """What a parked ticket still waits for, or None when it may run (or isn't parked)."""
+    pk = json.loads(t["meta"]).get("parked")
+    if not pk:
+        return None
+    if pk.get("until") in ("blockers", "both") and open_blockers(c, t["key"]):
+        return "blockers"
+    if pk.get("until") in ("main", "both"):
+        p = project_row(c, t["project"])
+        if p["repo"] and main_red(c, str(Path(os.path.expanduser(p["repo"])).resolve())):
+            return "main"
+    return None
+
+def cmd_park(a):
+    c = connect()
+    with tx(c):
+        t = ticket(c, a.key); own_check(t, a)
+        if t["state"] != "in_progress":
+            die(f"{t['key']} is {t['state']}; park the ticket you hold")
+        p = project_row(c, t["project"])
+        red = p["repo"] and main_red(c, str(Path(os.path.expanduser(p["repo"])).resolve()))
+        until = a.until or ("both" if open_blockers(c, t["key"]) and red else "main" if red else "blockers")
+        m = json.loads(t["meta"])
+        m["parked"] = {"pr": a.pr, "until": until, "at": now(), "by": agent_id()}
+        c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(m), t["key"]))
+        what = {"blockers": "its blockers are done", "main": "main is green", "both": "its blockers are done and main is green"}[until]
+        new = release_ticket(c, ticket(c, t["key"]), f"parked: PR ready{' (' + a.pr + ')' if a.pr else ''}, waits until {what}",
+                             count_failure=False, keep_staged=True)
+    print(f"parked {t['key']} ({new}); it resumes when {what}")
+
+def unpark(c, key):
+    t = c.execute("SELECT meta FROM tickets WHERE key=?", (key,)).fetchone()
+    m = json.loads(t["meta"]) if t else {}
+    if m.pop("parked", None) is not None:
+        c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(m), key))
 
 def model_for(c, t):
     meta = json.loads(t["meta"])
@@ -576,8 +618,9 @@ def unstage_on_release(c, t, reason):
         event(c, "comment", f["key"], body=f"Your blocker {t['key']} went back ({reason}); its branch {br} may change or vanish. "
                                           "Don't merge until it is done; rebase onto whatever it finally merges.")
 
-def release_ticket(c, t, reason, count_failure=False, actor=None):
-    unstage_on_release(c, t, reason)
+def release_ticket(c, t, reason, count_failure=False, actor=None, keep_staged=False):
+    if not keep_staged:   # parking keeps its staged branch: its code stands, only the merge waits
+        unstage_on_release(c, t, reason)
     maxa = t["max_attempts"] or setting(c, "max_attempts", t["project"], json.loads(t["labels"]))
     if count_failure and t["attempts"] >= maxa:
         new = "failed"
@@ -678,6 +721,7 @@ def claim(c, project=None, key=None, agent=None, lease=None, force=False, mode="
             c.execute("UPDATE projects SET owner=?, owner_heartbeat=? WHERE key=? AND executor='session'",
                       (owner, now(), t["project"]))
         mins = lease or setting(c, "lease_minutes", t["project"], json.loads(t["labels"]))
+        unpark(c, t["key"])
         c.execute("UPDATE tickets SET state='in_progress', claimed_by=?, attempts=attempts+1, lease_until=?, "
                   "started=coalesce(started, ?), updated=? WHERE key=? AND state='todo'",
                   (agent, later(mins), now(), now(), t["key"]))
@@ -1140,8 +1184,8 @@ def red_banner(h, me=None):
         L += [f"- Don't rebase onto or merge into origin/main. Base your branch on the last green commit (`git rebase {g}`) "
               "and test there; hooks refuse `git rebase origin/main` and `gh pr merge` while main is red.",
               "- Failures in code you didn't touch are main's, not yours: don't chase them.",
-              "- PR ready? `bl main wait` (waits up to 30 min for green). Still red: `bl release $BL_TICKET --reason "
-              "\"PR #N ready, waiting for green main\"` so the next worker rebases and merges it.", ""]
+              "- PR ready? `bl park $BL_TICKET --pr <url>`: it frees your slot, and you are resumed (same session) "
+              "when main is green, to rebase, re-test and merge.", ""]
     return L
 
 def cmd_main(a):
@@ -1196,14 +1240,14 @@ def pre_tool_guard(c, data):
     if what == "merge":
         why = blockers_unfinished_reason(c, tk)
         if why:
-            return f"{tk} is {why}. Keep the PR ready; `bl show` the blocker every few minutes."
+            return f"{tk} is {why}. Don't wait in the session: `bl park {tk} --pr <url>` frees your slot and resumes you when they are done."
     h = main_red(c, main_repo(c))
     if not h or h.get("ticket") == tk:
         return None
     g = (h.get("green_sha") or "")[:9]
     return (f"main is red since {(h.get('red_sha') or '')[:9]} (failing: {h.get('suites')}; fix ticket {h.get('ticket') or 'being filed'}). "
             f"Don't {what} now. Work on the last green commit (`git rebase {g}`), and when your PR is ready run "
-            f"`bl main wait`; if still red, `bl release {tk} --reason \"PR ready, waiting for green main\"`.")
+            f"`bl park {tk} --pr <url>`: you are resumed when main is green.")
 
 def area_notes(c, project, kind, days=None, limit=30):
     q = "SELECT * FROM notes WHERE project=? AND kind=? AND archived IS NULL"
@@ -1335,8 +1379,8 @@ def build_prompt(c, t, compact=False):
                   "- Work and test as usual. If a blocker's branch moves (a comment or `bl say` tells you), rebase onto it.",
                   "- Do NOT merge until every blocker is done (`bl show KEY`); the hook and `bl done` refuse. Then rebase onto "
                   "origin/main, re-run your scoped tests, and merge.",
-                  "- If your PR is ready and a blocker is still running, wait a while (`bl show` it every few minutes); if it is "
-                  f"taking long, `bl release {t['key']} --reason \"PR ready, waiting for <blocker>\"` with your PR in a comment.", ""]
+                  f"- When your PR is ready and a blocker is still running: `bl park {t['key']} --pr <url>`. That frees your "
+                  "slot; the daemon resumes this same session once every blocker is done, to rebase onto main, re-test and merge.", ""]
         L += project_now(c, t)
         if comments:
             L.append("## Notes on this ticket (newest first)")
@@ -1724,7 +1768,7 @@ def staged_of(t):
 def speculative_bases(c, key):
     """(blocker key, branch, pr) for every unfinished blocker this ticket is starting on top of."""
     return [(b["key"], staged_of(b)["branch"], staged_of(b).get("pr")) for b in open_blockers(c, key)
-            if b["state"] == "in_progress" and (staged_of(b) or {}).get("branch")]
+            if (b["state"] == "in_progress" or json.loads(b["meta"]).get("parked")) and (staged_of(b) or {}).get("branch")]
 
 def cmd_stage(a):
     c = connect()
@@ -2009,6 +2053,11 @@ def previous_session(c, t, cwd):
 
 def resume_prompt(t, why):
     k, p = t["key"], t["project"]
+    if why.startswith("in_progress → todo: parked") or "parked:" in why:
+        return (f"You are resuming backlog ticket {k} in project {p}: you parked it with your PR ready ({why[:200]}), and what "
+                f"it waited for has happened. Now: `git fetch`, rebase your branch onto origin/main (your blockers are merged), "
+                f"resolve any conflicts, run your scoped tests again (health, lint, your unit files, your e2e suites, smoke), push, "
+                f"merge the PR, and finish with bl done (or bl fail if it no longer works).")
     return (f"You are resuming backlog ticket {k} in project {p} after an interruption ({why[:200]}). Your earlier work "
             f"in this session and in this worktree is still here. You hold the ticket again. Before continuing: run "
             f"`git status` and `git log --oneline -5` to see where you stopped, `bl show {k}` for new notes, and "
@@ -2786,6 +2835,9 @@ def main():
     p.add_argument("--final", action="store_true", help="skip review: go straight to done")
     p.add_argument("--force-merge", dest="force_merge", action="store_true", help="mark done even though a linked PR is not merged")
     p = P("fail", cmd_fail); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--tldr", help="for the human: " + TLDR_RULE); p.add_argument("--force", action="store_true")
+    p = P("park", cmd_park, help="PR ready but can't merge yet (blockers or red main): free the slot; resume when it can")
+    p.add_argument("key"); p.add_argument("--pr"); p.add_argument("--until", choices=["blockers", "main", "both"])
+    p.add_argument("--force", action="store_true")
     p = P("stage", cmd_stage, help="code done and PR open, tests running: let dependents start on your branch (speculate)")
     p.add_argument("key"); p.add_argument("--branch"); p.add_argument("--pr"); p.add_argument("--clear", action="store_true")
     p.add_argument("--force", action="store_true")
