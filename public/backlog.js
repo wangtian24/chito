@@ -862,54 +862,97 @@ function pics(list, cls) {
 
 // '· created 3h ago', the exact time on hover.
 const ago = iso => { const s = el('span', 'bl-needs-ago', ' · ' + tr('created {ago}', { ago: ctx.fmtRelAgo(iso) })); s.title = ctx.fmtDateTime(iso); return s; };
+// Dismissing an item hides it from "Waiting on you" (per browser) until it changes: a new state, a new
+// handoff, another attempt. The dismissed ones stay one click away at the foot of the panel.
+const needSig = t => [t.state, t.meta?.handoff?.phase || '', t.meta?.handoff?.ready_at || '', t.attempts || 0].join('|');
+const msSig = m => `ms|${m.status}`;
+function dismissedMap() { const d = store.get('blNeedsDismissed', {}); return d && typeof d === 'object' ? d : {}; }
+function setDismissed(id, sig) {
+  const d = dismissedMap();
+  if (sig) d[id] = sig; else delete d[id];
+  store.set('blNeedsDismissed', d);
+  renderBacklog();
+}
+function dismissBtn(id, sig, restore) {
+  const b = el('button', `btn icon bl-needs-x${restore ? ' restore' : ''}`); b.type = 'button';
+  b.title = restore ? tr('Put it back in Waiting on you') : tr('Dismiss: hide it until it changes');
+  b.setAttribute('aria-label', b.title);
+  b.innerHTML = restore ? '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>'
+    : '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setDismissed(id, restore ? null : sig); });
+  return b;
+}
+function needRow(t) {
+  const row = el('div', 'bl-needs-row');
+  if (openKey() === t.key) row.classList.add('sel');
+  const title = linkTo(el('a', 'bl-needs-title'), openPath(t));
+  title.append(el('span', 'num', t.key), el('span', null, t.title));
+  const why = el('span', 'bl-needs-why', needReason(t));
+  if (t.created) why.append(ago(t.created));
+  const act = el('div', 'bl-needs-act');
+  const b = t.meta?.brief;
+  const sess = answerSession(t);
+  if (t.meta?.handoff?.packet) act.append(linkTo(el('a', 'btn primary bl-open-handoff', tr('Open handoff')), openPath(t)));
+  else if (b?.pending) act.append(el('span', 'bl-needs-pending', tr('Preparing a briefing')));
+  if (sess) {
+    const open = sessionLink(sess, sess.kind === 'Briefing' ? tr('Read the briefing') : SESS_KIND[sess.kind] || sess.kind);
+    const term = el('button', `btn${sess.kind === 'Briefing' && !t.meta?.handoff?.packet ? ' primary' : ''}`, tr('Answer in terminal')); term.type = 'button';
+    term.title = sess.title ? tr('Resume {title} in your terminal and reply there', { title: sess.title }) : tr('Resume the session in your terminal and reply there');
+    term.addEventListener('click', e => { e.stopPropagation(); openInTerminal(sess.id); });
+    act.append(open, term);
+  } else if (!b?.pending) act.append(el('span', 'bl-needs-pending', tr('No session yet')));
+  if (b?.error) act.append(el('span', 'bl-needs-pending', tr('Briefing failed; the daemon retries after a restart')));
+  if (t.meta?.handoff?.phase) row.classList.add(`ph-${t.meta.handoff.phase}`);
+  row.append(title, why, act);
+  return row;
+}
+function msRow(m) {
+  const row = el('div', 'bl-needs-row');
+  const title = linkTo(el('a', 'bl-needs-title'), projPath(m.project)); title.append(el('span', 'num', m.key), el('span', null, m.title));
+  const act = msActions(m); act.className = 'bl-needs-act';
+  if (!showcasePage(m)) { const a = linkTo(el('a', 'btn bl-act', tr('See showcase')), projPath(m.project)); a.title = tr("The milestone card on the project's roadmap"); act.prepend(a); }
+  const mwhy = el('span', 'bl-needs-why', tr('Review the showcase, then accept or reopen'));
+  if (m.created) mwhy.append(ago(m.created));
+  row.append(title, mwhy, act);
+  return row;
+}
 function needsYouPanel(tks) {
-  const items = tks.filter(needsYou);
+  const all = tks.filter(needsYou);
+  const allMs = (bl.data.milestones || []).filter(m => m.status === 'showcased' && tks.some(t => t.project === m.project));
+  const dis = dismissedMap();
+  const isDis = (id, sig) => dis[id] === sig;
+  const items = all.filter(t => !isDis(t.key, needSig(t)));
+  const ms = allMs.filter(m => !isDis(m.key, msSig(m)));
+  const gone = [...all.filter(t => isDis(t.key, needSig(t))).map(t => ['t', t]), ...allMs.filter(m => isDis(m.key, msSig(m))).map(m => ['m', m])];
   bl.needsOrder = items;
-  const ms = (bl.data.milestones || []).filter(m => m.status === 'showcased' && tks.some(t => t.project === m.project));
-  if (!items.length && !ms.length) return null;
+  if (!all.length && !allMs.length) return null;
   const open = store.get('blNeedsOpen', true);
-  const box = el('div', `bl-needs${open ? '' : ' folded'}`);
+  const box = el('div', `bl-needs${open ? '' : ' folded'}${items.length + ms.length ? '' : ' clear'}`);
   // The header is the toggle: folding keeps the count in view, so nothing hides silently.
   const h = el('button', 'bl-needs-head'); h.type = 'button';
   h.innerHTML = '<svg class="bl-needs-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
   h.append(el('b', null, tr('Waiting on you')), el('span', 'num', String(items.length + ms.length)));
+  if (gone.length) h.append(el('span', 'bl-needs-dis-count', tr('{n} dismissed', { n: gone.length })));
   const sync = o => { box.classList.toggle('folded', !o); h.setAttribute('aria-expanded', String(o)); h.title = o ? tr('Fold this list') : tr('Show what is waiting on you'); };
   sync(open);
   h.addEventListener('click', () => { const o = box.classList.contains('folded'); store.set('blNeedsOpen', o); sync(o); });
   box.append(h);
-  for (const t of items) {
-    const row = el('div', 'bl-needs-row');
-    if (openKey() === t.key) row.classList.add('sel');
-    const title = linkTo(el('a', 'bl-needs-title'), openPath(t));
-    title.append(el('span', 'num', t.key), el('span', null, t.title));
-    const why = el('span', 'bl-needs-why', needReason(t));
-    if (t.created) why.append(ago(t.created));
-    const act = el('div', 'bl-needs-act');
-    const b = t.meta?.brief;
-    const sess = answerSession(t);
-    if (t.meta?.handoff?.packet) act.append(linkTo(el('a', 'btn primary bl-open-handoff', tr('Open handoff')), openPath(t)));
-    else if (b?.pending) act.append(el('span', 'bl-needs-pending', tr('Preparing a briefing')));
-    if (sess) {
-      const open = sessionLink(sess, sess.kind === 'Briefing' ? tr('Read the briefing') : SESS_KIND[sess.kind] || sess.kind);
-      const term = el('button', `btn${sess.kind === 'Briefing' && !t.meta?.handoff?.packet ? ' primary' : ''}`, tr('Answer in terminal')); term.type = 'button';
-      term.title = sess.title ? tr('Resume {title} in your terminal and reply there', { title: sess.title }) : tr('Resume the session in your terminal and reply there');
-      term.addEventListener('click', e => { e.stopPropagation(); openInTerminal(sess.id); });
-      act.append(open, term);
-    } else if (!b?.pending) act.append(el('span', 'bl-needs-pending', tr('No session yet')));
-    if (b?.error) act.append(el('span', 'bl-needs-pending', tr('Briefing failed; the daemon retries after a restart')));
-    if (t.meta?.handoff?.phase) row.classList.add(`ph-${t.meta.handoff.phase}`);
-    row.append(title, why, act);
-    box.append(row);
-  }
-  for (const m of ms) {
-    const row = el('div', 'bl-needs-row');
-    const title = linkTo(el('a', 'bl-needs-title'), projPath(m.project)); title.append(el('span', 'num', m.key), el('span', null, m.title));
-    const act = msActions(m); act.className = 'bl-needs-act';
-    if (!showcasePage(m)) { const a = linkTo(el('a', 'btn bl-act', tr('See showcase')), projPath(m.project)); a.title = tr("The milestone card on the project's roadmap"); act.prepend(a); }
-    const mwhy = el('span', 'bl-needs-why', tr('Review the showcase, then accept or reopen'));
-    if (m.created) mwhy.append(ago(m.created));
-    row.append(title, mwhy, act);
-    box.append(row);
+  for (const t of items) { const row = needRow(t); row.append(dismissBtn(t.key, needSig(t))); box.append(row); }
+  for (const m of ms) { const row = msRow(m); row.append(dismissBtn(m.key, msSig(m))); box.append(row); }
+  if (!items.length && !ms.length) box.append(el('div', 'bl-needs-row bl-needs-none', tr('Nothing new waiting on you.')));
+  if (gone.length) {
+    const showDis = store.get('blNeedsShowDismissed', false);
+    const foot = el('button', 'bl-needs-dis-toggle'); foot.type = 'button';
+    foot.textContent = showDis ? tr('Hide dismissed') : tr('Show {n} dismissed', { n: gone.length });
+    foot.setAttribute('aria-expanded', String(showDis));
+    foot.addEventListener('click', () => { store.set('blNeedsShowDismissed', !showDis); renderBacklog(); });
+    box.append(foot);
+    if (showDis) for (const [k, x] of gone) {
+      const row = k === 't' ? needRow(x) : msRow(x);
+      row.classList.add('dismissed');
+      row.append(dismissBtn(x.key, null, true));
+      box.append(row);
+    }
   }
   return box;
 }
@@ -984,7 +1027,8 @@ function renderLanes(root) {
   let projects = d.projects.filter(p => p.status !== 'archived');
   const all = d.tickets;
   const running = all.filter(t => t.state === 'in_progress').length;
-  const you = all.filter(needsYou).length;
+  const dis = dismissedMap();
+  const you = all.filter(t => needsYou(t) && dis[t.key] !== needSig(t)).length;   // dismissed ones don't count
   const sub = [factRow('', trp(projects.length, '{n} project', '{n} projects'), tr('{n} in progress', { n: running }), you ? tr('{n} waiting on you', { n: you }) : tr('nothing waiting on you'))];
   root.append(head(tr('Projects'), sub, headRight()));
   const tab = currentTab();
