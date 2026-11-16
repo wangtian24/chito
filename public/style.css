@@ -1614,3 +1614,98 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-compact-row.needs-you .bl-compact-title { color: var(--bl-failed); font-weight: 600; }
 .bl-compact-row.needs-you.dismissed { background: color-mix(in srgb, var(--bl-failed) 6%, var(--color-sheet)); }
 .bl-compact-row.needs-you.dismissed .bl-compact-title { color: color-mix(in srgb, var(--bl-failed) 55%, var(--color-sheet)); font-weight: inherit; }
+
+/* ---- Factory tab: the software factory floor ---- */
+.fx-top { display: grid; grid-template-columns: auto repeat(4, minmax(0, 1fr)); gap: var(--space-sm); align-items: stretch; margin: var(--space-md) 0 var(--space-xs); }
+.fx-gauge { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 2px; padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-rule-sheet); border-radius: var(--radius-ctl); background: var(--color-sheet); }
+.fx-gauge::after { content: ""; position: absolute; inset: auto 0 0 0; height: 3px; background: repeating-linear-gradient(90deg, var(--color-accent) 0 10px, transparent 10px 20px); opacity: .35; animation: fx-belt 1.6s linear infinite; }
+.fx-g-label { font: 600 12px var(--font-display); color: var(--color-muted); text-transform: none; }
+.fx-g-value { font: 700 26px/1.1 var(--font-display); color: var(--color-ink); }
+.fx-g-sub { font-size: 12px; color: var(--color-muted); }
+.fx-gauge-ring { flex-direction: row; align-items: center; gap: var(--space-sm); }
+.fx-ring-wrap { position: relative; width: 84px; height: 84px; }
+.fx-ring { width: 84px; height: 84px; }
+.fx-ring-bg { fill: none; stroke: var(--color-rule-sheet); stroke-width: 8; }
+.fx-ring-fg { fill: none; stroke: var(--color-accent); stroke-width: 8; stroke-linecap: round; transition: stroke-dasharray .8s ease; }
+.fx-ring-mid { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 2px; }
+.fx-ring-mid b { font: 700 22px var(--font-display); color: var(--color-ink); }
+.fx-ring-mid span { font-size: 12px; color: var(--color-muted); }
+.fx-spark { margin-top: 2px; height: 28px; }
+.fx-spark svg { width: 100%; height: 28px; }
+.fx-spark polyline { fill: none; stroke: var(--color-accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.fx-note { margin: 0 0 var(--space-md); font-size: 12px; color: var(--color-muted); }
+.fx-floor { position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-sm); padding: var(--space-md); border-radius: var(--radius-ctl);
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-ink) 4%, transparent) 0 2px, transparent 2px 14px), var(--color-sheet-2, var(--color-sheet)); border: 1px solid var(--color-rule-sheet); }
+.fx-floor::before { content: "⚙"; position: absolute; top: -14px; right: 14px; font-size: 22px; color: var(--color-muted); animation: fx-spin 6s linear infinite; }
+.fx-slot { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 6px; min-height: 124px; padding: 10px 10px 8px; border-radius: var(--radius-ctl); text-decoration: none; color: var(--color-ink);
+  border: 1px solid color-mix(in srgb, var(--fx-proj) 55%, var(--color-sheet)); border-top: 4px solid var(--fx-proj);
+  background: color-mix(in srgb, var(--fx-proj) 10%, var(--color-sheet)); transition: transform .15s ease, box-shadow .15s ease; }
+.fx-slot:hover { transform: translateY(-2px); box-shadow: 0 4px 14px color-mix(in srgb, var(--fx-proj) 30%, transparent); }
+.fx-slot:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.fx-slot::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--fx-proj) 18%, transparent) 50%, transparent 70%); transform: translateX(-100%); animation: fx-shimmer 3.2s ease-in-out infinite; pointer-events: none; }
+.fx-slot-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fx-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--fx-proj); box-shadow: 0 0 0 0 var(--fx-proj); animation: fx-pulse 1.8s ease-out infinite; }
+.fx-proj { font-size: 11.5px; font-weight: 600; color: color-mix(in srgb, var(--fx-proj) 80%, var(--color-ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-model { margin-left: auto; font-size: 11px; color: var(--color-muted); white-space: nowrap; }
+.fx-ticket { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font: 500 13px/1.3 var(--font-display); }
+.fx-key { margin-right: 4px; color: var(--color-muted); font-weight: 600; }
+.fx-slot-foot { margin-top: auto; display: flex; gap: 8px; font-size: 11.5px; color: var(--color-muted); }
+.fx-slot-foot b { margin-left: auto; color: var(--color-ink); }
+.fx-slot.idle { align-items: center; justify-content: center; border: 1.5px dashed var(--color-rule); background: transparent; }
+.fx-slot.idle::after { display: none; }
+.fx-slot-n { position: absolute; top: 6px; left: 8px; font-size: 11px; color: var(--color-muted); }
+.fx-idle { font: 500 12px var(--font-display); color: var(--color-muted); letter-spacing: .02em; }
+@keyframes fx-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fx-proj) 60%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes fx-shimmer { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(100%); } }
+@keyframes fx-belt { to { background-position: 20px 0; } }
+@keyframes fx-spin { to { transform: rotate(360deg); } }
+@media (max-width: 1100px) { .fx-top { grid-template-columns: repeat(3, minmax(0, 1fr)); } .fx-floor { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .fx-top { grid-template-columns: 1fr 1fr; } .fx-floor { grid-template-columns: 1fr 1fr; } }
+@media (prefers-reduced-motion: reduce) { .fx-dot, .fx-slot::after, .fx-gauge::after, .fx-floor::before { animation: none; } }
+
+/* the hamster wheel */
+.fx-hamster { position: absolute; right: 4px; bottom: 24px; width: 58px; height: 60px; opacity: .95; pointer-events: none; }
+.fx-slot.idle .fx-hamster { position: static; width: 40px; height: 42px; opacity: .45; }
+.fx-hamster svg { width: 100%; height: 100%; overflow: visible; }
+.fx-stand line { stroke: var(--color-muted); stroke-width: 2.2; stroke-linecap: round; }
+.fx-wheel { transform-origin: 30px 30px; transform-box: view-box; animation: fx-spin var(--fx-spin, 1.6s) linear infinite; }
+.fx-hamster.still .fx-wheel { animation: none; }
+.fx-wheel circle { fill: color-mix(in srgb, var(--color-sheet) 70%, transparent); stroke: color-mix(in srgb, var(--fx-proj, var(--color-muted)) 70%, var(--color-ink)); stroke-width: 2; }
+.fx-wheel .fx-rim { fill: none; stroke-width: .8; stroke-dasharray: 2 2.5; }
+.fx-wheel line { stroke: color-mix(in srgb, var(--fx-proj, var(--color-muted)) 45%, var(--color-sheet)); stroke-width: .9; }
+.fx-wheel .fx-hub { fill: var(--color-muted); stroke: none; }
+.fx-ham { animation: fx-bob calc(var(--fx-spin, 1.6s) / 3) ease-in-out infinite alternate; }
+.fx-body { fill: #d9a066; stroke: #8a5a2b; stroke-width: .6; }
+.fx-belly { fill: #f3dcc0; }
+.fx-ear { fill: #f1a7a7; stroke: #8a5a2b; stroke-width: .5; }
+.fx-eye, .fx-nose { fill: #2a1a10; }
+.fx-tail { fill: none; stroke: #8a5a2b; stroke-width: .9; stroke-linecap: round; }
+.fx-leg line { stroke: #8a5a2b; stroke-width: 1.3; stroke-linecap: round; }
+.fx-leg-a { animation: fx-step calc(var(--fx-spin, 1.6s) / 3) steps(1) infinite; }
+.fx-leg-b { animation: fx-step calc(var(--fx-spin, 1.6s) / 3) steps(1) infinite reverse; }
+.fx-slot .fx-ticket { padding-right: 56px; }
+@keyframes fx-bob { from { transform: translateY(0); } to { transform: translateY(-1.2px); } }
+@keyframes fx-step { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .fx-wheel, .fx-ham, .fx-leg-a, .fx-leg-b { animation: none; } .fx-leg-b { opacity: 0; } }
+
+/* Shipped: per-hour stacks of finished tickets */
+.fx-ship { margin: var(--space-lg) 0 var(--space-md); padding: var(--space-md); border: 1px solid var(--color-rule-sheet); border-radius: var(--radius-ctl); background: var(--color-sheet); }
+.fx-ship-head { display: flex; align-items: baseline; gap: var(--space-sm); flex-wrap: wrap; }
+.fx-ship-head .bl-h2 { margin: 0; }
+.fx-ship-sum { font-size: 12.5px; color: var(--color-muted); }
+.fx-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: var(--space-sm) 0; font-size: 12px; color: var(--color-ink); }
+.fx-leg-item { display: inline-flex; align-items: center; gap: 5px; }
+.fx-leg-item .num { color: var(--color-muted); }
+.fx-leg-sw { width: 10px; height: 10px; border-radius: 3px; background: var(--fx-proj); }
+.fx-chart { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 4px; align-items: end; height: 184px; padding: 0 2px; border-bottom: 1px solid var(--color-rule); }
+.fx-col { display: flex; flex-direction: column-reverse; gap: 2px; min-height: 2px; height: 100%; justify-content: flex-start; border-radius: 4px 4px 0 0; }
+.fx-col.now { background: linear-gradient(to top, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 70%); }
+.fx-brick { display: block; width: 100%; border-radius: 2px; background: var(--fx-proj); transition: filter .12s ease, transform .12s ease; }
+.fx-col .fx-brick:last-child { border-radius: 4px 4px 2px 2px; }
+.fx-brick:hover, .fx-brick:focus-visible { filter: brightness(1.15) saturate(1.2); transform: scaleX(1.12); outline: none; box-shadow: 0 0 0 2px var(--color-sheet), 0 0 0 3px var(--fx-proj); }
+.fx-brick.drop { animation: fx-drop 1.1s cubic-bezier(.25, 1.5, .5, 1) both; }
+.fx-axis { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 4px; padding: 4px 2px 0; font-size: 11px; color: var(--color-muted); text-align: center; }
+.fx-ship-cap { margin-top: var(--space-xs); min-height: 18px; font-size: 12.5px; color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-ship-cap.on { color: var(--color-ink); }
+@keyframes fx-drop { 0% { transform: translateY(-160px) rotate(-8deg); opacity: 0; } 60% { opacity: 1; } 100% { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .fx-brick.drop { animation: none; } }
