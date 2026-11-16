@@ -255,6 +255,11 @@ class TldrAndRepoScopeTest(HarnessTest):
         self.assertEqual(keys(), [])                       # speculate off: a staged blocker still blocks
         c.execute("INSERT INTO settings VALUES('project:A','speculate','true')")
         self.assertEqual(keys(), ["A-2"])                  # speculate on: the follower may start
+        c.execute("UPDATE tickets SET title='Deploy A to production' WHERE key='A-2'")
+        self.assertEqual(keys(), [])                       # deploys never start speculatively
+        c.execute("UPDATE tickets SET title='follower', meta=? WHERE key='A-2'", (json.dumps({"speculate": False}),))
+        self.assertEqual(keys(), [])                       # nor tickets that opt out
+        c.execute("UPDATE tickets SET meta='{}' WHERE key='A-2'")
         self.assertEqual(bl["speculative_bases"](c, "A-2"), [("A-1", "feat-a", None)])
         self.assertIn("blocked by unfinished A-1", bl["blockers_unfinished_reason"](c, "A-2"))
         with patch.dict(os.environ, {"BL_TICKET": "A-2"}):

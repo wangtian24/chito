@@ -263,6 +263,9 @@ WHERE t.state='todo' {proj} {mode}
   AND NOT EXISTS (SELECT 1 FROM deps d JOIN tickets b ON b.key=d.blocker
                   WHERE d.ticket=t.key AND b.state NOT IN ('done','canceled')
                     AND NOT (b.state='in_progress' AND json_extract(b.meta,'$.staged.branch') IS NOT NULL
+                             -- never speculative: showcases, deploys, and tickets with meta.speculate=false
+                             AND json_extract(t.meta,'$.showcase_for') IS NULL AND lower(t.title) NOT LIKE 'deploy%'
+                             AND coalesce(json_extract(t.meta,'$.speculate'), 1) NOT IN (0, 'false')
                              AND EXISTS (SELECT 1 FROM settings s WHERE s.key='speculate' AND s.value IN ('true','1','"on"')
                                          AND s.scope IN ('project:'||t.project, 'global'))))
   AND NOT EXISTS (SELECT 1 FROM tickets r, json_each(r.locks) rl, json_each(t.locks) tl
