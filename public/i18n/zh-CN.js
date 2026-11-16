@@ -648,4 +648,10 @@ export default {
   "Latest update": "最近更新",
   "Sort": "排序",
   "Sort projects": "项目排序",
+  "Put it back in Waiting on you": "放回「等你处理」",
+  "Dismiss: hide it until it changes": "忽略：在它变化前隐藏",
+  "{n} dismissed": "已忽略 {n} 项",
+  "Nothing new waiting on you.": "没有新的待处理事项。",
+  "Hide dismissed": "隐藏已忽略",
+  "Show {n} dismissed": "显示已忽略的 {n} 项",
 };
