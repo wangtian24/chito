@@ -41,6 +41,7 @@ DEFAULTS = {
     "model": "opus",            # default worker model; a ticket can set meta.model (e.g. sonnet) for simple work
     "harness": "claude",        # claude | codex | pi; may be set per project or ticket
     "worktree": True,
+    "speculate": False,         # true: a ticket may start on a blocker's staged branch (bl stage) before it merges
     "review": "ask",            # self | pr | ask
     "on_stuck": "wait",         # wait | exit
     "poll_seconds": 5,
@@ -260,7 +261,10 @@ SELECT t.* FROM tickets t JOIN projects p ON p.key=t.project
 WHERE t.state='todo' {proj} {mode}
   AND (t.assignee IS NULL OR t.assignee=:agent)
   AND NOT EXISTS (SELECT 1 FROM deps d JOIN tickets b ON b.key=d.blocker
-                  WHERE d.ticket=t.key AND b.state NOT IN ('done','canceled'))
+                  WHERE d.ticket=t.key AND b.state NOT IN ('done','canceled')
+                    AND NOT (b.state='in_progress' AND json_extract(b.meta,'$.staged.branch') IS NOT NULL
+                             AND EXISTS (SELECT 1 FROM settings s WHERE s.key='speculate' AND s.value IN ('true','1','"on"')
+                                         AND s.scope IN ('project:'||t.project, 'global'))))
   AND NOT EXISTS (SELECT 1 FROM tickets r, json_each(r.locks) rl, json_each(t.locks) tl
                   WHERE r.state='in_progress' AND rl.value=tl.value)
   {only}
@@ -558,7 +562,19 @@ def reap(c):
         # ticket is broken, so it doesn't use an attempt. Workers that exit without reporting do.
         release_ticket(c, t, "lease expired", count_failure=False, actor="reaper")
 
+def unstage_on_release(c, t, reason):
+    m = json.loads(t["meta"])
+    if not m.get("staged"):
+        return
+    br = m.pop("staged").get("branch")
+    c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(m), t["key"]))
+    for f in c.execute("SELECT t.key FROM deps d JOIN tickets t ON t.key=d.ticket WHERE d.blocker=? AND t.state='in_progress'",
+                       (t["key"],)).fetchall():
+        event(c, "comment", f["key"], body=f"Your blocker {t['key']} went back ({reason}); its branch {br} may change or vanish. "
+                                          "Don't merge until it is done; rebase onto whatever it finally merges.")
+
 def release_ticket(c, t, reason, count_failure=False, actor=None):
+    unstage_on_release(c, t, reason)
     maxa = t["max_attempts"] or setting(c, "max_attempts", t["project"], json.loads(t["labels"]))
     if count_failure and t["attempts"] >= maxa:
         new = "failed"
@@ -953,6 +969,9 @@ def review_policy(c, t):
 
 def cmd_done(a):
     c = connect()
+    why = blockers_unfinished_reason(c, a.key.upper())
+    if why and not a.force:
+        die(f"{a.key.upper()}: {why} (or pass --force)")
     gate = merge_gate(ticket(c, a.key), a.message, getattr(a, "force_merge", False))   # outside the write lock
     with tx(c):
         t = ticket(c, a.key)
@@ -1171,6 +1190,10 @@ def pre_tool_guard(c, data):
     what = "merge" if GUARD_MERGE.search(cmd) else "rebase onto main" if GUARD_REBASE.search(cmd) else None
     if not what:
         return None
+    if what == "merge":
+        why = blockers_unfinished_reason(c, tk)
+        if why:
+            return f"{tk} is {why}. Keep the PR ready; `bl show` the blocker every few minutes."
     h = main_red(c, main_repo(c))
     if not h or h.get("ticket") == tk:
         return None
@@ -1300,6 +1323,17 @@ def build_prompt(c, t, compact=False):
             for b in bl_:
                 L.append(f"- {b['key']} [{b['state']}] {b['title']}: {b['result'] or '(no result recorded)'}")
             L.append("")
+        bases = speculative_bases(c, t["key"])
+        if bases:
+            L += ["## Speculative start: your blockers are still testing",
+                  "These blockers have written their code and opened their PRs but are not merged yet. You start on top of them:",
+                  *[f"- {k}: branch `{br}`" + (f", {pr}" if pr else "") for k, br, pr in bases],
+                  f"Your worktree starts from `origin/{bases[0][1]}`" + (" (merge the other branches in too)." if len(bases) > 1 else "."),
+                  "- Work and test as usual. If a blocker's branch moves (a comment or `bl say` tells you), rebase onto it.",
+                  "- Do NOT merge until every blocker is done (`bl show KEY`); the hook and `bl done` refuse. Then rebase onto "
+                  "origin/main, re-run your scoped tests, and merge.",
+                  "- If your PR is ready and a blocker is still running, wait a while (`bl show` it every few minutes); if it is "
+                  f"taking long, `bl release {t['key']} --reason \"PR ready, waiting for <blocker>\"` with your PR in a comment.", ""]
         L += project_now(c, t)
         if comments:
             L.append("## Notes on this ticket (newest first)")
@@ -1333,6 +1367,11 @@ def build_prompt(c, t, compact=False):
           "- Review policy self = test it yourself and merge per the repo's rules; pr = open the PR and stop; "
           "ask = open the PR and stop, a human decides.",
           "- Never deploy, spend money or push to main unless the spec says so."]
+    if setting(c, "speculate", p["key"]):
+        L.append(f"- Speculation is on in {p['key']}: as soon as your code is written, pushed and its PR is open, BEFORE your final "
+                 f"tests, run `bl stage {t['key']} --branch <your branch> --pr <PR url>` so tickets waiting on you can start on top of "
+                 f"it. If you push changes after that, run `bl stage` again (it tells them to rebase). If your approach falls apart, "
+                 f"`bl stage {t['key']} --clear`.")
     return "\n".join(L)
 
 def brief_prompt(c, t):
@@ -1667,6 +1706,53 @@ def cmd_prompt(a):
     c = connect()
     print(build_prompt(c, ticket(c, a.key), compact=a.compact))
 
+# ---------------------------------------------------------------- speculation (stacked branches)
+# A worker whose code is written and whose PR is open runs `bl stage KEY --branch B` before its final tests. In a
+# project with `speculate` on, tickets waiting on it then become ready and start on branch B instead of main. They
+# may not merge (the PreToolUse hook and bl done refuse) until every blocker is done; then they rebase onto main,
+# re-run their scoped tests and merge. If a blocker goes back to todo or fails, its followers are told.
+def open_blockers(c, key):
+    return c.execute("SELECT b.* FROM deps d JOIN tickets b ON b.key=d.blocker WHERE d.ticket=? "
+                     "AND b.state NOT IN ('done','canceled') ORDER BY b.id", (key,)).fetchall()
+
+def staged_of(t):
+    return json.loads(t["meta"]).get("staged") if t else None
+
+def speculative_bases(c, key):
+    """(blocker key, branch, pr) for every unfinished blocker this ticket is starting on top of."""
+    return [(b["key"], staged_of(b)["branch"], staged_of(b).get("pr")) for b in open_blockers(c, key)
+            if b["state"] == "in_progress" and (staged_of(b) or {}).get("branch")]
+
+def cmd_stage(a):
+    c = connect()
+    with tx(c):
+        t = ticket(c, a.key); own_check(t, a)
+        if t["state"] != "in_progress":
+            die(f"{t['key']} is {t['state']}; only an in-progress ticket can be staged")
+        m = json.loads(t["meta"])
+        if a.clear:
+            m.pop("staged", None)
+            body = "unstaged: followers must not build on its branch any more"
+        else:
+            if not a.branch:
+                die("--branch is required (the pushed branch your PR is on)")
+            m["staged"] = {"branch": a.branch, "pr": a.pr, "at": now(), "by": agent_id()}
+            body = f"staged on {a.branch}" + (f" ({a.pr})" if a.pr else "") + ": code done, tests running; followers may start on it"
+        c.execute("UPDATE tickets SET meta=?, updated=? WHERE key=?", (json.dumps(m), now(), t["key"]))
+        event(c, "stage", t["key"], body=body)
+        # tell followers already running on top of it
+        for f in c.execute("SELECT t.key FROM deps d JOIN tickets t ON t.key=d.ticket WHERE d.blocker=? AND t.state='in_progress'",
+                           (t["key"],)).fetchall():
+            event(c, "comment", f["key"], body=f"{t['key']} {body}. If you build on its branch, rebase onto origin/{a.branch or '(its PR)'} now.")
+    print("unstaged" if a.clear else f"staged {t['key']} on {a.branch}")
+
+def blockers_unfinished_reason(c, key):
+    ob = open_blockers(c, key)
+    if not ob:
+        return None
+    return ("blocked by unfinished " + ", ".join(f"{b['key']} ({b['state']}{', staged' if staged_of(b) else ''})" for b in ob) +
+            ": merge only after they are done, then rebase onto origin/main and re-run your scoped tests")
+
 def worktree_for(c, t):
     p = project_row(c, t["project"])
     if not p["repo"]:
@@ -1682,7 +1768,13 @@ def worktree_for(c, t):
     if not wt.exists():
         wt.parent.mkdir(parents=True, exist_ok=True)
         branch = f"bl/{t['key'].lower()}"
-        r = subprocess.run(["git", "-C", str(repo), "worktree", "add", str(wt), "-b", branch],
+        start = []
+        bases = speculative_bases(c, t["key"])
+        if bases:   # speculative start: on top of the first staged blocker's branch (the prompt says to merge any others)
+            f = subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin", bases[0][1]], capture_output=True, text=True)
+            if f.returncode == 0:
+                start = [f"origin/{bases[0][1]}"]
+        r = subprocess.run(["git", "-C", str(repo), "worktree", "add", str(wt), "-b", branch, *start],
                            capture_output=True, text=True)
         if r.returncode:
             r = subprocess.run(["git", "-C", str(repo), "worktree", "add", str(wt), branch], capture_output=True, text=True)
@@ -2691,6 +2783,9 @@ def main():
     p.add_argument("--final", action="store_true", help="skip review: go straight to done")
     p.add_argument("--force-merge", dest="force_merge", action="store_true", help="mark done even though a linked PR is not merged")
     p = P("fail", cmd_fail); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--tldr", help="for the human: " + TLDR_RULE); p.add_argument("--force", action="store_true")
+    p = P("stage", cmd_stage, help="code done and PR open, tests running: let dependents start on your branch (speculate)")
+    p.add_argument("key"); p.add_argument("--branch"); p.add_argument("--pr"); p.add_argument("--clear", action="store_true")
+    p.add_argument("--force", action="store_true")
     p = P("comment", cmd_comment); p.add_argument("key"); p.add_argument("text", nargs="+")
     p = P("move", cmd_move); p.add_argument("key"); p.add_argument("state"); p.add_argument("--reason")
     p.add_argument("--force-merge", dest="force_merge", action="store_true", help="mark done even though a linked PR is not merged")

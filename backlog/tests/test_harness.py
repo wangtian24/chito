@@ -245,6 +245,27 @@ class TldrAndRepoScopeTest(HarnessTest):
             self.assertEqual(bl["previous_session"](c, t, str(wt)), (None, None))
         self.assertIn("resuming backlog ticket A-1", bl["resume_prompt"](t, why))
 
+    def test_speculation_ready_done_and_unstage(self):
+        c, bl = self.c, self.bl
+        c.execute("INSERT INTO tickets(key,project,title,state,created,updated) VALUES('A-2','A','follower','todo','x','x')")
+        c.execute("INSERT INTO deps(ticket,blocker) VALUES('A-2','A-1')")
+        c.execute("UPDATE tickets SET state='in_progress', claimed_by='w1', meta=? WHERE key='A-1'",
+                  (json.dumps({"staged": {"branch": "feat-a"}}),))
+        keys = lambda: [t["key"] for t in bl["ready"](c, "A")]
+        self.assertEqual(keys(), [])                       # speculate off: a staged blocker still blocks
+        c.execute("INSERT INTO settings VALUES('project:A','speculate','true')")
+        self.assertEqual(keys(), ["A-2"])                  # speculate on: the follower may start
+        self.assertEqual(bl["speculative_bases"](c, "A-2"), [("A-1", "feat-a", None)])
+        self.assertIn("blocked by unfinished A-1", bl["blockers_unfinished_reason"](c, "A-2"))
+        with patch.dict(os.environ, {"BL_TICKET": "A-2"}):
+            self.assertTrue(bl["pre_tool_guard"](c, {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 5"}}))
+        c.execute("UPDATE tickets SET state='in_progress', claimed_by='w2' WHERE key='A-2'")
+        bl["release_ticket"](c, c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone(), "tests failed")
+        self.assertNotIn("staged", json.loads(c.execute("SELECT meta FROM tickets WHERE key='A-1'").fetchone()[0]))
+        self.assertTrue(c.execute("SELECT 1 FROM events WHERE ticket='A-2' AND body LIKE '%went back%'").fetchone())
+        c.execute("UPDATE tickets SET state='done' WHERE key='A-1'")
+        self.assertIsNone(bl["blockers_unfinished_reason"](c, "A-2"))
+
     def test_project_cap_unlimited_by_default(self):
         self.assertIsNone(self.bl["project_cap"](self.c, "A"))
         self.c.execute("INSERT INTO settings VALUES('project:A','max_parallel','2')")
