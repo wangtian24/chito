@@ -356,8 +356,11 @@ SHOWCASE_HOW = {
 # On top of the pieces above, every showcase is one page on arti that the human reads in full (chito's milestone card is too small).
 SHOWCASE_PAGE = ("**Showcase page (required):** also publish one page to arti for the human to review: an HTML page with the milestone's title, "
                  "a short summary, then one section per done ticket: what changed, where to find it in the app, how to try it, and its screenshots "
-                 "embedded inline at a readable size (data: URIs or package files; never links to local files). Publish it with the Arti MCP "
-                 "`add_artifact` (named_slug `{slug}`, content_type text/html, labels showcase,{project}); republishing the slug makes a new version. "
+                 "embedded inline at a readable size as data: URIs. Never link to local files or to another artifact's arti.voltcouch.com/s/... "
+                 "address: arti serves pages sandboxed without the login, so those images never load. Publish it with the Arti MCP "
+                 "`add_artifact` (named_slug `{slug}`, content_type text/html, labels showcase,{project}), or with the `arti` CLI when the page is too big "
+                 "for a connector call; republishing the slug makes a new version. Before recording it, fetch the published page and check every <img> "
+                 "is a data: URI that decodes to an image; if any isn't, fix and republish. "
                  "Then record it: `bl milestone showcase {m} --kind link --url https://arti.voltcouch.com/s/{slug} --note \"Showcase page\"`. "
                  "chito shows that link as the milestone's Open showcase button, next to Accept and Reopen.")
 
