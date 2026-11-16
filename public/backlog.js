@@ -538,30 +538,36 @@ function lifecycleButtons(p, compact) {
   return box;
 }
 
-function daemonBar() {
+
+// The daemon as part of the page's summary line: a dot, its state, what it's doing, and Pause/Resume as a link.
+// Heartbeat and the parallel cap are in the tooltip. A usage-limit pause still gets its own notice (daemonQuota).
+function daemonInline() {
   const d = bl.data.daemon;
-  const bar = el('div', 'bl-daemon');
   const cap = setting(null, 'global_max_parallel', 6);
+  const wrap = el('span', 'bl-daemon-inline');
   const dot = el('span', 'live-dot' + (d?.alive && d.enabled ? ' busy' : ''));
-  const label = !d || !d.alive ? tr('Daemon not running') : d.enabled ? tr('Daemon running') : tr('Daemon paused');
-  const t = el('b', null, label);
-  const facts = el('span', 'bl-daemon-facts');
+  const state = !d || !d.alive ? tr('Daemon not running') : d.enabled ? tr('Daemon running') : tr('Daemon paused');
+  const label = el('span', `bl-daemon-state${!d?.alive ? ' off' : d.enabled ? '' : ' paused'}`, state);
   const workers = bl.data.tickets.filter(x => x.state === 'in_progress' && (x.claimed_by || '').startsWith('daemon:')).length;
-  const hb = d?.heartbeat ? el('span', null, tr('heartbeat {ago}', { ago: ctx.fmtRelAgo(d.heartbeat) })) : null;
-  if (hb) hb.title = ctx.fmtDateTime(d.heartbeat);
   const runs = d?.runsToday ?? 0;
-  facts.append(factRow('', workers ? trp(workers, '{n} queue worker', '{n} queue workers') : null, trp(runs, '{n} run today', '{n} runs today'), tr('up to {n} at once', { n: cap }), hb));
-  bar.append(dot, t, facts);
-  if (d?.quota?.until) {
-    const q = el('div', 'bl-quota');
-    q.append(el('b', null, tr('Usage limit hit.')), tr(' Nothing new starts until {until}; the tickets that hit it went back to todo without using an attempt.', { until: ctx.fmtDateTime(d.quota.until) }));
-    if (d.quota.last?.ticket) q.append(tr(' Last: {key}.', { key: d.quota.last.ticket }));
-    q.append(actBtn(tr('Retry now'), 'quota-clear', null, null, { title: tr('Clear the pause; the next claims try again') }));
-    bar.append(q);
-  }
-  if (d?.alive) bar.append(d.enabled ? actBtn(tr('Pause daemon'), 'daemon-pause', null, null, { title: tr('Workers already running finish; nothing new starts') }) : actBtn(tr('Resume daemon'), 'daemon-resume', null, null, { primary: true }));
-  else { const hint = el('span', 'bl-daemon-hint'); hint.append(tr('Start it with '), el('code', null, 'bl daemon install')); bar.append(hint); }
-  return bar;
+  wrap.title = [tr('up to {n} at once', { n: cap }), d?.heartbeat ? tr('heartbeat {ago}', { ago: ctx.fmtRelAgo(d.heartbeat) }) : null].filter(Boolean).join(' · ');
+  wrap.append(dot, label);
+  if (d?.alive) wrap.append(el('span', 'bl-daemon-fact', [workers ? trp(workers, '{n} queue worker', '{n} queue workers') : null, trp(runs, '{n} run today', '{n} runs today')].filter(Boolean).join(', ')));
+  if (d?.alive) {
+    const b = actBtn(d.enabled ? tr('Pause') : tr('Resume'), d.enabled ? 'daemon-pause' : 'daemon-resume', null, null,
+      { title: d.enabled ? tr('Workers already running finish; nothing new starts') : tr('Resume daemon') });
+    b.classList.add('bl-daemon-link'); wrap.append(b);
+  } else { const hint = el('span', 'bl-daemon-hint'); hint.append(tr('Start it with '), el('code', null, 'bl daemon install')); wrap.append(hint); }
+  return wrap;
+}
+function daemonQuota() {
+  const d = bl.data.daemon;
+  if (!d?.quota?.until) return null;
+  const q = el('div', 'bl-quota');
+  q.append(el('b', null, tr('Usage limit hit.')), tr(' Nothing new starts until {until}; the tickets that hit it went back to todo without using an attempt.', { until: ctx.fmtDateTime(d.quota.until) }));
+  if (d.quota.last?.ticket) q.append(tr(' Last: {key}.', { key: d.quota.last.ticket }));
+  q.append(actBtn(tr('Retry now'), 'quota-clear', null, null, { title: tr('Clear the pause; the next claims try again') }));
+  return q;
 }
 
 function executorOf(t) {
@@ -766,6 +772,7 @@ function showcaseItems(m, big) {
     const it = el('div', `bl-show k-${sc.kind}`);
     if (sc.file && /\.(png|jpe?g|gif|webp|svg)$/i.test(sc.file)) {
       const a = el('a'); a.href = `/api/backlog/showcase?f=${encodeURIComponent(sc.file)}`; a.target = '_blank'; a.rel = 'noopener';
+      a.dataset.lb = ''; a.dataset.caption = sc.note || '';
       const img = el('img'); img.src = a.href; img.alt = sc.note || 'showcase'; img.loading = 'lazy';
       a.append(img); it.append(a);
     } else if (sc.file) {
@@ -855,12 +862,58 @@ function pics(list, cls) {
   const strip = el('div', cls);
   for (const p of ps) {
     const a = el('a'); a.href = picSrc(p); a.target = '_blank'; a.rel = 'noopener'; a.title = p.caption || '';
+    a.dataset.lb = ''; a.dataset.caption = p.caption || '';
     const img = el('img'); img.src = picSrc(p); img.alt = p.caption || ''; img.loading = 'lazy';
     a.append(img);
     if (cls === 'bl-ho-pics' && p.caption) { const f = el('figure'); f.append(a, el('figcaption', null, p.caption)); strip.append(f); } else strip.append(a);
   }
   return strip;
 }
+
+// ---- lightbox: showcase and handoff pictures pop up over the page instead of opening a tab ----
+// Click opens it; ← → step through the pictures of the same group; Esc, the ✕ or a click outside the picture closes it.
+// ⌘/Ctrl-click still opens the picture in a new tab.
+const lb = { el: null, items: [], i: 0 };
+function lbShow() {
+  const it = lb.items[lb.i]; if (!it) return;
+  const img = lb.el.querySelector('img'); img.src = it.href; img.alt = it.dataset.caption || '';
+  lb.el.querySelector('.lb-cap').textContent = it.dataset.caption || '';
+  lb.el.querySelector('.lb-count').textContent = lb.items.length > 1 ? `${lb.i + 1} / ${lb.items.length}` : '';
+  lb.el.querySelector('.lb-open').href = it.href;
+  lb.el.classList.toggle('single', lb.items.length < 2);
+}
+function lbClose() { if (lb.el) { lb.el.hidden = true; lb.el.querySelector('img').src = ''; } }
+function lbOpen(a) {
+  if (!lb.el) {
+    lb.el = el('div', 'lightbox'); lb.el.hidden = true; lb.el.setAttribute('role', 'dialog'); lb.el.setAttribute('aria-modal', 'true');
+    lb.el.innerHTML = '<figure><img alt=""><figcaption><span class="lb-cap"></span><span class="lb-count num"></span><a class="lb-open" target="_blank" rel="noopener"></a></figcaption></figure>'
+      + '<button type="button" class="lb-btn lb-prev" aria-label="Previous">‹</button><button type="button" class="lb-btn lb-next" aria-label="Next">›</button><button type="button" class="lb-btn lb-x" aria-label="Close">✕</button>';
+    lb.el.querySelector('.lb-open').textContent = tr('Open in a new tab');
+    lb.el.addEventListener('click', e => {
+      if (e.target.closest('.lb-prev')) { lb.i = (lb.i - 1 + lb.items.length) % lb.items.length; lbShow(); }
+      else if (e.target.closest('.lb-next')) { lb.i = (lb.i + 1) % lb.items.length; lbShow(); }
+      else if (e.target.closest('.lb-x') || !e.target.closest('figure')) lbClose();
+    });
+    document.body.append(lb.el);
+  }
+  const group = a.closest('.bl-shows, .bl-ho-pics, .bl-tldr-pics, .bl-d, section') || document;
+  lb.items = [...group.querySelectorAll('a[data-lb]')];
+  lb.i = Math.max(0, lb.items.indexOf(a));
+  lbShow(); lb.el.hidden = false;
+}
+document.addEventListener('click', e => {
+  const a = e.target.closest?.('a[data-lb]');
+  if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+  e.preventDefault(); e.stopPropagation(); lbOpen(a);
+}, true);
+document.addEventListener('keydown', e => {
+  if (!lb.el || lb.el.hidden) return;
+  if (e.key === 'Escape') lbClose();
+  else if (e.key === 'ArrowLeft') { lb.i = (lb.i - 1 + lb.items.length) % lb.items.length; lbShow(); }
+  else if (e.key === 'ArrowRight') { lb.i = (lb.i + 1) % lb.items.length; lbShow(); }
+  else return;
+  e.preventDefault(); e.stopImmediatePropagation();   // the board's own ← → and Esc wait while it is open
+}, true);
 
 // '· created 3h ago', the exact time on hover.
 const ago = iso => { const s = el('span', 'bl-needs-ago', ' · ' + tr('created {ago}', { ago: ctx.fmtRelAgo(iso) })); s.title = ctx.fmtDateTime(iso); return s; };
@@ -1038,7 +1091,7 @@ function renderLanes(root) {
   const running = all.filter(t => t.state === 'in_progress').length;
   const dis = dismissedMap();
   const you = all.filter(t => needsYou(t) && dis[t.key] !== needSig(t)).length;   // dismissed ones don't count
-  const sub = [factRow('', trp(projects.length, '{n} project', '{n} projects'), tr('{n} in progress', { n: running }), you ? tr('{n} waiting on you', { n: you }) : tr('nothing waiting on you'))];
+  const sub = [factRow('', trp(projects.length, '{n} project', '{n} projects'), tr('{n} in progress', { n: running }), you ? tr('{n} waiting on you', { n: you }) : tr('nothing waiting on you'), daemonInline())];
   root.append(head(tr('Projects'), sub, headRight()));
   const tab = currentTab();
   if (tab !== 'overview' && !new URLSearchParams(location.search).has('tab')) {   // a remembered tab: show it in the URL too
@@ -1046,7 +1099,7 @@ function renderLanes(root) {
   }
   root.append(tabBar(tab, { overview: you, projects: projects.length }));
   if (tab === 'overview') {
-    root.append(daemonBar());
+    const q = daemonQuota(); if (q) root.append(q);
     const ny = needsYouPanel(all); if (ny) root.append(ny);
     root.append(el('h2', 'bl-h2', tr('Open projects')), openProjects(projects, all));
     return;
