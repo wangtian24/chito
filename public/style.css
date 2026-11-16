@@ -574,6 +574,8 @@ code { font-size: .86em; }
 
 /* ---------- Settings ---------- */
 .settings { width: 680px; padding: 0; overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 64px); }
+/* Pinned to the top, not centered: tabs differ in height, and a centered card would jump on every switch. */
+.modal:has(> .settings) { place-items: start center; padding-top: 32px; }
 .settings-head { display: flex; align-items: center; justify-content: space-between; padding: var(--space-lg) var(--space-lg) 0 var(--space-xl); }
 .settings-head h2 { margin: 0; }
 .tabs { display: flex; gap: var(--space-xs); padding: var(--space-md) var(--space-xl) 0; border-bottom: var(--rule-hair) solid var(--color-rule-sheet); }
@@ -1505,6 +1507,10 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-needs-dis-toggle { display: block; width: 100%; text-align: left; border: 0; border-top: 1px solid color-mix(in oklch, var(--bl-failed) 25%, transparent); background: none; cursor: pointer; padding: 7px var(--space-md); font: 500 12.5px var(--font-display); color: var(--color-muted); }
 .bl-needs-dis-toggle:hover { color: var(--color-ink); background: color-mix(in oklch, var(--color-ink) 4%, transparent); }
 .bl-needs.folded .bl-needs-dis-toggle { display: none; }
+.bl-needs-row.approved { background: color-mix(in oklch, var(--bl-done-wash) 70%, var(--color-sheet)); box-shadow: inset 3px 0 0 var(--bl-done); transition: background .3s; }
+.bl-needs-row.approved .bl-needs-title { color: var(--bl-done); }
+.bl-needs-ok { display: inline-flex; justify-content: center; color: var(--bl-done); }
+.bl-needs-ok .ic { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .bl-needs-row.dismissed { opacity: .6; background: color-mix(in oklch, var(--color-well) 60%, transparent); }
 .bl-needs-row.dismissed:hover { opacity: 1; }
 .bl-needs-none { display: block; font: 400 13px var(--font-body); font-style: var(--meta-style); color: var(--color-muted); }

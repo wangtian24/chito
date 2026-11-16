@@ -28,6 +28,7 @@ const ICON = {
 };
 const SCREEN_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16.5V20"/></svg>';
 const TERM_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-6l-4.5 3.5V17H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3z"/><path d="M7.5 9l2.5 2-2.5 2M12.5 13.5h4"/></svg>';
+const CHECK_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 const SESSION_ICON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5h14a2 2 0 0 1 2 2V15a2 2 0 0 1-2 2h-6l-4 3.5V17H5a2 2 0 0 1-2-2V8.5a2 2 0 0 1 2-2z"/></svg>';
 
 let ctx = null;          // { openSession, toast, fmtRel, fmtRelAgo, fmtDateTime, getPr }
@@ -160,7 +161,7 @@ const isBlocked = t => t.state === 'todo' && (bl.blockers.get(t.key) || []).some
 const isReady = t => t.state === 'todo' && !isBlocked(t) && t.assignee !== 'human';
 // An approved review is the agent's to merge; if it is still unmerged two hours later, it is back on the human's plate.
 const approvedRecently = t => !!t.meta?.approved?.at && Date.now() - new Date(t.meta.approved.at).getTime() < 2 * 3600e3;
-const needsYou = t => t.state === 'failed' || (t.state === 'in_review' && !approvedRecently(t)) || (t.state === 'todo' && t.assignee === 'human' && !isBlocked(t));
+const needsYou = t => t.state === 'failed' || (t.state === 'in_review' && !approvedRecently(t)) || (t.state === 'todo' && t.assignee === 'human' && !isBlocked(t) && !approvedRecently(t));
 
 export async function loadBacklog() {
   try {
@@ -246,7 +247,7 @@ export function renderBacklog() {
   try { renderBacklogInner(root); } finally { if (scroller) scroller.scrollTop = y; }
 }
 function renderBacklogInner(root) {
-  bl.rowOrder = []; bl.needsOrder = [];   // what ← → step through; the lists rendered below fill them
+  bl.rowOrder = []; bl.needsOrder = []; bl.needsShown = [];   // what ← → step through; the lists rendered below fill them
   const route = parseBacklogPath(location.pathname) || {};
   root.textContent = '';
   if (bl.error) { root.append(el('div', 'board-status', tr('Could not load the backlog: {error}', { error: bl.error }))); return; }
@@ -400,15 +401,18 @@ function runBadge(project) {
 
 // ---- controls (each one runs an allowlisted `bl` command on the server) ----
 async function act(action, key, value) {
+  let ok = false;
   try {
     const r = await fetch('/api/backlog/action', { method: 'POST', headers: { 'content-type': 'application/json', 'x-chito': '1' }, body: JSON.stringify({ action, key, value }) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     ctx.toast(j.out ? `${key ? key + ': ' : ''}${j.out.split('\n')[0]}` : tr('Done'));
+    ok = true;
   } catch (e) { ctx.toast(tr('Failed: {error}', { error: e.message })); }
   await loadBacklog();
   if (bl.ticketKey) bl.ticket = null;
   renderBacklog();
+  return ok;
 }
 
 function actBtn(label, action, key, value, { confirm = false, confirmText = null, primary = false, title } = {}) {
@@ -1037,13 +1041,17 @@ function needsYouPanel(tks) {
   const allMs = (bl.data.milestones || []).filter(m => m.status === 'showcased' && tks.some(t => t.project === m.project));
   const dis = dismissedMap();
   const isDis = (id, sig) => dis[id] === sig;
-  const items = all.filter(t => !isDis(t.key, needSig(t)));
+  const now = Date.now();
+  for (const [k, a] of ui.justApproved) if (now - a.at > APPROVED_LINGER) ui.justApproved.delete(k);
+  const inView = new Set(tks.map(t => t.key));
+  const approved = [...ui.justApproved].filter(([k]) => inView.has(k) && bl.byKey.has(k)).sort((a, b) => a[1].idx - b[1].idx);
+  const items = all.filter(t => !isDis(t.key, needSig(t)) && !ui.justApproved.has(t.key));
   const ms = allMs.filter(m => !isDis(m.key, msSig(m)));
   const gone = [...all.filter(t => isDis(t.key, needSig(t))).map(t => ['t', t]), ...allMs.filter(m => isDis(m.key, msSig(m))).map(m => ['m', m])];
   bl.needsOrder = items;
-  if (!all.length && !allMs.length) return null;
+  if (!all.length && !allMs.length && !approved.length) return null;
   const open = store.get('blNeedsOpen', true);
-  const box = el('div', `bl-needs${open ? '' : ' folded'}${items.length + ms.length ? '' : ' clear'}`);
+  const box = el('div', `bl-needs${open ? '' : ' folded'}${items.length + ms.length + approved.length ? '' : ' clear'}`);
   // The header is the toggle: folding keeps the count in view, so nothing hides silently.
   const h = el('button', 'bl-needs-head'); h.type = 'button';
   h.innerHTML = '<svg class="bl-needs-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
@@ -1053,9 +1061,17 @@ function needsYouPanel(tks) {
   sync(open);
   h.addEventListener('click', () => { const o = box.classList.contains('folded'); store.set('blNeedsOpen', o); sync(o); });
   box.append(h);
-  for (const t of items) { const row = needRow(t); row.append(dismissBtn(t.key, needSig(t))); box.append(row); }
+  const rows = items.map(t => { const row = needRow(t); row.append(dismissBtn(t.key, needSig(t))); return [t.key, row]; });
+  for (const [k, a] of approved) {
+    const row = needRow(bl.byKey.get(k)); row.classList.add('approved');
+    const ok = el('span', 'bl-needs-ok'); ok.innerHTML = CHECK_ICON; ok.title = tr('Approved; it leaves this list in a few seconds');
+    row.append(ok);
+    rows.splice(Math.min(a.idx, rows.length), 0, [k, row]);
+  }
+  bl.needsShown = rows.map(([k]) => k);
+  box.append(...rows.map(([, row]) => row));
   for (const m of ms) { const row = msRow(m); row.append(dismissBtn(m.key, msSig(m))); box.append(row); }
-  if (!items.length && !ms.length) box.append(el('div', 'bl-needs-row bl-needs-none', tr('Nothing new waiting on you.')));
+  if (!items.length && !ms.length && !approved.length) box.append(el('div', 'bl-needs-row bl-needs-none', tr('Nothing new waiting on you.')));
   if (gone.length) {
     const showDis = store.get('blNeedsShowDismissed', false);
     const foot = el('button', 'bl-needs-dis-toggle'); foot.type = 'button';
@@ -2168,48 +2184,87 @@ export function backlogRefreshCount() { return loadBacklog(); }
 ui.notesFor = null; ui.notesDraft = {};
 // Handoff replies in progress, per ticket: picked options, typed answers and the free text survive re-renders.
 ui.hoDraft = {};
+// Handled tickets stay in "Waiting on you", green, for APPROVED_LINGER: key -> { at, idx: its place in the list }.
+ui.justApproved = new Map();
+const APPROVED_LINGER = 30e3;
+// A human ticket (a decision, a go / no-go) approves by telling the session that asked to carry on.
+const humanGate = t => t.assignee === 'human' && !FINAL.has(t.state) && t.state !== 'in_review';
 function notesTarget(t) {
+  if (humanGate(t)) {
+    const s = answerSession(t);   // a worker only if it is this ticket's own: never an orchestrator or a passer-by
+    return s && !s.missing && (s.kind !== 'Worker session' || s.own) ? { ...s, kind: SESS_KIND[s.kind] || s.kind } : null;
+  }
   const ws = workerSession(t);
   if (ws && !ws.missing) return { ...ws, kind: tr('Worker session') };
   const p = bl.data.projects.find(x => x.key === t.project);
   const o = p?.execution?.orchestrator || p?.orchSessions?.[0];
   return o ? { ...o, kind: tr('Orchestrator session') } : null;
 }
-// Approve = go. The approval (and notes) go on the ticket; the session that did the work is resumed in the background
-// and told to merge its PR, then close the ticket. With no session to resume, or if sending fails, the ticket goes
-// back to todo and a fresh worker picks it up: worker prompts include the ticket's comments, the approval among them.
+// Where the panel goes once a ticket is handled: the next item waiting on you (after this one, wrapping), else closed.
+function nextNeed(key) {
+  const needs = bl.needsOrder || [];
+  const i = needs.findIndex(x => x.key === key);
+  return { idx: (bl.needsShown || []).indexOf(key), keys: (i < 0 ? needs : [...needs.slice(i + 1), ...needs.slice(0, i)]).map(x => x.key) };
+}
+function advance(t, nx) {
+  if (nx.idx >= 0) { ui.justApproved.set(t.key, { at: Date.now(), idx: nx.idx }); setTimeout(renderBacklog, APPROVED_LINGER + 100); }
+  if (openKey() !== t.key) { renderBacklog(); return; }
+  const next = nx.keys.map(k => bl.byKey.get(k)).find(x => x && needsYou(x) && !ui.justApproved.has(x.key));
+  if (next) go(openPath(next)); else if (!closeDrawer()) renderBacklog();
+}
+// Approve = go. A PR: the session that did the work is resumed in the background to merge it and close the ticket;
+// with no session, or if sending fails, it goes back to todo for a fresh worker (worker prompts include comments).
+// A human ticket: the session that asked carries on and closes it; with none, the ticket closes as approved.
 async function approveGo(t, notes) {
   const post = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-chito': '1' }, body: JSON.stringify(body) })
     .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; });
-  const prs = (t.prs || []).filter(p => ((ctx.getPr ? ctx.getPr(p.url) : null)?.state || '').toUpperCase() !== 'MERGED').map(p => p.url || p).filter(Boolean);
-  const prText = prs.length ? prs.join(', ') : tr('its PR');
-  const ask = `APPROVED by the human in chito: merge ${prText} now (rebase on main if needed, run the repo's checks, squash-merge), then close the ticket with \`bl done ${t.key} -m "merged <PR>"\`.`
-    + (notes ? `\n\nTheir notes:\n${notes}\n\nAct on the notes: a small change can go into this PR before merging; anything bigger, file it with \`bl add ${t.project} "<title>" -b "<details>" --after ${t.key}\`.` : '')
-    + ` Record what you did with \`bl comment ${t.key} "..."\`.`;
+  const nx = nextNeed(t.key);
   const target = notesTarget(t);
   let how;
   try {
-    await post('/api/backlog/action', { action: 'ticket-comment', key: t.key, value: ask });
-    await post('/api/backlog/action', { action: 'ticket-approved', key: t.key, value: notes });
-    if (target) {
-      try { await post(`/api/sessions/${target.id}/send`, { text: `${t.key} (${t.title}): ${ask}`, background: true }); how = tr('approved; sent to the {kind} to merge', { kind: target.kind.toLowerCase() }); }
-      catch (err) { how = null; ctx.toast(tr('Could not reach the session ({error}); a fresh worker will merge it', { error: err.message })); }
+    if (humanGate(t)) {
+      const ask = 'APPROVED by the human in chito: go ahead with what you proposed. Where you asked them questions, take the option you recommended (the first one if you named none).'
+        + (notes ? `\n\nTheir answer and notes, which win over your defaults:\n${notes}` : '')
+        + `\n\nRecord the decision with \`bl comment ${t.key} "..."\`, do what follows from it, then close the ticket with \`bl resolve ${t.key} -m "<decision, by the human, and what you did>"\`.`;
+      if (target) {
+        await post(`/api/sessions/${target.id}/send`, { text: `${t.key} (${t.title}): ${ask}`, background: true });
+        await post('/api/backlog/action', { action: 'ticket-comment', key: t.key, value: ask });
+        await post('/api/backlog/action', { action: 'ticket-approved', key: t.key, value: notes });
+        how = tr('approved; sent to the {kind}', { kind: target.kind.toLowerCase() });
+      } else {
+        await post('/api/backlog/action', { action: 'ticket-resolve', key: t.key, value: `Approved by the human in chito.${notes ? ` Notes: ${notes}` : ''}` });
+        how = tr('approved and closed');
+      }
+    } else {
+      const prs = (t.prs || []).filter(p => ((ctx.getPr ? ctx.getPr(p.url) : null)?.state || '').toUpperCase() !== 'MERGED').map(p => p.url || p).filter(Boolean);
+      const prText = prs.length ? prs.join(', ') : tr('its PR');
+      const ask = `APPROVED by the human in chito: merge ${prText} now (rebase on main if needed, run the repo's checks, squash-merge), then close the ticket with \`bl done ${t.key} -m "merged <PR>"\`.`
+        + (notes ? `\n\nTheir notes:\n${notes}\n\nAct on the notes: a small change can go into this PR before merging; anything bigger, file it with \`bl add ${t.project} "<title>" -b "<details>" --after ${t.key}\`.` : '')
+        + ` Record what you did with \`bl comment ${t.key} "..."\`.`;
+      await post('/api/backlog/action', { action: 'ticket-comment', key: t.key, value: ask });
+      await post('/api/backlog/action', { action: 'ticket-approved', key: t.key, value: notes });
+      if (target) {
+        try { await post(`/api/sessions/${target.id}/send`, { text: `${t.key} (${t.title}): ${ask}`, background: true }); how = tr('approved; sent to the {kind} to merge', { kind: target.kind.toLowerCase() }); }
+        catch (err) { how = null; ctx.toast(tr('Could not reach the session ({error}); a fresh worker will merge it', { error: err.message })); }
+      }
+      if (!how) { await post('/api/backlog/action', { action: 'ticket-reopen', key: t.key }); how = tr('approved; back to todo, a worker will merge it'); }
     }
-    if (!how) { await post('/api/backlog/action', { action: 'ticket-reopen', key: t.key }); how = tr('approved; back to todo, a worker will merge it'); }
     ctx.toast(`${t.key}: ${how}`);
     ui.notesFor = null; delete ui.notesDraft[t.key];
-  } catch (err) { ctx.toast(tr('Failed: {error}', { error: err.message })); }
-  await loadBacklog(); bl.ticket = null; renderBacklog();
+  } catch (err) { ctx.toast(tr('Failed: {error}', { error: err.message })); how = null; }
+  await loadBacklog(); bl.ticket = null;
+  if (how) advance(t, nx); else renderBacklog();
 }
 function approveNotesForm(t) {
   const f = el('form', 'bl-approve-notes');
   const ta = el('textarea'); ta.id = 'bl-approve-notes'; ta.rows = 4; ta.value = ui.notesDraft[t.key] || '';
-  ta.placeholder = tr('Notes for the agent as it merges: what to change first, what to keep, what to follow up');
+  ta.placeholder = humanGate(t) ? tr('Your answer: which options you pick, what to change, what to watch') : tr('Notes for the agent as it merges: what to change first, what to keep, what to follow up');
   ta.addEventListener('input', () => { ui.notesDraft[t.key] = ta.value; });
   const target = notesTarget(t);
   const to = el('div', 'bl-approve-to');
-  to.textContent = target ? tr('Goes to {kind}: {title}', { kind: target.kind, title: target.title || target.id.slice(0, 8) }) : tr('No session found: the notes stay on the ticket as a comment.');
-  const go = el('button', 'btn primary', tr('Approve and send')); go.type = 'submit'; go.title = tr('The agent merges the PR, with your notes');
+  to.textContent = target ? tr('Goes to {kind}: {title}', { kind: target.kind, title: target.title || target.id.slice(0, 8) })
+    : humanGate(t) ? tr('No session found: the ticket closes with your notes as its result.') : tr('No session found: the notes stay on the ticket as a comment.');
+  const go = el('button', 'btn primary', tr('Approve and send')); go.type = 'submit'; go.title = humanGate(t) ? tr('The session carries on with your answer') : tr('The agent merges the PR, with your notes');
   const no = el('button', 'btn', tr('Cancel')); no.type = 'button';
   no.addEventListener('click', () => { ui.notesFor = null; renderBacklog(); });
   const row = el('div', 'bl-approve-row'); row.append(to, no, go);
@@ -2228,20 +2283,28 @@ function approveNotesForm(t) {
 function ticketActions(t) {
   const box = el('div', 'bl-d-actions');
   if (['failed', 'canceled', 'done'].includes(t.state)) box.append(actBtn(tr('Reopen'), 'ticket-reopen', t.key, null, { primary: t.state === 'failed', title: tr('Back to todo with attempts reset') }));
-  if (t.assignee === 'human' && !FINAL.has(t.state)) box.append(actBtn(tr('Mark done'), 'ticket-resolve', t.key, null, { primary: true, title: tr('Close this human ticket as done (bl resolve)') }));
-  if (t.state === 'in_review' && approvedRecently(t)) {
-    const s = el('span', 'bl-approved', tr('Approved {ago}: the agent is merging', { ago: ctx.fmtRelAgo(t.meta.approved.at) }));
+  const gate = humanGate(t);
+  if ((gate || t.state === 'in_review') && approvedRecently(t)) {
+    const s = el('span', 'bl-approved', gate ? tr('Approved {ago}: the session is carrying on', { ago: ctx.fmtRelAgo(t.meta.approved.at) }) : tr('Approved {ago}: the agent is merging', { ago: ctx.fmtRelAgo(t.meta.approved.at) }));
     s.title = t.meta.approved.notes ? tr('Your notes: {notes}', { notes: t.meta.approved.notes }) : tr('Approved without notes');
     box.append(s);
-  } else if (t.state === 'in_review') {
+  } else if (gate || t.state === 'in_review') {
     const ap = el('button', 'btn primary bl-act', tr('Approve')); ap.type = 'button';
-    ap.title = tr('Go: the agent that did the work merges its PR and closes the ticket');
+    ap.title = !gate ? tr('Go: the agent that did the work merges its PR and closes the ticket')
+      : notesTarget(t) ? tr('Go: the session that asked carries on with what it proposed, then closes the ticket') : tr('Go: close this ticket as approved');
     ap.addEventListener('click', e => { e.preventDefault(); ap.disabled = true; approveGo(t, ''); });
     box.append(ap);
     const wn = el('button', `btn bl-act${ui.notesFor === t.key ? ' on' : ''}`, tr('Approve with notes')); wn.type = 'button';
-    wn.title = tr('Approve, with notes for the agent as it merges and follows up');
+    wn.title = gate ? tr('Approve, with your answer for the session that asked') : tr('Approve, with notes for the agent as it merges and follows up');
     wn.addEventListener('click', e => { e.preventDefault(); ui.notesFor = ui.notesFor === t.key ? null : t.key; renderBacklog(); if (ui.notesFor) setTimeout(() => $('#bl-approve-notes')?.focus(), 0); });
     box.append(wn);
+  }
+  // Closing without a word to the session; with no session, Approve already does exactly this.
+  if (t.assignee === 'human' && !FINAL.has(t.state) && !(gate && !notesTarget(t))) {
+    const md = el('button', 'btn bl-act', tr('Mark done')); md.type = 'button';
+    md.title = tr('Close this human ticket as done (bl resolve), without sending anything to its session');
+    md.addEventListener('click', async e => { e.preventDefault(); md.disabled = true; const nx = nextNeed(t.key); if (await act('ticket-resolve', t.key)) advance(t, nx); });
+    box.append(md);
   }
   if (t.state === 'backlog') box.append(actBtn(tr('Move to todo'), 'ticket-move', t.key, 'todo', { primary: true }));
   if (t.state === 'todo') box.append(actBtn(tr('Move to backlog'), 'ticket-move', t.key, 'backlog'));
