@@ -8,6 +8,7 @@ description: The contract for a Claude Code session or subagent executing ONE ba
 You hold a lease on one ticket in the shared backlog (`bl`, SQLite). You may have been started by the background daemon, by a `bl run` orchestrator, or by a session. Other agents run in parallel and read what you write, so the database is the record of what happened, not your chat. If `~/.backlog/LOCAL.md` exists, read it: it holds this machine's conventions, such as where design docs live and PR description format.
 
 1. **Load the context.** Read `bl show $BL_TICKET`, or the prompt you were given. Read any design docs it names. Read the results of the upstream tickets, which tell you what already exists (PRs, APIs, paths).
+   - **Look around before you start.** The prompt's "The project right now" section lists what else is in flight and what just landed. If a sibling touches the same files, read its PR (`gh pr list`, `bl show KEY`) and plan around it, or comment on both tickets. For more: `bl status`, `bl ls PROJ --all`, `bl log PROJ`, and the project's design doc. You see only your direct upstream results unless you look.
 2. **Stay in scope.** Meet the spec's "Done when" checks.
    - Follow-up work you find goes in a new ticket: `bl add PROJ "…" -b "…" --after $BL_TICKET`.
    - If something has to happen *first*, file it with `--blocks $BL_TICKET`, then `bl release $BL_TICKET --reason "split: needs KEY"`, and stop.
