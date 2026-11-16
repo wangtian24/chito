@@ -1730,6 +1730,7 @@ body.fx-full .fx-chart { height: 220px; }
 .bl-compact-run > .bl-compact-row > * { min-width: 0; }
 .bl-compact-row .bl-compact-model, .bl-compact-row .bl-compact-why, .bl-compact-row .bl-compact-exec { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bl-compact-row .bl-compact-since { text-align: right; }
-.bl-compact-head { grid-template-columns: minmax(0, 1fr) 8.5rem 8.5rem 19rem 180px; }
+.bl-compact-head { grid-template-columns: minmax(0, 1fr) 8.5rem 5.5rem 17.5rem 140px; }
+.bl-compact-head .bl-lane-badges { overflow: hidden; }
 .bl-chip-act { letter-spacing: 1.5px; font-size: 8px; padding: 0 4px 0 5.5px; }
 @media (max-width: 900px) { .bl-compact-run { grid-template-columns: 18px 2.8rem minmax(0, 1fr) 12rem; } }
