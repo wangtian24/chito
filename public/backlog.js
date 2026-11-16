@@ -1081,7 +1081,13 @@ function compactLane(p, tks, shown, nameRow, inPlace = false) {
   const head = el('div', 'bl-compact-head');
   const name = nameRow.querySelector('.bl-lane-name'); if (name) name.title = `${p.key} ${p.name}`;
   head.append(nameRow);
-  const b2 = el('div', 'bl-lane-badges'); b2.append(...laneBadges(p)); head.append(b2);
+  // Status in its own column, color-coded, before the orchestration mode; the badges then carry the mode only.
+  const orphan = isOrphan(p);
+  const stCol = el('div', 'bl-compact-status');
+  const st = el('span', `bl-pstatus pst-${orphan ? 'orphan' : p.status}`, orphan ? tr('Orphaned') : PSTATE[p.status] || p.status);
+  st.title = projState(p).title;
+  stCol.append(st); head.append(stCol);
+  const b2 = el('div', 'bl-lane-badges'); b2.append(...laneBadges(p).filter(b => !b.classList.contains('bl-pstate'))); head.append(b2);
   const counts = el('div', 'bl-compact-counts');
   for (const st of LANE_COLS) { const n = shown.filter(t => t.state === st).length; if (n) { const x = statePill(st); x.append(el('span', 'num', String(n))); counts.append(x); } }
   const you = tks.filter(needsYou).length; if (you) counts.append(el('span', 'bl-compact-you', trp(you, '{n} needs you', '{n} need you')));
