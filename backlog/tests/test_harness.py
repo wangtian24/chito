@@ -1,4 +1,5 @@
 import json
+import re
 import os
 import runpy
 import tempfile
@@ -222,6 +223,27 @@ class TldrAndRepoScopeTest(HarnessTest):
         c.execute("UPDATE settings SET value=? WHERE key='main_health'", (json.dumps({"state": "green", "green_sha": "c"}),))
         with patch.dict(os.environ, {"BL_TICKET": "A-1"}):
             self.assertIsNone(g(c, {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 3"}}))
+
+    def test_reclaim_resumes_previous_session(self):
+        c, bl = self.c, self.bl
+        wt = Path(self.tmp.name) / "wt"; wt.mkdir()
+        home = Path(self.tmp.name) / "home"
+        slug = re.sub(r"[^A-Za-z0-9]", "-", str(wt.resolve()))
+        (home / ".claude" / "projects" / slug).mkdir(parents=True)
+        (home / ".claude" / "projects" / slug / "sid-1.jsonl").write_text("{}")
+        ins = "INSERT INTO events(ticket,project,kind,actor,body,at,session_id) VALUES('A-1','A',?,?,?,?,?)"
+        c.execute(ins, ("claim", "daemon:1:1", "claimed", "1", None))
+        c.execute(ins, ("note", "daemon:1:1", "touching x", "2", "sid-1"))
+        c.execute(ins, ("state", "user:me", "in_progress → todo: project paused", "3", None))
+        c.execute(ins, ("claim", "daemon:1:2", "claimed", "4", None))
+        t = c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone()
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            sid, why = bl["previous_session"](c, t, str(wt))
+            self.assertEqual(sid, "sid-1")
+            self.assertIn("project paused", why)
+            (home / ".claude" / "projects" / slug / "sid-1.jsonl").unlink()
+            self.assertEqual(bl["previous_session"](c, t, str(wt)), (None, None))
+        self.assertIn("resuming backlog ticket A-1", bl["resume_prompt"](t, why))
 
     def test_project_cap_unlimited_by_default(self):
         self.assertIsNone(self.bl["project_cap"](self.c, "A"))
