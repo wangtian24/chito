@@ -1706,3 +1706,13 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .fx-ship-cap.on { color: var(--color-ink); }
 @keyframes fx-drop { 0% { transform: translateY(-160px) rotate(-8deg); opacity: 0; } 60% { opacity: 1; } 100% { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .fx-brick.drop { animation: none; } }
+
+/* Factory full screen */
+.fx-tools { display: flex; align-items: center; gap: var(--space-sm); margin: 0 0 var(--space-md); }
+.fx-tools .fx-note { margin: 0; flex: 1; min-width: 0; }
+.fx-fs { flex: none; height: 26px; padding: 0 8px; gap: 4px; font-size: 12px; border: 1px solid var(--color-rule-sheet); }
+.fx-fs .ic { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+body.fx-full .sidebar, body.fx-full .topbar, body.fx-full #backlog .board-head, body.fx-full #backlog .bl-tabs, body.fx-full .bl-drawer { display: none !important; }
+body.fx-full .app { grid-template-columns: 1fr !important; }
+body.fx-full #backlog .board-inner { max-width: none; padding: var(--space-md) var(--space-lg); }
+body.fx-full .fx-chart { height: 220px; }

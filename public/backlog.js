@@ -1850,7 +1850,28 @@ function renderFactoryTab(root, all) {
     fxGauge(tr('On the floor now'), fmtUsd(spent), tr('{n} tokens', { n: fmtTok(toks) })),
     fxGauge(tr('Runs today'), String(d.daemon?.runsToday ?? '–'), d.daemon?.alive ? (d.daemon.enabled ? tr('daemon running') : tr('daemon paused')) : tr('daemon down')));
   root.append(top);
-  root.append(el('p', 'fx-note', tr('Nominal list prices from transcripts; not billed on a subscription. Rates fill in while this tab stays open.')));
+  // Full screen: the whole page goes full screen (the tab re-renders every 10 s, so its own nodes can't hold it)
+  // and body.fx-full hides everything but the factory. Esc leaves it as usual.
+  const tools = el('div', 'fx-tools');
+  const full = !!document.fullscreenElement;
+  const fsb = el('button', 'btn fx-fs', full ? tr('Exit full screen') : tr('Full screen')); fsb.type = 'button';
+  fsb.title = full ? tr('Leave full screen (Esc)') : tr('Show the factory floor full screen');
+  fsb.insertAdjacentHTML('afterbegin', full
+    ? '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>'
+    : '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>');
+  fsb.addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else document.documentElement.requestFullscreen?.().catch(() => {});
+  });
+  if (!factory.fsBound) {
+    factory.fsBound = true;
+    document.addEventListener('fullscreenchange', () => {
+      document.body.classList.toggle('fx-full', !!document.fullscreenElement && currentTab() === 'factory');
+      if (currentTab() === 'factory') renderBacklog();
+    });
+  }
+  tools.append(el('p', 'fx-note', tr('Nominal list prices from transcripts; not billed on a subscription. Rates fill in while this tab stays open.')), fsb);
+  root.append(tools);
 
   const floor = el('div', 'fx-floor');
   const n = Math.max(cap, live.length);
