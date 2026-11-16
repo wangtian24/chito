@@ -188,6 +188,8 @@ function openPath(t) {
   return inPlacePath(t);
 }
 const queryTicket = () => new URLSearchParams(location.search).get('ticket');
+// The ticket whose panel the URL opens (/projects/P/KEY or ?ticket=KEY).
+const openKey = () => ((parseBacklogPath(location.pathname) || {}).ticket || queryTicket() || '').toUpperCase() || null;
 
 function sessionLink(s, label) {
   const a = el('a', 'bl-sess');
@@ -211,6 +213,7 @@ export function renderBacklog() {
   try { renderBacklogInner(root); } finally { if (scroller) scroller.scrollTop = y; }
 }
 function renderBacklogInner(root) {
+  bl.rowOrder = []; bl.needsOrder = [];   // what ← → step through; the lists rendered below fill them
   const route = parseBacklogPath(location.pathname) || {};
   root.textContent = '';
   if (bl.error) { root.append(el('div', 'board-status', tr('Could not load the backlog: {error}', { error: bl.error }))); return; }
@@ -829,6 +832,7 @@ function pics(list, cls) {
 const ago = iso => { const s = el('span', 'bl-needs-ago', ' · ' + tr('created {ago}', { ago: ctx.fmtRelAgo(iso) })); s.title = ctx.fmtDateTime(iso); return s; };
 function needsYouPanel(tks) {
   const items = tks.filter(needsYou);
+  bl.needsOrder = items;
   const ms = (bl.data.milestones || []).filter(m => m.status === 'showcased' && tks.some(t => t.project === m.project));
   if (!items.length && !ms.length) return null;
   const open = store.get('blNeedsOpen', true);
@@ -843,6 +847,7 @@ function needsYouPanel(tks) {
   box.append(h);
   for (const t of items) {
     const row = el('div', 'bl-needs-row');
+    if (openKey() === t.key) row.classList.add('sel');
     const title = linkTo(el('a', 'bl-needs-title'), openPath(t));
     title.append(el('span', 'num', t.key), el('span', null, t.title));
     const why = el('span', 'bl-needs-why', needReason(t));
@@ -1581,14 +1586,26 @@ export function initBacklog(c) {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.defaultPrevented) return;
     if (e.target.closest?.('input, textarea, select, [contenteditable="true"]') || document.querySelector('.modal:not([hidden])')) return;
-    const d = $('#bl-drawer'); const order = bl.rowOrder || [];
-    if (!d || d.hidden || !bl.ticketKey || $('#backlog')?.hidden) return;
-    const i = order.findIndex(t => t.key === bl.ticketKey);
-    const next = order[i < 0 ? 0 : i + (e.key === 'ArrowRight' ? 1 : -1)];
-    if (!next) return;
+    if ($('#backlog')?.hidden) return;
+    const d = $('#bl-drawer'); const open = d && !d.hidden && bl.ticketKey;
+    const rows = bl.rowOrder || [], needs = bl.needsOrder || [];
+    const back = e.key === 'ArrowLeft';
+    // A ticket in the table steps through the table; one waiting on you (or none open, with items waiting)
+    // cycles through "Waiting on you", wrapping at either end.
+    if (open && rows.some(t => t.key === bl.ticketKey)) {
+      const i = rows.findIndex(t => t.key === bl.ticketKey);
+      const next = rows[i + (back ? -1 : 1)];
+      if (!next) return;
+      e.preventDefault();
+      go(openPath(next));
+      document.querySelector(`.bl-table tr[data-key="${CSS.escape(next.key)}"]`)?.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    if (!needs.length || (open && !needs.some(t => t.key === bl.ticketKey))) return;
+    const i = open ? needs.findIndex(t => t.key === bl.ticketKey) : (back ? 0 : -1);
+    const next = needs[(i + (back ? -1 : 1) + needs.length) % needs.length];
     e.preventDefault();
     go(openPath(next));
-    document.querySelector(`.bl-table tr[data-key="${CSS.escape(next.key)}"]`)?.scrollIntoView({ block: 'nearest' });
   });
   document.addEventListener('click', e => {
     const d = $('#bl-drawer');
