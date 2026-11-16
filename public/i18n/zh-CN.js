@@ -645,4 +645,7 @@ export default {
   "deploys when you press Deploy": "点击部署时上线",
   "Keyboard shortcuts": "键盘快捷键",
   "Projects: step through Waiting on you (or the ticket table) in the side panel": "项目页：在侧边面板中逐个查看「等你处理」（或工单表）",
+  "Latest update": "最近更新",
+  "Sort": "排序",
+  "Sort projects": "项目排序",
 };
