@@ -107,3 +107,15 @@ class TldrAndRepoScopeTest(HarnessTest):
         self.assertIsNotNone(ok("A. B. C. D. E. F.\n- ok"))
         self.assertIsNone(ok(["first", "second"]))
         self.assertIsNotNone(ok(None))
+
+    def test_tldr_backfill_retries_once(self):
+        self.c.execute("UPDATE tickets SET assignee='human', result='r' WHERE key='A-1'")
+        upd = self.c.execute("SELECT updated FROM tickets WHERE key='A-1'").fetchone()["updated"]
+        meta = {"tldr_try": {"updated": upd, "tries": 1, "error": "too long"}}
+        self.c.execute("UPDATE tickets SET meta=? WHERE key='A-1'", (json.dumps(meta),))
+        self.assertIn("A-1", [t["key"] for t, _ in self.bl["waiting_without_tldr"](self.c)])
+        t = self.c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone()
+        self.assertIn("rejected (too long)", self.bl["tldr_prompt"](t, None))
+        meta["tldr_try"]["tries"] = 2
+        self.c.execute("UPDATE tickets SET meta=? WHERE key='A-1'", (json.dumps(meta),))
+        self.assertNotIn("A-1", [t["key"] for t, _ in self.bl["waiting_without_tldr"](self.c)])
