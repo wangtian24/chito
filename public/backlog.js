@@ -1100,7 +1100,7 @@ function card(t, inPlace = false) {
 
 // ---- main page tabs: Overview (daemon, waiting on you, open projects) and Projects (lanes + the tickets toggle) ----
 // The tab lives in ?tab=; with none in the URL, the last one picked is used, else Overview.
-const TABS = [['overview', tr('Overview')], ['projects', tr('Projects')], ['tickets', tr('Tickets')]];
+const TABS = [['overview', tr('Overview')], ['projects', tr('Projects')], ['tickets', tr('Tickets')], ['factory', tr('Factory')]];
 function currentTab() {
   const q = new URLSearchParams(location.search).get('tab');
   if (TABS.some(([k]) => k === q)) return q;
@@ -1150,6 +1150,7 @@ function renderLanes(root) {
   }
   root.append(tabBar(tab, { overview: you, projects: projects.length, tickets: all.filter(t => projects.some(p => p.key === t.project)).length }));
   if (tab === 'tickets') { renderTicketsTab(root, all, projects); return; }
+  if (tab === 'factory') { renderFactoryTab(root, all); return; }
   if (tab === 'overview') {
     const q = daemonQuota(); if (q) root.append(q);
     const ny = needsYouPanel(all); if (ny) root.append(ny);
@@ -1689,6 +1690,195 @@ function colsChooser() {
   d.append(menu);
   return d;
 }
+// ---- Factory tab: the software factory floor (a vanity dashboard) ----
+// One block per worker slot (the global cap), five to a row, colored by project; gauges on top for sessions in
+// flight, tokens per minute and spend per minute. Rates come from per-ticket usage deltas between refreshes
+// (kept in memory for 10 minutes), so they start at zero and fill in as the tab stays open.
+const factory = { samples: [], timer: null };
+// Project colors: the projects on the floor right now share the color wheel evenly, so no two look alike.
+const projHue = key => factory.hues?.[key] ?? 0;
+function setFloorHues(live, shipped = []) {
+  const keys = [...new Set([...live, ...shipped].map(t => t.project))].sort();
+  factory.hues = Object.fromEntries(keys.map((k, i) => [k, Math.round(20 + i * 360 / Math.max(keys.length, 1))]));
+}
+function factorySample(live) {
+  const now = Date.now();
+  const per = {};
+  for (const t of live) if (t.usage) per[t.key] = { tokens: t.usage.tokens || 0, cost: t.usage.cost || 0 };
+  const last = factory.samples[factory.samples.length - 1];
+  if (!last || now - last.at > 5000) factory.samples.push({ at: now, per });
+  factory.samples = factory.samples.filter(s => now - s.at <= 10 * 60e3);
+}
+// Tokens and dollars per minute between two samples: only tickets seen in both, and never negative.
+function factoryRate(a, b) {
+  let tok = 0, usd = 0;
+  for (const [k, v] of Object.entries(b.per)) { const o = a.per[k]; if (o) { tok += Math.max(0, v.tokens - o.tokens); usd += Math.max(0, v.cost - o.cost); } }
+  const min = Math.max((b.at - a.at) / 60e3, 1 / 60);
+  return { tok: tok / min, usd: usd / min };
+}
+function factoryRates() {
+  const s = factory.samples;
+  if (s.length < 2) return null;
+  const now = factoryRate(s.find(x => s[s.length - 1].at - x.at <= 5 * 60e3) || s[0], s[s.length - 1]);
+  const spark = [];
+  for (let i = 1; i < s.length; i++) spark.push(factoryRate(s[i - 1], s[i]).tok);
+  return { ...now, spark, mins: Math.max(1, Math.round((s[s.length - 1].at - s[0].at) / 60e3)) };
+}
+const fmtUsd = v => v >= 100 ? `$${Math.round(v)}` : `$${v.toFixed(2)}`;
+function ringGauge(n, cap) {
+  const r = 34, c = 2 * Math.PI * r, f = cap ? Math.min(1, n / cap) : 0;
+  const svg = `<svg viewBox="0 0 84 84" class="fx-ring" aria-hidden="true"><circle cx="42" cy="42" r="${r}" class="fx-ring-bg"/>` +
+    `<circle cx="42" cy="42" r="${r}" class="fx-ring-fg" stroke-dasharray="${(c * f).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 42 42)"/></svg>`;
+  const w = el('div', 'fx-ring-wrap'); w.innerHTML = svg;
+  const mid = el('div', 'fx-ring-mid'); mid.append(el('b', 'num', String(n)), el('span', 'num', `/ ${cap}`)); w.append(mid);
+  return w;
+}
+function sparkline(vals) {
+  const W = 120, H = 28;
+  if (vals.length < 2) return null;
+  const max = Math.max(...vals, 1);
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1) * W).toFixed(1)},${(H - 2 - v / max * (H - 4)).toFixed(1)}`).join(' ');
+  const s = el('div', 'fx-spark'); s.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}"/></svg>`;
+  return s;
+}
+function fxGauge(label, value, sub, extra) {
+  const g = el('div', 'fx-gauge');
+  g.append(el('span', 'fx-g-label', label), el('b', 'num fx-g-value', value));
+  if (sub) g.append(el('span', 'num fx-g-sub', sub));
+  if (extra) g.append(extra);
+  return g;
+}
+// A hamster on a wheel for each busy slot; the wheel turns faster the more tokens that ticket burns per minute.
+function hamster(busy, secs) {
+  const w = el('div', `fx-hamster${busy ? '' : ' still'}`); w.setAttribute('aria-hidden', 'true');
+  if (busy) w.style.setProperty('--fx-spin', `${secs.toFixed(2)}s`);
+  const spokes = [0, 30, 60, 90, 120, 150].map(a => `<line x1="30" y1="6" x2="30" y2="54" transform="rotate(${a} 30 30)"/>`).join('');
+  w.innerHTML = `<svg viewBox="0 0 60 62"><g class="fx-stand"><line x1="30" y1="30" x2="18" y2="60"/><line x1="30" y1="30" x2="42" y2="60"/></g>` +
+    `<g class="fx-wheel"><circle cx="30" cy="30" r="24"/><circle cx="30" cy="30" r="21" class="fx-rim"/>${spokes}<circle cx="30" cy="30" r="2.2" class="fx-hub"/></g>` +
+    (busy ? `<g class="fx-ham"><path class="fx-tail" d="M21.5 45.5 q-2.5 -0.5 -3 -2"/>` +
+      `<g class="fx-leg fx-leg-a"><line x1="25" y1="48" x2="23.5" y2="51.5"/><line x1="33" y1="48.5" x2="34.5" y2="51.5"/></g>` +
+      `<g class="fx-leg fx-leg-b"><line x1="27" y1="48.5" x2="28.5" y2="51.5"/><line x1="31" y1="48" x2="29.5" y2="51.5"/></g>` +
+      `<ellipse cx="29" cy="44.5" rx="8.5" ry="5.6" class="fx-body"/><ellipse cx="27.5" cy="46" rx="4.5" ry="2.6" class="fx-belly"/>` +
+      `<circle cx="36.5" cy="42.5" r="4.4" class="fx-body"/><circle cx="35.2" cy="38.6" r="1.7" class="fx-ear"/>` +
+      `<circle cx="38.3" cy="41.8" r="0.8" class="fx-eye"/><circle cx="40.6" cy="43.2" r="0.7" class="fx-nose"/></g>` : '') + `</svg>`;
+  return w;
+}
+// Tokens per minute for one ticket over the samples that include it.
+function ticketRate(key) {
+  const s = factory.samples.filter(x => x.per[key]);
+  if (s.length < 2) return 0;
+  const a = s[0], b = s[s.length - 1];
+  return Math.max(0, b.per[key].tokens - a.per[key].tokens) / Math.max((b.at - a.at) / 60e3, 1 / 60);
+}
+// Shipped: the last 24 hours, one column per hour, one brick per finished ticket, stacked in project color.
+// A ticket that finishes while the tab is open drops onto the current hour's stack.
+const HOUR = 3600e3;
+function shippedTickets(all) {
+  const start = Math.floor(Date.now() / HOUR) * HOUR - 23 * HOUR;
+  return all.filter(t => t.state === 'done' && t.finished && Date.parse(t.finished) >= start)
+    .sort((a, b) => (a.finished < b.finished ? -1 : 1));
+}
+function shippedChart(done) {
+  const start = Math.floor(Date.now() / HOUR) * HOUR - 23 * HOUR;
+  const cols = Array.from({ length: 24 }, () => []);
+  for (const t of done) cols[Math.min(23, Math.floor((Date.parse(t.finished) - start) / HOUR))].push(t);
+  const first = !factory.seenDone;
+  factory.seenDone ||= new Set();
+  const max = Math.max(1, ...cols.map(c => c.length));
+  const bh = Math.max(4, Math.min(14, Math.floor(168 / max) - 2));
+  const box = el('section', 'fx-ship');
+  const hd = el('div', 'fx-ship-head');
+  const peak = Math.max(...cols.map(c => c.length));
+  hd.append(el('h2', 'bl-h2', tr('Shipped, last 24 hours')),
+    el('span', 'num fx-ship-sum', tr('{n} tickets · peak {m} in an hour · {r} this hour', { n: done.length, m: peak, r: cols[23].length })));
+  box.append(hd);
+  const cap = el('div', 'fx-ship-cap', tr('Hover a brick to see the ticket; click to open it.'));
+  const chart = el('div', 'fx-chart'); chart.setAttribute('role', 'img');
+  chart.setAttribute('aria-label', tr('{n} tickets finished in the last 24 hours', { n: done.length }));
+  cols.forEach((list, i) => {
+    const col = el('div', `fx-col${i === 23 ? ' now' : ''}`);
+    const at = new Date(start + i * HOUR);
+    col.title = tr('{h}:00 · {n} finished', { h: String(at.getHours()).padStart(2, '0'), n: list.length });
+    for (const t of list) {
+      const b = linkTo(el('a', 'fx-brick'), openPath(t));
+      b.style.setProperty('--fx-proj', `oklch(0.62 0.13 ${projHue(t.project)})`);
+      b.style.height = `${bh}px`;
+      if (!first && !factory.seenDone.has(t.key)) b.classList.add('drop');
+      factory.seenDone.add(t.key);
+      const info = `${t.key} · ${t.title} · ${tr('done {when}', { when: ctx.fmtDateTime(t.finished) })}`;
+      b.setAttribute('aria-label', info);
+      b.addEventListener('mouseenter', () => { cap.textContent = info; cap.classList.add('on'); });
+      b.addEventListener('focus', () => { cap.textContent = info; cap.classList.add('on'); });
+      col.append(b);
+    }
+    chart.append(col);
+  });
+  chart.addEventListener('mouseleave', () => { cap.textContent = tr('Hover a brick to see the ticket; click to open it.'); cap.classList.remove('on'); });
+  const axis = el('div', 'num fx-axis');
+  for (let i = 0; i < 24; i++) {
+    const at = new Date(start + i * HOUR);
+    axis.append(el('span', null, i === 23 ? tr('now') : i % 3 === 0 ? String(at.getHours()).padStart(2, '0') : ''));
+  }
+  const legend = el('div', 'fx-legend');
+  const per = {};
+  for (const t of done) per[t.project] = (per[t.project] || 0) + 1;
+  for (const [k, n] of Object.entries(per).sort((a, b) => b[1] - a[1])) {
+    const it = el('span', 'fx-leg-item'); it.style.setProperty('--fx-proj', `oklch(0.62 0.13 ${projHue(k)})`);
+    it.append(el('span', 'fx-leg-sw'), el('span', null, k), el('span', 'num', String(n)));
+    legend.append(it);
+  }
+  box.append(legend, chart, axis, cap);
+  return box;
+}
+function renderFactoryTab(root, all) {
+  const d = bl.data;
+  const cap = Number(setting(null, 'global_max_parallel', 8)) || 8;
+  const live = all.filter(t => t.state === 'in_progress').sort((a, b) => ((a.spawn?.at || a.started || '') < (b.spawn?.at || b.started || '') ? -1 : 1));
+  factorySample(live);
+  const shipped = shippedTickets(all);
+  setFloorHues(live, shipped);
+  const rates = factoryRates();
+  const spent = live.reduce((s, t) => s + (t.usage?.cost || 0), 0);
+  const toks = live.reduce((s, t) => s + (t.usage?.tokens || 0), 0);
+
+  const top = el('div', 'fx-top');
+  const inflight = el('div', 'fx-gauge fx-gauge-ring');
+  inflight.append(ringGauge(live.length, cap), el('span', 'fx-g-label', tr('AI sessions in flight')));
+  top.append(inflight,
+    fxGauge(tr('Tokens / min'), rates ? fmtTok(Math.round(rates.tok)) : '…', rates ? tr('last {n} min', { n: Math.min(5, rates.mins) }) : tr('warming up'), rates ? sparkline(rates.spark) : null),
+    fxGauge(tr('Spend / min'), rates ? fmtUsd(rates.usd) : '…', rates ? tr('{v} / hour', { v: fmtUsd(rates.usd * 60) }) : tr('warming up')),
+    fxGauge(tr('On the floor now'), fmtUsd(spent), tr('{n} tokens', { n: fmtTok(toks) })),
+    fxGauge(tr('Runs today'), String(d.daemon?.runsToday ?? '–'), d.daemon?.alive ? (d.daemon.enabled ? tr('daemon running') : tr('daemon paused')) : tr('daemon down')));
+  root.append(top);
+  root.append(el('p', 'fx-note', tr('Nominal list prices from transcripts; not billed on a subscription. Rates fill in while this tab stays open.')));
+
+  const floor = el('div', 'fx-floor');
+  const n = Math.max(cap, live.length);
+  for (let i = 0; i < n; i++) {
+    const t = live[i];
+    if (!t) { const e = el('div', 'fx-slot idle'); e.append(el('span', 'num fx-slot-n', String(i + 1)), hamster(false), el('span', 'fx-idle', tr('idle'))); floor.append(e); continue; }
+    const b = linkTo(el('a', 'fx-slot'), openPath(t));
+    b.style.setProperty('--fx-proj', `oklch(0.6 0.13 ${projHue(t.project)})`);
+    const since = t.spawn?.at || t.started;
+    const head = el('div', 'fx-slot-head');
+    head.append(el('span', 'fx-dot'), el('span', 'num fx-proj', t.project), el('span', 'fx-model', (t.spawn?.model || '').replace(/^claude-/, '')));
+    const tk = el('div', 'fx-ticket'); tk.append(el('span', 'num fx-key', t.key.slice(t.project.length + 1)), el('span', 'fx-title', t.title));
+    const foot = el('div', 'num fx-slot-foot');
+    foot.append(el('span', null, since ? ctx.fmtRel(since) : ''), el('span', null, t.usage ? fmtTok(t.usage.tokens) : '–'), el('b', null, t.usage ? fmtCost(t.usage) : '–'));
+    if (since) foot.firstChild.title = tr('Started {when}', { when: ctx.fmtDateTime(since) });
+    b.title = `${t.key} ${t.title}${t.claimed_by ? `\n${t.claimed_by}` : ''}${t.touching ? `\n${tr('touching: {what}', { what: t.touching })}` : ''}`;
+    const r = ticketRate(t.key);   // ~2.4 s per turn when quiet, down to 0.35 s at 200k tokens/min and up
+    b.append(head, tk, foot, hamster(true, r ? Math.max(0.35, 2.4 - Math.log10(1 + r / 1000) * 0.9) : 1.6));
+    floor.append(b);
+  }
+  root.append(floor, shippedChart(shipped));
+  // keep the floor live while the tab is open
+  if (!factory.timer) factory.timer = setInterval(async () => {
+    if (currentTab() !== 'factory' || document.hidden || location.pathname !== '/projects') return;
+    await loadBacklog(); renderBacklog();
+  }, 10000);
+}
+
 function renderTicketsTab(root, all, projects) {
   const f = ui.tk;
   const live = new Set(projects.map(p => p.key));
