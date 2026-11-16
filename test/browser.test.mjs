@@ -135,7 +135,7 @@ test('search finds a ticket by key and Enter opens it; the session header links 
   const tk = b.available && b.tickets.find(x => (x.sessions || []).some(s => s.role === 'worker' && !s.missing));
   if (!tk) return t.skip('no backlog with linked sessions here');
   const sid = tk.sessions.find(s => s.role === 'worker' && !s.missing).id;
-  await page.goto(BASE + '/');
+  await page.goto(BASE + '/catchup');
   await page.fill('#q', tk.key);
   await page.waitForSelector(`.ticket-hit[href="/projects/${tk.project}/${tk.key}"]`);
   await page.press('#q', 'Enter');
