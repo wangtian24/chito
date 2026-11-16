@@ -631,7 +631,7 @@ function orchLink(s, compact, last = false) {
 // Standing instructions: every orchestrator run and every worker prompt in this project gets them, and a running
 // orchestrator re-reads them each round (bl instructions KEY).
 function instructionsBox(p) {
-  const box = el('details', 'bl-instr'); if (p.instructions) box.open = true;
+  const box = el('details', 'bl-instr');
   const sum = el('summary', null, tr('Standing instructions'));
   sum.append(el('span', 'bl-instr-hint', p.instructions ? tr(' every orchestrator and worker in this project follows these') : tr(' none yet: guidance every orchestrator and worker here should follow')));
   const ta = el('textarea'); ta.value = p.instructions || ''; ta.rows = 4; ta.placeholder = tr('For example: deploy only at milestones. Always add a unit test. Leave the billing code alone.');
@@ -647,7 +647,7 @@ function instructionsBox(p) {
 function projectArea(p) {
   const notes = (bl.data.notes || []).filter(n => n.project === p.key);
   const mem = notes.filter(n => n.kind === 'memory'), msgs = notes.filter(n => n.kind === 'msg');
-  const box = el('details', 'bl-instr bl-area'); if (mem.length || msgs.length) box.open = true;
+  const box = el('details', 'bl-instr bl-area');
   const sum = el('summary', null, tr('Project area'));
   sum.append(el('span', 'bl-instr-hint', tr(' memory and messages every worker in this project sees (bl area {key})', { key: p.key })));
   box.append(sum);
@@ -1360,8 +1360,8 @@ function renderProject(root, p) {
     q.append(actBtn(tr('Retry now'), 'quota-clear', p.quota.scope === 'project' ? p.key : null, null, { title: tr('Clear the pause; the next claims try again') }));
     root.append(q);
   }
-  root.append(instructionsBox(p));
-  root.append(projectArea(p));
+  const boxes = el('div', 'bl-proj-boxes'); boxes.append(instructionsBox(p), projectArea(p));
+  root.append(boxes);
   if (tks.some(t => t.state === 'in_progress')) root.append(el('h2', 'bl-h2', tr('In flight')), inFlight(tks));
 
   const stats = el('div', 'bl-stats');
@@ -1379,7 +1379,13 @@ function renderProject(root, p) {
   const nyp = needsYouPanel(tks); if (nyp) root.append(nyp);
 
   const rm = roadmap(p);
-  if (rm) root.append(el('h2', 'bl-h2', tr('Roadmap')), rm);
+  if (rm) {   // collapsible like the graph; the choice is remembered for every project
+    const rsec = el('details', 'bl-sec'); rsec.open = store.get('roadmapOpen', true);
+    const rsum = el('summary'); rsum.append(el('h2', 'bl-h2', tr('Roadmap')));
+    rsec.append(rsum, rm);
+    rsec.addEventListener('toggle', () => store.set('roadmapOpen', rsec.open));
+    root.append(rsec);
+  }
   else if (ui.milestone) ui.milestone = null;
   // The graph collapses; the choice is remembered for every project.
   const gsec = el('details', 'bl-sec'); gsec.open = store.get('graphOpen', true);
@@ -1390,7 +1396,12 @@ function renderProject(root, p) {
   const msOk = t => !ui.milestone || (ui.milestone === '-' ? !t.milestone && !t.meta?.showcase_for : t.milestone === ui.milestone);
   const th = el('h2', 'bl-h2', tr('Tickets'));
   if (ui.milestone) { const x = el('button', 'chip on', `${ui.milestone === '-' ? tr('No milestone') : ui.milestone} ×`); x.addEventListener('click', () => { ui.milestone = null; renderBacklog(); }); th.append(' ', x); }
-  root.append(th, controls(), table(visibleTickets(tks).filter(t => matches(t) && msOk(t))));
+  const rows = visibleTickets(tks).filter(t => matches(t) && msOk(t));
+  // (xx tickets, yy open, zz in progress) for the rows shown; open = not done or canceled.
+  th.append(' ', el('span', 'bl-h2-count', tr('({n} tickets, {open} open, {wip} in progress)', {
+    n: rows.length, open: rows.filter(t => !['done', 'canceled'].includes(t.state)).length,
+    wip: rows.filter(t => t.state === 'in_progress').length })));
+  root.append(th, controls(), table(rows));
 }
 
 function graph(tks, big = false) {
