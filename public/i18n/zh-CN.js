@@ -675,4 +675,12 @@ export default {
   "approved; sent to the {kind} to merge": "已批准；已发给{kind}去合并",
   "Could not reach the session ({error}); a fresh worker will merge it": "无法联系会话（{error}）；会由新的工作者合并",
   "approved; back to todo, a worker will merge it": "已批准；退回待办，会由工作者合并",
+  "Project": "项目",
+  "Created {when}": "创建于 {when}",
+  "Search key, title, label or project": "搜索编号、标题、标签或项目",
+  "Anyone": "任何人",
+  "Filter by state": "按状态筛选",
+  "All states": "全部状态",
+  "Showing all states": "显示全部状态",
+  "{n} of {total} tickets": "{total} 个工单中的 {n} 个",
 };
