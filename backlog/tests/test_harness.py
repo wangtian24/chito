@@ -202,6 +202,27 @@ class TldrAndRepoScopeTest(HarnessTest):
         self.assertEqual(st, {"A-1": "todo", "A-2": "todo", "A-3": "in_progress"})
         self.assertEqual(c.execute("SELECT attempts FROM tickets WHERE key='A-2'").fetchone()[0], 0)
 
+    def test_red_main_banner_and_guard(self):
+        c, bl = self.c, self.bl
+        c.execute("UPDATE projects SET repo='/tmp/r' WHERE key='A'")
+        repo = str(Path("/tmp/r").resolve())
+        h = {"state": "red", "red_sha": "a" * 40, "green_sha": "b" * 40, "suites": "e2e:ux", "ticket": "A-9", "since": "x"}
+        c.execute("INSERT INTO settings VALUES(?,?,?)", (f"repo:{repo}", "main_health", json.dumps(h)))
+        p = bl["build_prompt"](c, c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone())
+        self.assertIn("MAIN IS RED", p)
+        self.assertIn("git rebase bbbbbbbbb", p)
+        g = bl["pre_tool_guard"]
+        with patch.dict(os.environ, {"BL_TICKET": "A-1"}):
+            self.assertTrue(g(c, {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 3 --squash"}}))
+            self.assertTrue(g(c, {"tool_name": "Bash", "tool_input": {"command": "git pull --rebase origin main"}}))
+            self.assertIsNone(g(c, {"tool_name": "Bash", "tool_input": {"command": "git rebase bbbbbbb"}}))
+            self.assertIsNone(g(c, {"tool_name": "Bash", "tool_input": {"command": "npm test"}}))
+        with patch.dict(os.environ, {"BL_TICKET": "A-9"}):
+            self.assertIsNone(g(c, {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 3"}}))
+        c.execute("UPDATE settings SET value=? WHERE key='main_health'", (json.dumps({"state": "green", "green_sha": "c"}),))
+        with patch.dict(os.environ, {"BL_TICKET": "A-1"}):
+            self.assertIsNone(g(c, {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 3"}}))
+
     def test_project_cap_unlimited_by_default(self):
         self.assertIsNone(self.bl["project_cap"](self.c, "A"))
         self.c.execute("INSERT INTO settings VALUES('project:A','max_parallel','2')")

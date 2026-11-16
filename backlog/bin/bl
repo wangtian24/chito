@@ -1075,6 +1075,110 @@ def cmd_config(a):
                 c.execute("INSERT OR REPLACE INTO settings VALUES(?,?,?)", (scope, key, json.dumps(v)))
     print("ok")
 
+# ---------------------------------------------------------------- main health (is the repo's main green?)
+# A job that tests main (outside bl) records it here; workers see a banner, and hooks stop rebases onto and merges
+# into a red main, except by the ticket that fixes it. Stored per repo: settings scope repo:<path>, key main_health.
+def repo_of_cwd():
+    try:
+        d = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True,
+                           text=True, timeout=5).stdout.strip()
+        return str(Path(d).parent.resolve()) if d else None
+    except Exception:
+        return None
+
+def main_repo(c, repo=None):
+    if repo:
+        return str(Path(os.path.expanduser(repo)).resolve())
+    tk = os.environ.get("BL_TICKET")
+    if tk:
+        r = c.execute("SELECT p.repo FROM tickets t JOIN projects p ON p.key=t.project WHERE t.key=?", (tk.upper(),)).fetchone()
+        if r and r["repo"]:
+            return str(Path(os.path.expanduser(r["repo"])).resolve())
+    return repo_of_cwd()
+
+def main_health(c, repo):
+    if not repo:
+        return None
+    r = c.execute("SELECT value FROM settings WHERE scope=? AND key='main_health'", (f"repo:{repo}",)).fetchone()
+    return json.loads(r["value"]) if r else None
+
+def main_red(c, repo):
+    h = main_health(c, repo)
+    return h if h and h.get("state") == "red" else None
+
+def red_banner(h, me=None):
+    g = (h.get("green_sha") or "")[:9] or "(unknown)"
+    L = ["## MAIN IS RED: step back from main",
+         f"main fails tests since {(h.get('red_sha') or '')[:9]} (failing: {h.get('suites') or '?'}; last green {g}; "
+         f"fix ticket {h.get('ticket') or '(being filed)'}; since {h.get('since', '')}).", ""]
+    if me and me == h.get("ticket"):
+        L += ["You are the fix ticket: make main green (fix forward, or revert the culprit commit), run the failing "
+              "suites, and merge as soon as they pass. Then `bl main green --sha <merged sha>` is set by the next check.", ""]
+    else:
+        L += [f"- Don't rebase onto or merge into origin/main. Base your branch on the last green commit (`git rebase {g}`) "
+              "and test there; hooks refuse `git rebase origin/main` and `gh pr merge` while main is red.",
+              "- Failures in code you didn't touch are main's, not yours: don't chase them.",
+              "- PR ready? `bl main wait` (waits up to 30 min for green). Still red: `bl release $BL_TICKET --reason "
+              "\"PR #N ready, waiting for green main\"` so the next worker rebases and merges it.", ""]
+    return L
+
+def cmd_main(a):
+    c = connect()
+    repo = main_repo(c, a.repo)
+    if not repo:
+        die("no repo: pass --repo or run inside a git checkout")
+    scope = f"repo:{repo}"
+    if a.action in ("red", "green"):
+        if not a.sha:
+            die("--sha is required")
+        old = main_health(c, repo) or {}
+        h = {"state": a.action, "at": now(), "red_sha": None, "suites": None, "ticket": None, "since": None,
+             "green_sha": a.sha if a.action == "green" else (a.green_sha or old.get("green_sha"))}
+        if a.action == "red":
+            h.update(red_sha=a.sha if old.get("state") != "red" else old.get("red_sha") or a.sha, last_sha=a.sha,
+                     suites=a.suites, ticket=(a.ticket or old.get("ticket") or None),
+                     since=old.get("since") if old.get("state") == "red" else now())
+        with tx(c):
+            c.execute("INSERT OR REPLACE INTO settings VALUES(?,?,?)", (scope, "main_health", json.dumps(h)))
+            if old.get("state") != a.action:
+                event(c, "main", body=f"{repo}: main {a.action} at {a.sha[:9]}" + (f" ({a.suites})" if a.suites else ""))
+        print(a.action); return
+    h = main_health(c, repo)
+    if a.action == "wait":
+        deadline = time.time() + a.timeout
+        while main_red(c, repo) and time.time() < deadline:
+            time.sleep(30)
+        h = main_health(c, repo)
+    if a.json:
+        print(json.dumps({"repo": repo, **(h or {"state": "unknown"})}, indent=1))
+    elif h and h.get("state") == "red":
+        print(f"RED since {(h.get('red_sha') or '')[:9]} ({h.get('since')}): {h.get('suites')}; last green "
+              f"{(h.get('green_sha') or '?')[:9]}; fix ticket {h.get('ticket') or '-'}")
+    else:
+        print(f"{(h or {}).get('state', 'unknown')}" + (f" at {(h.get('green_sha') or '')[:9]} ({h.get('at')})" if h else ""))
+    sys.exit(1 if h and h.get("state") == "red" else 0)
+
+GUARD_MERGE = re.compile(r"\bgh\s+pr\s+merge\b")
+GUARD_REBASE = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?(?:rebase|pull)\b[^;&|\n]*\b(?:origin/main|main|--rebase)\b")
+
+def pre_tool_guard(c, data):
+    """PreToolUse (Bash): while the worker's repo has a red main, refuse merging and rebasing onto main,
+    except for the fix ticket. Returns a reason to deny, or None."""
+    tk = (os.environ.get("BL_TICKET") or "").upper()
+    if not tk or data.get("tool_name") != "Bash":
+        return None
+    cmd = (data.get("tool_input") or {}).get("command") or ""
+    what = "merge" if GUARD_MERGE.search(cmd) else "rebase onto main" if GUARD_REBASE.search(cmd) else None
+    if not what:
+        return None
+    h = main_red(c, main_repo(c))
+    if not h or h.get("ticket") == tk:
+        return None
+    g = (h.get("green_sha") or "")[:9]
+    return (f"main is red since {(h.get('red_sha') or '')[:9]} (failing: {h.get('suites')}; fix ticket {h.get('ticket') or 'being filed'}). "
+            f"Don't {what} now. Work on the last green commit (`git rebase {g}`), and when your PR is ready run "
+            f"`bl main wait`; if still red, `bl release {tk} --reason \"PR ready, waiting for green main\"`.")
+
 def area_notes(c, project, kind, days=None, limit=30):
     q = "SELECT * FROM notes WHERE project=? AND kind=? AND archived IS NULL"
     args = [project, kind]
@@ -1181,6 +1285,9 @@ def build_prompt(c, t, compact=False):
     L = [f"# Backlog ticket {t['key']}: {t['title']}", "",
          f"Project {p['key']} ({p['name']}), repo: {p['repo'] or 'n/a'}. Attempt {t['attempts']}. "
          f"Review policy: {review_policy(c, t)}. Size hint: {meta.get('size', 'unspecified')}.", ""]
+    red = main_red(c, str(Path(os.path.expanduser(p["repo"])).resolve())) if p["repo"] else None
+    if red:
+        L += red_banner(red, t["key"])
     if (p["instructions"] or "").strip():
         L += ["## Standing instructions for this project", p["instructions"].strip(), ""]
     docs = [d for d in (p["doc_slug"], t["doc_slug"]) if d]
@@ -2018,7 +2125,7 @@ def cmd_daemon(a):
                            (os.getpid(), socket.gethostname(), me, now(), now())).fetchone()[0]
         event(c, "daemon", body=f"daemon started (pid {os.getpid()})", actor=me)
     print(f"[{now()}] {me} started; db {DB}", flush=True)
-    children = {}
+    children = adopt_workers(c, me)
     orchs = {}   # project -> (Popen, agent, t0, logfile) for orchestrator sessions
     briefs = {}  # ticket -> (Popen, agent, t0, logfile) for briefing sessions
     tldrs = {}   # ticket -> (Popen, t0, outfile, ticket.updated) writing a TL;DR
@@ -2029,7 +2136,7 @@ def cmd_daemon(a):
     stopping = {"flag": False}
     def stop(*_): stopping["flag"] = True
     signal.signal(signal.SIGINT, stop); signal.signal(signal.SIGTERM, stop)
-    seq = 0
+    seq = max([int(v[1].rsplit(":", 1)[1]) for v in children.values() if v[1].startswith(me + ":")] or [0])
     last_why = None
     paused_seen = quota_until(c)
     probe = None          # after a usage-limit pause: {"key": ticket, "t0": monotonic} until one worker proves the limit reset
@@ -2051,9 +2158,9 @@ def cmd_daemon(a):
             if not DRAIN["draining"] and source_changed():
                 DRAIN["draining"] = True
                 with tx(c):
-                    event(c, "daemon", body="bl changed on disk: draining (no new work), then reloading", actor=me)
-                print(f"[{now()}] bl changed on disk: draining, then reloading", flush=True)
-            if DRAIN["draining"] and not (children or orchs or briefs or tldrs):
+                    event(c, "daemon", body="bl changed on disk: reloading (workers are re-adopted; waiting only for orchestrators, briefings, TL;DR jobs)", actor=me)
+                print(f"[{now()}] bl changed on disk: reloading", flush=True)
+            if DRAIN["draining"] and not (orchs or briefs or tldrs):
                 with tx(c):
                     c.execute("UPDATE runs SET ended=?, status='reloaded' WHERE id=?", (now(), run_id))
                     event(c, "daemon", body="daemon reloading with the new bl", actor=me)
@@ -2075,7 +2182,7 @@ def cmd_daemon(a):
             cap = setting(c, "daemon_max_parallel")
             if probe is not None:
                 cap = len(children) + (0 if probe["key"] else 1)   # one canary at a time until the limit is known to be reset
-            while spawning(c) and len(children) < cap:
+            while spawning(c, workers=True) and len(children) < cap:
                 cands = ready(c, None, me, None, "daemon")
                 if not cands:
                     break
@@ -2154,8 +2261,58 @@ def source_changed():
     m = _mtime()
     return m is not None and DRAIN["mtime"] is not None and m != DRAIN["mtime"]
 
-def spawning(c):
-    return bool(setting(c, "daemon_enabled")) and not DRAIN["draining"]
+def spawning(c, workers=False):
+    """Workers keep starting while a reload waits (they are re-adopted after it); orchestrators, briefings and
+    TL;DR jobs (not adoptable) don't."""
+    return bool(setting(c, "daemon_enabled")) and (workers or not DRAIN["draining"])
+
+class Adopted:
+    """A worker started by an earlier daemon process (before a reload, or a crash): polled by pid."""
+    def __init__(self, pid):
+        self.pid, self.returncode = pid, None
+    def poll(self):
+        if self.returncode is not None:
+            return self.returncode
+        try:
+            got, st = os.waitpid(self.pid, os.WNOHANG)   # still our child after an exec
+            if got == 0:
+                return None
+            self.returncode = os.waitstatus_to_exitcode(st)
+        except ChildProcessError:                        # reparented (the old daemon was killed): poll by pid
+            if alive(self.pid):
+                return None
+            self.returncode = -1
+        return self.returncode
+    def terminate(self):
+        try: os.kill(self.pid, signal.SIGTERM)
+        except ProcessLookupError: pass
+
+def adopt_workers(c, me):
+    """Take over the live workers of this pid before an exec, or of a daemon that died, so a reload never
+    stops or drains them. Returns the children dict."""
+    children = {}
+    for t in c.execute("SELECT * FROM tickets WHERE state='in_progress' AND claimed_by LIKE 'daemon:%'").fetchall():
+        parts = t["claimed_by"].split(":")
+        if len(parts) != 3 or not parts[1].isdigit():
+            continue
+        owner = int(parts[1])
+        if owner != os.getpid() and alive(owner):
+            continue                                     # another live daemon's worker
+        e = c.execute("SELECT data, at FROM events WHERE ticket=? AND kind='spawn' ORDER BY id DESC LIMIT 1", (t["key"],)).fetchone()
+        d = json.loads(e["data"]) if e else {}
+        pid = d.get("pid")
+        if not pid or not alive(int(pid)):
+            continue                                     # gone: its lease lapses and the reaper hands it back
+        try:
+            age = (datetime.now(timezone.utc) - datetime.strptime(e["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)).total_seconds()
+        except (ValueError, TypeError):
+            age = 0
+        lf = open(d["log"], "a") if d.get("log") else open(os.devnull, "a")
+        children[t["key"]] = (Adopted(int(pid)), t["claimed_by"], time.monotonic() - age, lf)
+    if children:
+        with tx(c):
+            event(c, "daemon", body=f"adopted {len(children)} running workers: {', '.join(children)}", actor=me)
+    return children
 
 def brief_humans(c, briefs, me):
     """For every unblocked human ticket without one, start a briefing session: context, how to see it, the questions."""
@@ -2435,6 +2592,12 @@ def cmd_hook(a):
             print(json.dumps({"decision": "block", "reason":
                 f"Ticket {tk} is still in_progress. Report it before stopping: `bl done {tk} -m \"...\"`, "
                 f"`bl fail {tk} -m \"...\"`, or `bl release {tk} --reason \"...\"`."}))
+    elif a.event == "pre-tool":
+        why = pre_tool_guard(c, data)
+        if why:
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                     "permissionDecisionReason": why}}))
+        return
     elif a.event == "beat":
         # PostToolUse: keep leases of tickets this session holds alive (cheap; throttled by lease math)
         if me and c.execute("SELECT 1 FROM projects WHERE owner=? LIMIT 1", (me,)).fetchone():
@@ -2530,7 +2693,11 @@ def main():
     p = P("quota", cmd_quota); p.add_argument("action", nargs="?", default="status", choices=["status", "clear", "set"])
     p.add_argument("minutes", nargs="?", type=int)
     p = P("daemon", cmd_daemon); p.add_argument("action", choices=["run", "status", "pause", "resume", "install", "uninstall"])
-    p = P("hook", cmd_hook); p.add_argument("event", choices=["session-start", "stop", "beat"])
+    p = P("hook", cmd_hook); p.add_argument("event", choices=["session-start", "stop", "beat", "pre-tool"])
+    p = P("main", cmd_main, help="is the repo's main green? status (exit 1 when red), wait, or record red/green")
+    p.add_argument("action", nargs="?", default="status", choices=["status", "wait", "red", "green"])
+    p.add_argument("--repo"); p.add_argument("--sha"); p.add_argument("--green-sha", dest="green_sha")
+    p.add_argument("--suites"); p.add_argument("--ticket"); p.add_argument("--timeout", type=int, default=1800)
 
     # convenience aliases for states
     for st, alias in (("reopen", "todo"), ("cancel", "canceled"), ("approve", "done")):
