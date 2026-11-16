@@ -36,9 +36,13 @@ bl = sys.argv[1]
 p = os.path.expanduser("~/.claude/settings.json")
 d = json.load(open(p)) if os.path.exists(p) else {}
 h = d.setdefault("hooks", {})
-for ev, sub in (("SessionStart", "session-start"), ("Stop", "stop"), ("PostToolUse", "beat")):
+for ev, sub, matcher in (("SessionStart", "session-start", None), ("Stop", "stop", None), ("PostToolUse", "beat", None),
+                         ("PreToolUse", "pre-tool", "Bash")):
     groups = [g for g in h.get(ev, []) if not any(" hook " in x.get("command", "") and x.get("command", "").split()[0].endswith("/bl") for x in g.get("hooks", []))]
-    groups.append({"hooks": [{"type": "command", "command": f"{bl} hook {sub}", "timeout": 5}]})
+    g = {"hooks": [{"type": "command", "command": f"{bl} hook {sub}", "timeout": 5}]}
+    if matcher:
+        g["matcher"] = matcher
+    groups.append(g)
     h[ev] = groups
 json.dump(d, open(p, "w"), indent=2)
 print("hooks registered in", p)
