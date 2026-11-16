@@ -47,7 +47,7 @@ function setClosed(v) { if (!VIEW_KEYS[ui.page]) return; ui.closedBy[ui.page] = 
 const saveCollapsed = () => store.set('blLanesCollapsed', [...ui.collapsed]);
 // How the Projects tab orders its lanes; latest activity first unless picked otherwise (remembered per browser).
 const PROJ_SORTS = [['latest', tr('Latest update')], ['waiting', tr('Waiting on you')], ['active', tr('In progress')], ['name', tr('Name')]];
-ui.projSort = PROJ_SORTS.some(([k]) => k === store.get('blProjSort')) ? store.get('blProjSort') : 'latest';
+ui.projSort = PROJ_SORTS.some(([k]) => k === store.get('blLaneSort')) ? store.get('blLaneSort') : 'latest';
 function lastActivity(p, tks) {
   let m = p.updated || p.created || '';
   for (const t of tks) if ((t.updated || '') > m) m = t.updated;
@@ -71,7 +71,7 @@ function projSortControl() {
   const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', tr('Sort projects'));
   for (const [k, label] of PROJ_SORTS) {
     const b = el('button', null, label); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(ui.projSort === k));
-    b.addEventListener('click', () => { ui.projSort = k; store.set('blProjSort', k); renderBacklog(); });
+    b.addEventListener('click', () => { ui.projSort = k; store.set('blLaneSort', k); renderBacklog(); });
     seg.append(b);
   }
   wrap.append(seg);
@@ -1051,7 +1051,7 @@ function card(t, inPlace = false) {
 
 // ---- main page tabs: Overview (daemon, waiting on you, open projects) and Projects (lanes + the tickets toggle) ----
 // The tab lives in ?tab=; with none in the URL, the last one picked is used, else Overview.
-const TABS = [['overview', tr('Overview')], ['projects', tr('Projects')]];
+const TABS = [['overview', tr('Overview')], ['projects', tr('Projects')], ['tickets', tr('Tickets')]];
 function currentTab() {
   const q = new URLSearchParams(location.search).get('tab');
   if (TABS.some(([k]) => k === q)) return q;
@@ -1073,7 +1073,7 @@ function tabBar(cur, counts) {
     b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(k === cur)); b.tabIndex = k === cur ? 0 : -1;
     const n = counts[k];
     if (k === 'overview' && n) { const c = el('span', 'num bl-tab-count you', String(n)); c.title = tr('{n} waiting on you', { n }); b.append(c); b.title = tr('{n} waiting on you', { n }); }
-    else if (k === 'projects' && n) b.append(el('span', 'num bl-tab-count', String(n)));
+    else if ((k === 'projects' || k === 'tickets') && n) b.append(el('span', 'num bl-tab-count', String(n)));
     b.addEventListener('click', () => { if (k !== cur) setTab(k); });
     b.addEventListener('keydown', e => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
@@ -1099,7 +1099,8 @@ function renderLanes(root) {
   if (tab !== 'overview' && !new URLSearchParams(location.search).has('tab')) {   // a remembered tab: show it in the URL too
     const url = new URL(location.href); url.searchParams.set('tab', tab); history.replaceState(history.state, '', url.pathname + url.search + url.hash);
   }
-  root.append(tabBar(tab, { overview: you, projects: projects.length }));
+  root.append(tabBar(tab, { overview: you, projects: projects.length, tickets: all.filter(t => projects.some(p => p.key === t.project)).length }));
+  if (tab === 'tickets') { renderTicketsTab(root, all, projects); return; }
   if (tab === 'overview') {
     const q = daemonQuota(); if (q) root.append(q);
     const ny = needsYouPanel(all); if (ny) root.append(ny);
@@ -1457,6 +1458,13 @@ const COLS = [
   ['cost', tr('Cost'), t => t.usage?.cost ?? -1],
   ['updated', tr('Updated'), t => new Date(shownAt(t) || 0).getTime()],
 ];
+// The Tickets tab: every column a project's table has (but its per-project # order), plus Project and Created.
+const ALL_COLS = [
+  ...COLS.filter(([id]) => id === 'key'),
+  ['project', tr('Project'), t => (bl.data.projects.find(x => x.key === t.project)?.name || t.project).toLowerCase()],
+  ...COLS.filter(([id]) => !['order', 'key'].includes(id)),
+  ['created', tr('Created'), t => new Date(t.created || 0).getTime()],
+];
 const FIN_COLS = [
   ...COLS.filter(([id]) => ['key', 'title', 'state', 'who', 'ms', 'prs', 'cost'].includes(id)),
   ['finished', tr('Finished'), closedAt],
@@ -1476,7 +1484,7 @@ function depChip(k, proj = bl.byKey.get(bl.ticketKey || '')?.project) {
   return c;
 }
 
-function table(tks) {
+function table(tks, all = false) {
   bl.rowOrder = [];
   const openKey = parseBacklogPath(location.pathname)?.ticket || null;   // the route, not bl.ticketKey, which the drawer sets after the table renders
   const wrap = el('div', 'bl-table-wrap');
@@ -1489,17 +1497,18 @@ function table(tks) {
     who: tks.some(t => t.claimed_by || t.assignee),
   };
   // Finished mode: no graph columns; the last column is when the ticket finished; its own sort, newest first by default.
-  const fin = finishedMode();
+  const fin = !all && finishedMode();
   if (fin) tbl.classList.add('bl-fin');
-  const sort = fin ? ui.finSort : ui.sort;
-  const cols = (fin ? FIN_COLS : COLS).filter(([id]) => !(id === 'ms' && !has.ms) && !(id === 'prs' && !has.prs) && !(id === 'cost' && !has.usage) && !(id === 'who' && !has.who));
+  if (all) tbl.classList.add('bl-all');
+  const sort = all ? ui.tkSort : fin ? ui.finSort : ui.sort;
+  const cols = (all ? ALL_COLS : fin ? FIN_COLS : COLS).filter(([id]) => !(id === 'ms' && !has.ms) && !(id === 'prs' && !has.prs) && !(id === 'cost' && !has.usage) && !(id === 'who' && !has.who));
   const on = id => cols.some(c => c[0] === id);
   for (const [id, label] of cols) {
     const th = el('th', `c-${id}`); const b = el('button', null, label);
     if (sort.col === id) { th.setAttribute('aria-sort', sort.dir > 0 ? 'ascending' : 'descending'); b.append(el('span', 'bl-sort', sort.dir > 0 ? '↑' : '↓')); }
     b.addEventListener('click', () => {
-      const next = { col: id, dir: sort.col === id ? -sort.dir : (id === 'updated' || id === 'finished' ? -1 : 1) };
-      if (fin) ui.finSort = next; else { ui.sort = next; store.set('blProjSort', ui.sort); }
+      const next = { col: id, dir: sort.col === id ? -sort.dir : (id === 'updated' || id === 'finished' || id === 'created' ? -1 : 1) };
+      if (all) { ui.tkSort = next; store.set('blTicketsSort', next); } else if (fin) ui.finSort = next; else { ui.sort = next; store.set('blProjSort', ui.sort); }
       renderBacklog();
     });
     th.append(b); hr.append(th);
@@ -1508,7 +1517,7 @@ function table(tks) {
   const key = cols.find(c => c[0] === sort.col)?.[2] || cols[0][2];
   const rows = [...tks].sort((a, b) => sort.dir * cmp(key(a), key(b)) || bl.order.get(a.key) - bl.order.get(b.key));
   const tbody = el('tbody');
-  const treeMode = !fin && sort.col === 'order' && sort.dir > 0;
+  const treeMode = !all && !fin && sort.col === 'order' && sort.dir > 0;
   // Tree geometry over the visible rows: depth, and which ancestor levels continue below this row.
   const geo = new Map();
   if (treeMode) {
@@ -1531,8 +1540,9 @@ function table(tks) {
     bl.rowOrder.push(t);
     const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); r.append(c); return c; };
     if (on('order')) td('c-order num', String(bl.order.get(t.key) - Math.min(...tks.map(x => bl.order.get(x.key))) + 1));
-    const kl = linkTo(el('a', null, fin ? t.key : t.key.slice(t.project.length + 1)), openPath(t)); kl.title = t.key;
+    const kl = linkTo(el('a', null, fin || all ? t.key : t.key.slice(t.project.length + 1)), openPath(t)); kl.title = t.key;
     td('c-key num', kl);
+    if (on('project')) { const pr = bl.data.projects.find(x => x.key === t.project); const pl = linkTo(el('a', 'bl-proj-cell'), projPath(t.project)); pl.textContent = pr?.name || t.project; pl.title = t.project; td('c-project', pl); }
     const ttl = el('div', 'bl-tt');
     // A blocked ticket has nothing to open yet: its title is plain text.
     // The title links only to a session that is the ticket's own (its worker, briefing or handoff), never an orchestrator's.
@@ -1576,6 +1586,7 @@ function table(tks) {
     if (on('ms')) { td('c-ms', ...(ms ? [el('span', `bl-ms-chip ms-${ms.status}`, ms.key.slice(t.project.length + 1))] : [])); if (ms) r.lastChild.title = ms.title; }
     if (on('prs')) td('c-prs', ...prChips(t, 3));
     if (on('cost')) td('c-cost num', fmtCost(t.usage)).title = usageTitle(t.usage);
+    if (on('created')) td('c-created', fmtAgo(t.created)).title = t.created ? tr('Created {when}', { when: ctx.fmtDateTime(t.created) }) : '';
     if (fin) { const at = t.finished || t.updated; td('c-updated c-finished', fmtAgo(at)).title = tr('Finished {when}', { when: ctx.fmtDateTime(at) }); }
     else {
       const at = shownAt(t);
@@ -1586,6 +1597,56 @@ function table(tks) {
   if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', fin ? (ui.q.trim() ? tr('No ticket finished in the last 7 days matches that search.') : tr('Nothing finished (done, canceled or failed) in the last 7 days.')) : ui.q ? tr('No tickets match that search.') : ui.closed === 'none' ? tr('No open tickets. Switch to + 24h or All to see finished ones.') : tr('Nothing open or closed in the last 24 hours. Switch to All, or search.')); c.colSpan = cols.length; r.append(c); tbody.append(r); }
   tbl.append(tbody); wrap.append(tbl);
   return wrap;
+}
+
+// ---- Tickets tab: one big table of every ticket, newest first; search, filter by state, project and who ----
+const TK_KEY = 'blTicketsFilter';
+ui.tkSort = (() => { const v = store.get('blTicketsSort', null); return v && typeof v.col === 'string' && (v.dir === 1 || v.dir === -1) ? v : { col: 'created', dir: -1 }; })();
+ui.tk = (() => { const v = store.get(TK_KEY, {}) || {}; return { q: '', states: Array.isArray(v.states) ? v.states : [], project: v.project || '', who: v.who || '' }; })();
+const saveTk = () => store.set(TK_KEY, { states: ui.tk.states, project: ui.tk.project, who: ui.tk.who });
+function renderTicketsTab(root, all, projects) {
+  const f = ui.tk;
+  const live = new Set(projects.map(p => p.key));
+  const base = all.filter(t => live.has(t.project));
+  const q = f.q.trim().toLowerCase();
+  const textOk = t => !q || q.split(/\s+/).every(w => `${t.key} ${t.title} ${(t.labels || []).join(' ')} ${t.project}`.toLowerCase().includes(w));
+  const whoOk = t => !f.who || (f.who === 'human' ? t.assignee === 'human' : f.who === 'agents' ? t.assignee !== 'human' : f.who === 'you' ? needsYou(t) : true);
+  const pre = base.filter(t => textOk(t) && whoOk(t) && (!f.project || t.project === f.project));
+  const shown = pre.filter(t => !f.states.length || f.states.includes(t.state));
+
+  const ctl = el('div', 'board-controls bl-tk-controls');
+  const box = el('div', 'search board-search');
+  box.innerHTML = '<svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+  const inp = el('input'); inp.type = 'search'; inp.id = 'bltq'; inp.placeholder = tr('Search key, title, label or project'); inp.value = f.q; inp.autocomplete = 'off'; inp.spellcheck = false;
+  inp.addEventListener('input', () => { f.q = inp.value; const pos = inp.selectionStart; renderBacklog(); const n = $('#bltq'); n.focus(); n.setSelectionRange(pos, pos); });
+  inp.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); if (inp.value) { f.q = ''; renderBacklog(); } else inp.blur(); } });
+  box.append(inp); ctl.append(box);
+  const sel = (label, cur, opts, set) => {
+    const w = el('label', 'bl-sel'); w.append(el('span', null, label));
+    const s = el('select'); for (const [v, txt] of opts) { const o = el('option', null, txt); o.value = v; if (v === cur) o.selected = true; s.append(o); }
+    s.addEventListener('change', () => { set(s.value); saveTk(); renderBacklog(); });
+    w.append(s); return w;
+  };
+  ctl.append(sel(tr('Project'), f.project, [['', tr('All projects')], ...[...projects].sort((a, b) => a.key.localeCompare(b.key)).map(p => [p.key, `${p.key} · ${p.name}`])], v => { f.project = v; }));
+  ctl.append(sel(tr('Who'), f.who, [['', tr('Anyone')], ['agents', tr('Agents')], ['human', tr('Human')], ['you', tr('Needs you')]], v => { f.who = v; }));
+  root.append(ctl);
+
+  // State chips, every state with its count under the other filters; none picked = all.
+  const chips = el('div', 'bl-tk-states'); chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', tr('Filter by state'));
+  for (const st of STATES) {
+    const n = pre.filter(t => t.state === st).length;
+    const on = f.states.includes(st);
+    const b = el('button', `bl-tk-state${on ? ' on' : ''}`); b.type = 'button'; b.setAttribute('aria-pressed', String(on));
+    b.append(statePill(st), el('span', 'num', String(n)));
+    if (!n && !on) b.classList.add('empty');
+    b.addEventListener('click', () => { f.states = on ? f.states.filter(x => x !== st) : [...f.states, st]; saveTk(); renderBacklog(); });
+    chips.append(b);
+  }
+  const allB = el('button', 'bl-tk-all', f.states.length ? tr('All states') : tr('Showing all states')); allB.type = 'button'; allB.disabled = !f.states.length;
+  allB.addEventListener('click', () => { f.states = []; saveTk(); renderBacklog(); });
+  chips.append(allB, el('span', 'bl-tk-count num', tr('{n} of {total} tickets', { n: shown.length, total: base.length })));
+  root.append(chips);
+  root.append(table(shown, true));
 }
 
 // ---- ticket drawer ----
@@ -1779,7 +1840,7 @@ export function startBacklogPolling() {
   bl.timer = setInterval(async () => {
     if (document.hidden) return;
     await loadBacklog();
-    if (document.activeElement?.id === 'blq' || document.activeElement?.closest?.('.bl-approve-notes')) return; // don't steal focus mid-typing
+    if (document.activeElement?.id === 'blq' || document.activeElement?.id === 'bltq' || document.activeElement?.closest?.('.bl-approve-notes')) return; // don't steal focus mid-typing
     const scroller = $('#backlog'); const y = scroller.scrollTop;
     renderBacklog();
     scroller.scrollTop = y;

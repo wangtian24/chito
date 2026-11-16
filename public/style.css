@@ -1557,3 +1557,17 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-approve-to { flex: 1; min-width: 0; font: 400 12.5px var(--font-body); color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bl-approve-row .btn.primary { margin-left: 0; }
 .bl-approved { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; background: var(--bl-done-wash); color: var(--bl-done); font: 600 12.5px var(--font-display); }
+/* Tickets tab */
+.bl-tk-states { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 var(--space-md); }
+.bl-tk-state { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px 3px 4px; border: 1px solid var(--color-rule-sheet); border-radius: 999px; background: var(--color-sheet); cursor: pointer; font: inherit; color: var(--color-ink-2); }
+.bl-tk-state .num { font-size: 11.5px; color: var(--color-muted); }
+.bl-tk-state.on { border-color: var(--color-accent); box-shadow: 0 0 0 1px var(--color-accent); }
+.bl-tk-state.empty { opacity: .5; }
+.bl-tk-state:hover { border-color: var(--color-rule-2); }
+.bl-tk-all { border: 0; background: none; cursor: pointer; font: 500 12.5px var(--font-display); color: var(--color-accent-text); text-decoration: underline; text-underline-offset: .2em; }
+.bl-tk-all:disabled { color: var(--color-muted); text-decoration: none; cursor: default; }
+.bl-tk-count { margin-left: auto; font-size: 12.5px; color: var(--color-muted); }
+.bl-table .c-project a { color: var(--color-ink-2); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 16ch; vertical-align: bottom; }
+.bl-table .c-project a:hover { text-decoration: underline; text-decoration-color: var(--color-accent); }
+.bl-table .c-created { white-space: nowrap; color: var(--color-muted); }
+.bl-table.bl-all .c-key { white-space: nowrap; }
