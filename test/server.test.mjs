@@ -25,7 +25,7 @@ test('/projects and project pages serve the app', async () => {
   for (const p of ['/projects', '/projects/CHITO', '/projects/CHITO/CHITO-8']) {
     const r = await get(p);
     assert.equal(r.status, 200, p);
-    assert.match(await r.text(), /<a class="view-tab" href="\/projects" data-view="backlog">(<span data-i18n>)?Projects/);
+    assert.match(await r.text(), /<a class="view-tab" href="\/projects" data-view="backlog">(<svg[^]*?<\/svg>)?(<span data-i18n>)?Projects/);
   }
 });
 
@@ -85,4 +85,10 @@ test('a session lists the tickets it is linked to', async t => {
   assert.ok(mine, `session ${hit.sid} should link ${hit.tk.key}`);
   assert.equal(mine.project, hit.tk.project);
   assert.ok(['worker', 'created', 'touched', 'mentioned'].includes(mine.role));
+});
+
+test('/deploy serves the app and the nav lists Deployment', async () => {
+  const r = await get("/deploy");
+  assert.equal(r.status, 200);
+  assert.match(await r.text(), /<a class="view-tab" href="\/deploy" data-view="deploy">/);
 });

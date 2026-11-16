@@ -9,6 +9,7 @@ import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
 import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, searchTickets } from './lib/backlog.js';
 import { workerModel } from './lib/worker-models.js';
+import { deploySummary, triggerDeploy } from './lib/deploy.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CHITO_PORT || 8791);
@@ -68,6 +69,7 @@ const STATIC = {
   '/app.js': ['public/app.js', 'text/javascript'],
   '/style.css': ['public/style.css', 'text/css'],
   '/backlog.js': ['public/backlog.js', 'text/javascript'],
+  '/deploy.js': ['public/deploy.js', 'text/javascript'],
   '/i18n.js': ['public/i18n.js', 'text/javascript'],
   '/i18n/zh-CN.js': ['public/i18n/zh-CN.js', 'text/javascript'],
   '/keys.js': ['public/keys.js', 'text/javascript'],
@@ -268,7 +270,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(301, { location: '/projects' + p.slice('/backlog'.length) + url.search });
       return res.end();
     }
-    if (p === '/' || p.startsWith('/s/') || p === '/artifacts' || p === '/projects' || p.startsWith('/projects/')) {
+    if (p === '/' || p.startsWith('/s/') || p === '/artifacts' || p === '/deploy' || p === '/projects' || p.startsWith('/projects/')) {
       return send(res, 200, fs.readFileSync(path.join(ROOT, 'public/index.html')), 'text/html; charset=utf-8');
     }
     if (STATIC[p]) {
@@ -299,6 +301,11 @@ const server = http.createServer(async (req, res) => {
       for (const pr of prs) { const st = states.get(pr.url); pr.gh = st?.data || null; pr.ghError = st?.error || null; }
       prs.sort((a, b) => ((b.gh?.updatedAt || b.firstAt || '') > (a.gh?.updatedAt || a.firstAt || '') ? 1 : -1));
       return send(res, 200, { prs, github: { ok: !error, error } });
+    }
+    if (p === '/api/deploy' && req.method === 'GET') return send(res, 200, await deploySummary({ refresh: url.searchParams.get('refresh') === '1' }));
+    if (p === '/api/deploy/run') {
+      if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
+      try { return send(res, 200, { ok: true, ...(await triggerDeploy()) }); } catch (e) { return send(res, 409, { error: e.message }); }
     }
     if (p === '/api/backlog' && req.method === 'GET') return send(res, 200, { ...(await backlogSummary()), artiBase: ARTI_BASE });
     if (p === '/api/backlog/search' && req.method === 'GET') return send(res, 200, { tickets: await searchTickets(url.searchParams.get('q') || '') });

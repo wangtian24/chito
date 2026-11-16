@@ -37,14 +37,13 @@
           </svg>
           <span class="brand-name">chito</span>
         </a>
-        <div class="brand-count" id="count"></div>
-        <span class="lang-switch seg" id="lang-switch" role="radiogroup" aria-label="Language"><button type="button" data-lang="en" lang="en">EN</button><button type="button" data-lang="zh" lang="zh-CN">中文</button></span>
         <button class="btn icon" id="b-settings" title="Settings (,)" aria-label="Settings" data-i18n-attr="title aria-label"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
       <nav class="views" aria-label="Views">
-        <a class="view-tab" href="/" data-view="sessions" data-i18n>Sessions</a>
-        <a class="view-tab" href="/artifacts" data-view="artifacts"><span data-i18n>Artifacts</span> <span class="num view-count" id="art-count"></span></a>
-        <a class="view-tab" href="/projects" data-view="backlog"><span data-i18n>Projects</span> <span class="num view-count" id="bl-count"></span></a>
+        <a class="view-tab" href="/" data-view="sessions"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg><span data-i18n>Sessions</span> <span class="num view-count" id="count"></span></a>
+        <a class="view-tab" href="/artifacts" data-view="artifacts"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8v8M18 16V9a2 2 0 0 0-2-2h-4M14 4.5 11.5 7 14 9.5"/></svg><span data-i18n>Artifacts</span> <span class="num view-count" id="art-count"></span></a>
+        <a class="view-tab" href="/projects" data-view="backlog"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.5 4v16M14.5 4v16M5.5 8h2.5M11 8h2M11 11.5h2M16 8h2.5"/></svg><span data-i18n>Projects</span> <span class="num view-count" id="bl-count"></span></a>
+        <a class="view-tab" href="/deploy" data-view="deploy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="M12 7v3M12 14v3"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg><span data-i18n>Deployment</span> <span class="num view-count" id="dp-count" title="Merges waiting to deploy" data-i18n-attr="title"></span></a>
       </nav>
       <div class="search">
         <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -58,7 +57,7 @@
           <option value="pi">Pi</option>
           <option value="codex">Codex</option>
         </select>
-        <button class="chip" id="f-agents" title="Show headless agent sessions (a)" data-i18n-attr="title" data-i18n>Agent runs</button>
+        <button class="chip" id="f-agents" title="Also list headless runs: claude -p scripts, backlog workers and AHS agents (a)" data-i18n-attr="title" data-i18n>Headless runs</button>
         <span class="filters-spacer"></span>
         <button class="chip ghost" id="help-btn" title="Keyboard shortcuts (?)" data-i18n-attr="title" data-i18n>Keys</button>
       </div>
@@ -139,6 +138,9 @@
       <section class="board backlog" id="backlog" hidden>
         <div class="board-inner backlog-inner" id="backlog-inner"></div>
       </section>
+      <section class="board deploy" id="deploy" hidden>
+        <div class="board-inner deploy-inner" id="deploy-inner"></div>
+      </section>
       <aside class="bl-drawer" id="bl-drawer" hidden></aside>
     </main>
   </div>
@@ -156,6 +158,10 @@
         <button class="tab" role="tab" data-tab="about" data-i18n>About</button>
       </div>
       <section class="tabpanel" data-panel="appearance" role="tabpanel">
+        <div class="opt-row">
+          <div class="opt-label"><b data-i18n>Language</b><span data-i18n>Menus and labels only</span></div>
+          <div class="seg" role="radiogroup" id="lang-switch" aria-label="Language" data-i18n-attr="aria-label"><button type="button" data-lang="en" lang="en">English</button><button type="button" data-lang="zh" lang="zh-CN">中文</button></div>
+        </div>
         <p class="panel-note" data-i18n>Pick a preset: three light, three dark.</p>
         <div class="presets" id="presets" role="radiogroup" aria-label="Appearance preset" data-i18n-attr="aria-label"></div>
       </section>
@@ -169,7 +175,7 @@
           <div class="seg" role="radiogroup" data-opt="tools"><button data-v="none" data-i18n>Off</button><button data-v="count" data-i18n>Counts</button><button data-v="full" data-i18n>Details</button></div>
         </div>
         <div class="opt-row">
-          <div class="opt-label"><b data-i18n>Agent runs</b><span data-i18n>Headless sessions started outside your home folder</span></div>
+          <div class="opt-label"><b data-i18n>Headless runs</b><span data-i18n>Sessions that scripts, backlog workers and AHS agents ran with claude -p, in folders outside your home</span></div>
           <div class="seg" role="radiogroup" data-opt="agents"><button data-v="hide" data-i18n>Hidden</button><button data-v="show" data-i18n>Shown</button></div>
         </div>
       </section>
@@ -190,11 +196,12 @@
         <div><kbd>n</kbd> <kbd>p</kbd></div><div data-i18n>Next / previous prompt</div>
         <div><kbd>g</kbd> <kbd>G</kbd></div><div data-i18n>Top / bottom of conversation</div>
         <div><kbd>space</kbd> <kbd>⇧space</kbd></div><div data-i18n>Page down / up</div>
-        <div><kbd>a</kbd></div><div data-i18n>Show / hide agent sessions</div>
+        <div><kbd>a</kbd></div><div data-i18n>Show / hide headless runs</div>
         <div><kbd>[</kbd></div><div data-i18n>Collapse sidebar</div>
         <div><kbd>P</kbd></div><div data-i18n>Artifacts (pull requests) or back to sessions</div>
         <div><kbd>g</kbd> <kbd>p</kbd></div><div data-i18n>Projects (the backlog board)</div>
         <div><kbd>B</kbd></div><div data-i18n>Projects or back to sessions</div>
+        <div><kbd>g</kbd> <kbd>d</kbd></div><div data-i18n>Deployment</div>
         <div><kbd>f</kbd></div><div data-i18n>Pin or unpin this session (or drag sessions into Pinned)</div>
         <div><kbd>,</kbd></div><div data-i18n>Settings</div>
       </div>
