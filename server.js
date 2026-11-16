@@ -59,6 +59,11 @@ function blArgs(b) {
       const v = String(value ?? '').trim().slice(0, 4000);
       return k && v !== '-' && ['instructions', k, `--set=${v}`];
     }
+    case 'project-memo': {
+      const v = String(value ?? '').trim().slice(0, 4000);
+      return k && v && v !== '-' && ['memo', k, '--', v];
+    }
+    case 'note-forget': return /^[1-9][0-9]{0,9}$/.test(String(key)) && ['forget', String(key)];
     case 'ticket-move': return k && ['backlog', 'todo'].includes(value) && ['move', k, value, '--reason', 'from chito'];
     case 'ticket-priority': return k && /^[0-4]$/.test(String(value)) && ['set', k, `priority=${value}`];
     case 'ticket-worker': {
@@ -336,7 +341,7 @@ const server = http.createServer(async (req, res) => {
       let body; try { body = JSON.parse(await readBody(req)); } catch { return send(res, 400, { error: 'bad body' }); }
       const args = blArgs(body);
       if (!args) return send(res, 400, { error: 'action not allowed' });
-      return execFile(BL, args, { env: { ...process.env, BL_AGENT: 'chito', CLAUDE_CODE_SESSION_ID: '' }, timeout: 20000 }, (err, stdout, stderr) =>
+      return execFile(BL, args, { env: { ...process.env, BL_AGENT: 'chito', CLAUDE_CODE_SESSION_ID: '', BL_TICKET: '' }, timeout: 20000 }, (err, stdout, stderr) =>
         err ? send(res, 400, { error: (stderr || err.message).trim().replace(/^bl: /, '') }) : send(res, 200, { ok: true, out: stdout.trim() }));
     }
     let bm = p.match(/^\/api\/backlog\/ticket\/([A-Za-z0-9_.-]{1,80})$/);
