@@ -1477,3 +1477,4 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .brand #b-collapse { margin-left: auto; }
 .filters .help-btn { width: 26px; height: 26px; font: 600 14px/1 var(--font-display); color: var(--color-muted); border: var(--rule-hair) solid var(--color-rule); }
 .filters .help-btn:hover { color: var(--color-ink); }
+.bl-needs-row.sel { background: color-mix(in oklch, var(--bl-failed) 10%, var(--color-sheet)); box-shadow: inset 3px 0 0 var(--bl-failed); }

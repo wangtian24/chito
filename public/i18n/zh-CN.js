@@ -644,4 +644,5 @@ export default {
   "checks on a schedule ({when}) and deploys only when main has something new; or press Deploy": "按计划检查（{when}），main 有新内容时才部署；也可点击部署",
   "deploys when you press Deploy": "点击部署时上线",
   "Keyboard shortcuts": "键盘快捷键",
+  "Projects: step through Waiting on you (or the ticket table) in the side panel": "项目页：在侧边面板中逐个查看「等你处理」（或工单表）",
 };
