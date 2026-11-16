@@ -1480,7 +1480,8 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-needs-row.sel { background: color-mix(in oklch, var(--bl-failed) 10%, var(--color-sheet)); box-shadow: inset 3px 0 0 var(--bl-failed); }
 .bl-proj-sort { display: flex; align-items: center; gap: var(--space-sm); }
 .bl-proj-sort .bl-cap { margin-left: 0; }
-.bl-proj-sort .seg button { padding: 5px 10px; font-size: 12.5px; }
+.bl-proj-sort select { height: 28px; padding: 0 6px; border: 1px solid var(--color-rule-sheet); border-radius: var(--radius-ctl); background: var(--color-sheet); color: var(--color-ink); font: 500 12.5px var(--font-display); cursor: pointer; }
+.bl-proj-sort select:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 /* Project status column on collapsed lanes: one color per status. */
 .bl-pstatus { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px 1px 7px; border-radius: 999px; font: 600 11.5px/1.55 var(--font-display); white-space: nowrap; background: var(--color-well); color: var(--color-muted); }
 .bl-pstatus::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
@@ -1601,3 +1602,10 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 @media (max-width: 760px) { .bl-proj-boxes { grid-template-columns: 1fr; } }
 .bl-h2-count { font: 400 13px var(--font-body); color: var(--color-muted); }
 .catchup-link { text-decoration: none; }
+/* Needs you: red; dismissed from the Waiting on you panel: a lighter, dimmer red. */
+.bl-card.needs-you { background: color-mix(in oklch, var(--bl-failed-wash) 55%, var(--color-sheet)); }
+.bl-card.needs-you .bl-card-title { color: var(--bl-failed); }
+.bl-card.needs-you.dismissed { border-color: color-mix(in srgb, var(--bl-failed) 40%, var(--color-sheet)); box-shadow: none; background: color-mix(in srgb, var(--bl-failed-wash) 30%, var(--color-sheet)); }
+.bl-card.needs-you.dismissed .bl-card-title, .bl-card.needs-you.dismissed .bad { color: color-mix(in srgb, var(--bl-failed) 60%, var(--color-sheet)); }
+.bl-table tr.needs-you.dismissed td { background: color-mix(in srgb, var(--bl-failed-wash) 25%, var(--color-sheet)); }
+.bl-table tr.needs-you.dismissed td.c-title .bl-tt { font-weight: inherit; color: color-mix(in srgb, var(--bl-failed) 60%, var(--color-sheet)); }
