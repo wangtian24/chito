@@ -152,6 +152,19 @@ class TldrAndRepoScopeTest(HarnessTest):
             self.bl["cmd_move"](Namespace(key="A-1", state="done", reset=False, reason=None, force_merge=True))
         self.assertEqual(self._state(), "done")
 
+    def test_prompt_shows_project_now(self):
+        c = self.c
+        c.execute("INSERT INTO tickets(key,project,title,state,created,updated,started) VALUES('A-2','A','sibling work','in_progress','x','x','x')")
+        c.execute("INSERT INTO tickets(key,project,title,state,result,created,updated,finished) VALUES('A-3','A','landed','done','PR #9 merged\nmore','x','x','y')")
+        c.execute("INSERT INTO tickets(key,project,title,state,created,updated,started) VALUES('B-2','B','other project','in_progress','x','x','x')")
+        t = c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone()
+        p = self.bl["build_prompt"](c, t)
+        self.assertIn("## The project right now", p)
+        self.assertIn("- A-2 sibling work", p)
+        self.assertIn("- A-3 landed: PR #9 merged", p)
+        self.assertNotIn("B-2", p)
+        self.assertNotIn("more", p.split("## The project right now")[1].split("## Protocol")[0])
+
     def test_project_cap_unlimited_by_default(self):
         self.assertIsNone(self.bl["project_cap"](self.c, "A"))
         self.c.execute("INSERT INTO settings VALUES('project:A','max_parallel','2')")

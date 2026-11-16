@@ -970,6 +970,22 @@ def cmd_config(a):
                 c.execute("INSERT OR REPLACE INTO settings VALUES(?,?,?)", (scope, key, json.dumps(v)))
     print("ok")
 
+def project_now(c, t):
+    """What else is happening in the ticket's project, so parallel workers don't collide."""
+    others = c.execute("SELECT key, title, claimed_by FROM tickets WHERE project=? AND state='in_progress' AND key<>? "
+                       "ORDER BY started", (t["project"], t["key"])).fetchall()
+    recent = c.execute("SELECT key, title, result FROM tickets WHERE project=? AND state='done' "
+                       "ORDER BY finished DESC LIMIT 8", (t["project"],)).fetchall()
+    L = ["## The project right now"]
+    L.append("In flight alongside you (check their PRs before touching the same files):" if others
+             else "Nothing else in this project is in flight.")
+    L += [f"- {o['key']} {o['title']}" for o in others]
+    if recent:
+        L.append("Recently done:")
+        L += [f"- {r['key']} {r['title']}: {((r['result'] or '').splitlines() or [''])[0][:160]}" for r in recent]
+    L += [f"More: `bl status`, `bl ls {t['project']} --all`, `bl log {t['project']}`, `bl show KEY`; open PRs: `gh pr list`.", ""]
+    return L
+
 def build_prompt(c, t, compact=False):
     p = project_row(c, t["project"])
     bl_ = blockers(c, t["key"])
@@ -991,6 +1007,7 @@ def build_prompt(c, t, compact=False):
             for b in bl_:
                 L.append(f"- {b['key']} [{b['state']}] {b['title']}: {b['result'] or '(no result recorded)'}")
             L.append("")
+        L += project_now(c, t)
         if comments:
             L.append("## Notes on this ticket (newest first)")
             L += [f"- {e['at']} {e['actor']}: {e['body']}" for e in comments]
