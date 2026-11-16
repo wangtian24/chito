@@ -105,6 +105,8 @@ Switches: `bl daemon pause|resume` (or the button in chito), `bl daemon status`,
 
 **Worker prompt** (`bl prompt KEY`): the spec, the design docs to read, each upstream ticket's `result`, recent comments, the review policy, the size hint, and the worker protocol.
 
+**Daemon self-reload**: the daemon notices when `bl` changes on disk (a merge into the chito checkout), stops starting new work, lets every worker, orchestrator, briefing and TL;DR job it started finish, then re-executes itself in place (same pid, same launchd job). New prompt and protocol code thus takes effect without killing running workers; a plain restart (`launchctl kickstart -k`) terminates its children and releases their tickets.
+
 ## 5b2. Human tickets get a briefing session
 A ticket assigned to `human` (a review, a test, a go/no-go, an answer) never runs by itself. Once it's unblocked, the daemon starts a **briefing session**: a `claude -p` that gathers the context (the spec, what each upstream ticket delivered and its PR, the design doc), works out how you can see the work (it starts a local preview when the spec asks for one and that's safe), and writes a short briefing that ends with 1 to 3 questions. The board links that session as the place to answer.
 

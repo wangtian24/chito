@@ -1960,6 +1960,18 @@ def cmd_daemon(a):
                     event(c, "quota", body="pause over; probing with one worker", actor=me)
                 notify(c, None, "usage-limit pause over; trying one worker before resuming fully")
             collect_children(c, children, me)
+            if not DRAIN["draining"] and source_changed():
+                DRAIN["draining"] = True
+                with tx(c):
+                    event(c, "daemon", body="bl changed on disk: draining (no new work), then reloading", actor=me)
+                print(f"[{now()}] bl changed on disk: draining, then reloading", flush=True)
+            if DRAIN["draining"] and not (children or orchs or briefs or tldrs):
+                with tx(c):
+                    c.execute("UPDATE runs SET ended=?, status='reloaded' WHERE id=?", (now(), run_id))
+                    event(c, "daemon", body="daemon reloading with the new bl", actor=me)
+                print(f"[{now()}] reloading", flush=True)
+                c.close()
+                os.execv(sys.executable, [sys.executable, str(SELF), *sys.argv[1:]])
             if probe is not None:
                 k = probe["key"]
                 if k and (k not in children or time.monotonic() - probe["t0"] > 90) and not quota_until(c):
@@ -1975,7 +1987,7 @@ def cmd_daemon(a):
             cap = setting(c, "daemon_max_parallel")
             if probe is not None:
                 cap = len(children) + (0 if probe["key"] else 1)   # one canary at a time until the limit is known to be reset
-            while setting(c, "daemon_enabled") and len(children) < cap:
+            while spawning(c) and len(children) < cap:
                 cands = ready(c, None, me, None, "daemon")
                 if not cands:
                     break
@@ -2039,6 +2051,24 @@ def human_ready(c):
                           WHERE d.ticket=t.key AND b.state NOT IN ('done','canceled'))
         ORDER BY t.priority, t.id""").fetchall()
 
+# Self-reload: when bl changes on disk (a merge), the daemon stops starting new work, lets every worker, orchestrator,
+# briefing and TL;DR job it started finish, then re-executes itself, so new prompt and protocol code takes effect
+# without killing running workers (a plain restart terminates its children).
+SELF = Path(__file__).resolve()
+def _mtime():
+    try:
+        return SELF.stat().st_mtime
+    except OSError:
+        return None
+DRAIN = {"mtime": _mtime(), "draining": False}   # the code this process loaded
+
+def source_changed():
+    m = _mtime()
+    return m is not None and DRAIN["mtime"] is not None and m != DRAIN["mtime"]
+
+def spawning(c):
+    return bool(setting(c, "daemon_enabled")) and not DRAIN["draining"]
+
 def brief_humans(c, briefs, me):
     """For every unblocked human ticket without one, start a briefing session: context, how to see it, the questions."""
     for k, (pr, ag, t0, lf) in list(briefs.items()):
@@ -2074,7 +2104,7 @@ def brief_humans(c, briefs, me):
                 meta["brief"] = {"error": f"briefing exited ({pr.returncode}) without recording a session", "at": now(), "log": lf.name}
             c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), k))
         notify(c, t["project"], f"{k}: " + ("briefing ready; it needs you" if sid and not hit else "briefing did not finish"))
-    if not setting(c, "brief_humans") or not setting(c, "daemon_enabled") or quota_until(c):
+    if not setting(c, "brief_humans") or not spawning(c) or quota_until(c):
         return
     for t in human_ready(c):
         meta = json.loads(t["meta"])
@@ -2155,7 +2185,7 @@ def tldr_backfill(c, jobs):
                 tries = prev.get("tries", 1) + 1 if prev.get("updated") == upd else 1
                 meta["tldr_try"] = {"at": now(), "updated": upd, "tries": tries, "error": tldr_problem(text) or f"exit {pr.returncode}"}
             c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), k))
-    if jobs or not setting(c, "tldr_backfill") or not setting(c, "daemon_enabled") or quota_until(c):
+    if jobs or not setting(c, "tldr_backfill") or not spawning(c) or quota_until(c):
         return
     for t, pk in waiting_without_tldr(c)[:1]:
         LOGS.mkdir(parents=True, exist_ok=True)
@@ -2210,7 +2240,7 @@ def auto_projects(c, children, orchs, me, probe_active=None):
             continue
         ORCH_BACKOFF.pop(pk, None)
         notify(c, pk, f"{pk} orchestrator session finished" + (f" (usage limit, paused until {until})" if hit else ""))
-    if not setting(c, "daemon_enabled") or quota_until(c) or (probe_active and probe_active()):
+    if not spawning(c) or quota_until(c) or (probe_active and probe_active()):
         return
     adopt = setting(c, "orphan_policy") == "adopt"
     quiet_since = (datetime.now(timezone.utc) - timedelta(minutes=setting(c, "adopt_after_minutes"))).strftime("%Y-%m-%dT%H:%M:%SZ")
