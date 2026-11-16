@@ -511,7 +511,6 @@ export default {
   "updated here": "在此会话中更新",
   "named in this session": "此会话中提到",
   "+{n} more": "还有 {n} 个",
-  "Keys": "快捷键",
   "Keyboard shortcuts (?)": "键盘快捷键 (?)",
   "Hide or show the work before each answer (w)": "隐藏或显示每次回答前的过程 (w)",
   "Tool calls: off, counts, or details (t)": "工具调用：隐藏、计数或详情 (t)",
@@ -631,7 +630,6 @@ export default {
   "GitHub run status unavailable: {err}": "无法获取 GitHub 运行状态：{err}",
   "Merges waiting to deploy": "等待部署的合并",
   "Headless runs": "无界面运行",
-  "Also list headless runs: claude -p scripts, backlog workers and AHS agents (a)": "同时列出无界面运行：claude -p 脚本、backlog 工作者和 AHS 智能体 (a)",
   "Sessions that scripts, backlog workers and AHS agents ran with claude -p, in folders outside your home": "脚本、backlog 工作者和 AHS 智能体用 claude -p 运行的会话，位于主目录之外",
   "Show / hide headless runs": "显示 / 隐藏无界面运行",
   "Language": "语言",
@@ -645,4 +643,5 @@ export default {
   "checks every hour and deploys only when main has something new; or press Deploy": "每小时检查一次，main 有新内容时才部署；也可点击部署",
   "checks on a schedule ({when}) and deploys only when main has something new; or press Deploy": "按计划检查（{when}），main 有新内容时才部署；也可点击部署",
   "deploys when you press Deploy": "点击部署时上线",
+  "Keyboard shortcuts": "键盘快捷键",
 };

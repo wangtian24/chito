@@ -124,7 +124,7 @@ code { font-size: .86em; }
 .search-kbd { position: absolute; right: 8px; top: 8px; }
 .search input:focus + .search-kbd { display: none; }
 .filters { display: flex; gap: var(--space-md); padding: var(--space-sm) var(--space-lg) var(--space-xs); align-items: center; }
-.filters select { min-width: 0; max-width: 122px; height: 26px; border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-ctl); background: var(--color-sheet); color: var(--color-ink); font: 500 12px var(--font-display); }
+.filters select { min-width: 0; max-width: 140px; height: 26px; padding: 0 22px 0 7px; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 7px center; background-size: 9px 6px; border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-ctl); background-color: var(--color-sheet); color: var(--color-ink); font: 500 12px var(--font-display); }
 .harness-chip { display: inline-flex; align-items: center; flex: 0 0 auto; padding: 0 4px; border: 0; border-radius: 3px; background: color-mix(in oklch, var(--color-ink) 4.5%, transparent); color: color-mix(in oklch, var(--color-muted) 85%, transparent); font: 500 10.5px/1.45 var(--font-display); white-space: nowrap; }
 .subtitle .harness-chip { flex: 0 0 auto; }
 .filters-spacer { flex: 1; }
@@ -1475,3 +1475,5 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-ho-pics img { display: block; width: 100%; height: auto; border: 1px solid var(--color-rule-sheet); border-radius: var(--radius-ctl); }
 .bl-ho-pics figcaption { margin-top: 4px; font: 400 12.5px/1.35 var(--font-body); color: var(--color-muted); }
 .brand #b-collapse { margin-left: auto; }
+.filters .help-btn { width: 26px; height: 26px; font: 600 14px/1 var(--font-display); color: var(--color-muted); border: var(--rule-hair) solid var(--color-rule); }
+.filters .help-btn:hover { color: var(--color-ink); }

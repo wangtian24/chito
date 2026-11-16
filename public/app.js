@@ -986,7 +986,6 @@ function toggleTools() {
 function toggleAgents() {
   state.showAgents = !state.showAgents;
   store.set('showAgents', state.showAgents);
-  $('#f-agents').classList.toggle('on', state.showAgents);
   applyFilter(false);
 }
 
@@ -1455,8 +1454,6 @@ $('#q').addEventListener('input', () => {
   if (q) url.searchParams.set('q', q); else url.searchParams.delete('q');
   history.replaceState({}, '', url);
 });
-$('#f-agents').classList.toggle('on', state.showAgents);
-$('#f-agents').addEventListener('click', toggleAgents);
 $('#f-source').value = state.source;
 $('#f-source').addEventListener('change', e => { state.source = e.target.value; store.set('source', state.source); applyFilter(); });
 $('#help-btn').addEventListener('click', () => openSettings('keyboard'));
