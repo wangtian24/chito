@@ -796,6 +796,33 @@ async function openInTerminal(id) {
     ctx.toast(j.action === 'focused' ? tr('Focused its terminal') : j.action === 'forked' ? tr('Still running in the background, so this opened a forked copy; the running session will not see what you type there') : tr('Opened in a terminal'));
   } catch (e) { ctx.toast(tr('Could not open: {error}', { error: e.message })); }
 }
+// The TL;DR the human reads first (bl done/fail --tldr, the handoff's tldr, or one the daemon wrote), and the
+// handoff's pictures: the user reads pictures and mocks, not long text.
+const picSrc = p => (p.url && /^https?:\/\//i.test(p.url)) ? p.url : p.file ? `/api/backlog/showcase?f=${encodeURIComponent(p.file)}` : '';
+function pics(list, cls) {
+  const ps = (list || []).filter(p => p && picSrc(p));
+  if (!ps.length) return null;
+  const strip = el('div', cls);
+  for (const p of ps) {
+    const a = el('a'); a.href = picSrc(p); a.target = '_blank'; a.rel = 'noopener'; a.title = p.caption || '';
+    const img = el('img'); img.src = picSrc(p); img.alt = p.caption || ''; img.loading = 'lazy';
+    a.append(img);
+    if (cls === 'bl-ho-pics' && p.caption) { const f = el('figure'); f.append(a, el('figcaption', null, p.caption)); strip.append(f); } else strip.append(a);
+  }
+  return strip;
+}
+function tldrBlock(t, cls) {
+  const tl = t.meta?.tldr?.text;
+  const pk = t.meta?.handoff?.packet;
+  if (!tl && !pk?.summary && !pk?.pics?.length) return null;
+  const box = el('div', cls);
+  if (tl) box.append(md(tl));
+  else if (pk?.summary) box.append(Object.assign(el('p', 'bl-tldr-fallback', pk.summary), { title: tr('No TL;DR yet; this is the full summary') }));
+  const strip = pics(pk?.pics, 'bl-tldr-pics');
+  if (strip) box.append(strip);
+  return box;
+}
+
 // '· created 3h ago', the exact time on hover.
 const ago = iso => { const s = el('span', 'bl-needs-ago', ' · ' + tr('created {ago}', { ago: ctx.fmtRelAgo(iso) })); s.title = ctx.fmtDateTime(iso); return s; };
 function needsYouPanel(tks) {
@@ -833,6 +860,8 @@ function needsYouPanel(tks) {
     if (b?.error) act.append(el('span', 'bl-needs-pending', tr('Briefing failed; the daemon retries after a restart')));
     if (t.meta?.handoff?.phase) row.classList.add(`ph-${t.meta.handoff.phase}`);
     row.append(title, why, act);
+    const tl = tldrBlock(t, 'bl-needs-tldr');
+    if (tl) row.append(tl);
     box.append(row);
   }
   for (const m of ms) {
@@ -1447,6 +1476,11 @@ function drawDrawer(box, t) {
   const top = el('div', 'bl-d-top');
   top.append(el('span', 'num bl-d-key', t.key), statePill(t.state), closeBtn());
   box.append(top, el('h3', 'bl-d-title', t.title), ticketActions(t));
+  if (t.meta?.tldr?.text) {
+    const tb = el('section', 'bl-d-tldr');
+    tb.append(el('h4', 'bl-d-h', tr('TL;DR')), md(t.meta.tldr.text));
+    box.append(tb);
+  }
   const ho = handoffView(t);
   if (ho) box.append(ho);
 
@@ -1630,6 +1664,8 @@ function handoffView(t) {
   box.append(head);
   if (!h.packet) { box.append(el('p', 'bl-d-empty', tr('The AI is compiling what was done, how to see it and what to test. You will be notified.'))); return box; }
   const pk = h.packet;
+  const strip = pics(pk.pics, 'bl-ho-pics');
+  if (strip) box.append(strip);
   box.append(el('p', 'bl-ho-summary', pk.summary));
   if (pk.see) {
     const see = el('div', 'bl-ho-see');

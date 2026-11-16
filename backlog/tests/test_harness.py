@@ -72,3 +72,38 @@ class HarnessTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TldrAndRepoScopeTest(HarnessTest):
+    def test_tldr_rule(self):
+        ok = self.bl["tldr_problem"]
+        self.assertIsNone(ok("Approve PR #12. It adds grid references."))
+        self.assertIsNotNone(ok("One. Two. Three. Four."))
+        self.assertIsNone(ok("Pick a price:\n- Pro $24.99/yr\n- Founder $49.99\n- Free tier stays"))
+        self.assertIsNotNone(ok("\n".join(f"- item {i}" for i in range(8))))
+        self.assertIsNotNone(ok(""))
+
+    def test_done_and_fail_store_tldr(self):
+        os.environ.pop("BL_AGENT", None)
+        self.c.execute("UPDATE tickets SET state='in_progress' WHERE key='A-1'")
+        self.c.commit()
+        ns = lambda **kw: type("A", (), {"key": "A-1", "message": "long result", "tldr": None, "force": True, "final": True, **kw})()
+        self.bl["cmd_fail"](ns(tldr="Build broke on Safari. Retry after the fix."))
+        meta = json.loads(self.c.execute("SELECT meta FROM tickets WHERE key='A-1'").fetchone()["meta"])
+        self.assertEqual(meta["tldr"]["text"], "Build broke on Safari. Retry after the fix.")
+        with self.assertRaises(SystemExit):
+            self.bl["cmd_fail"](ns(tldr="One. Two. Three. Four."))
+
+    def test_repo_scope_setting(self):
+        self.c.execute("UPDATE projects SET repo='/r/map' WHERE key='A'")
+        self.c.execute("INSERT INTO settings VALUES('repo:/r/map','review','\"self\"')")
+        self.assertEqual(self.bl["setting"](self.c, "review", "A"), "self")
+        self.c.execute("INSERT INTO settings VALUES('project:A','review','\"pr\"')")
+        self.assertEqual(self.bl["setting"](self.c, "review", "A"), "pr")
+        self.assertNotEqual(self.bl["setting"](self.c, "review", "B"), "self")
+
+    def test_tldr_edge_shapes(self):
+        ok = self.bl["tldr_problem"]
+        self.assertIsNotNone(ok("A. B. C. D. E. F.\n- ok"))
+        self.assertIsNone(ok(["first", "second"]))
+        self.assertIsNotNone(ok(None))

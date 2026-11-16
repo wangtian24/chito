@@ -29,6 +29,8 @@ DEFAULTS = {
     "orchestrator_model": "opus",
     "brief_humans": True,       # the daemon prepares a briefing session for every unblocked human ticket
     "brief_model": "opus",
+    "tldr_model": "haiku",      # writes the TL;DR for a waiting ticket that has none (old tickets, agents that skipped it)
+    "tldr_backfill": True,
     "notify_human_cmd": "",     # how to tell the human a handoff is ready; empty = a macOS notification ($BL_MSG, $BL_TICKET, $BL_URL)
     "board_url": "http://localhost:8791/projects",
     "quota_backoff_minutes": 30, # when a worker hits a usage limit and no reset time is given
@@ -168,7 +170,12 @@ def event(c, kind, ticket=None, project=None, body="", data=None, actor=None):
               (ticket, project, kind, actor or agent_id(), body, json.dumps(data or {}), now(), session_id()))
 
 def setting(c, key, project=None, labels=()):
-    scopes = [f"label:{l}" for l in labels] + ([f"project:{project}"] if project else []) + ["global"]
+    repo = None
+    if project:   # repo:<path> covers every project on that repo (say, all of Mapcouch), under its own project setting
+        r = c.execute("SELECT repo FROM projects WHERE key=?", (project,)).fetchone()
+        repo = r["repo"] if r and r["repo"] else None
+    scopes = ([f"label:{l}" for l in labels] + ([f"project:{project}"] if project else [])
+              + ([f"repo:{repo}"] if repo else []) + ["global"])
     for s in scopes:
         r = c.execute("SELECT value FROM settings WHERE scope=? AND key=?", (s, key)).fetchone()
         if r:
@@ -807,9 +814,12 @@ def cmd_done(a):
             own_check(t, a)
             pol = "self" if a.final else review_policy(c, t)
             new = "done" if pol == "self" else "in_review"
+        tl = check_tldr(a.tldr) if a.tldr else None
         c.execute("UPDATE tickets SET state=?, result=coalesce(?, result), claimed_by=NULL, lease_until=NULL, updated=?, "
                   "finished=CASE WHEN ?='done' THEN ? ELSE finished END WHERE key=?",
                   (new, a.message, now(), new, now(), t["key"]))
+        if tl or a.message:   # a new result replaces the old TL;DR (the daemon writes one if none was given)
+            set_tldr(c, t["key"], tl, "worker")
         note = ""
         if new == "in_review" and review_policy(c, t) == "ask":
             note = " (no review policy for this repo: needs a human to approve, or set one with `bl config project:"\
@@ -822,6 +832,9 @@ def cmd_fail(a):
     c = connect()
     with tx(c):
         t = ticket(c, a.key); own_check(t, a)
+        tl = check_tldr(a.tldr) if a.tldr else None
+        if tl or a.message:
+            set_tldr(c, t["key"], tl, "worker")
         if a.message:
             event(c, "comment", t["key"], body="FAIL: " + a.message)
             c.execute("UPDATE tickets SET result=? WHERE key=?", ("FAILED: " + a.message, t["key"]))
@@ -954,6 +967,8 @@ def build_prompt(c, t, compact=False):
           f"- Finish with exactly one: `bl done {t['key']} -m \"what changed, PR url, how verified\"` | "
           f"`bl fail {t['key']} -m \"why, what to try next\"` | `bl release {t['key']} --reason ...`.",
           "- The -m text is what downstream tickets will see. Write it for the next agent.",
+          "- Also pass --tldr \"...\" to bl done and bl fail: what the human sees on the board if this lands on them (a review, "
+          "a failure). " + TLDR_RULE,
           "- Review policy self = test it yourself and merge per the repo's rules; pr = open the PR and stop; "
           "ask = open the PR and stop, a human decides.",
           "- Never deploy, spend money or push to main unless the spec says so."]
@@ -979,8 +994,13 @@ Now:
 3. Compile the handoff packet and record it. It is a short document the human reads on the board, shaped to THIS
    ticket: a decision, a review of built work, or an errand only they can do (a form, an account, a call) all read
    differently, so pick the sections that fit and name them yourself. Fields:
+   - tldr (required): the line the board shows on "Waiting on you". The human reads only this before deciding to open
+     it: {TLDR_RULE}
+   - pics (optional, use them): [{{"file": "/abs/path.png", "caption": "..."}}] screenshots, before/after shots or a mock
+     of the options. The human will not read long text; anything that takes more than the TL;DR to explain should be
+     shown as a picture (take a screenshot of the preview, or draw a quick mock) rather than written out.
    - summary (required): what this is and what they decide or do, one or two sentences
-   - body (required): Markdown. Use the headings this task needs, for example "How to see it", "What's built",
+   - body (required): Markdown, short. Use the headings this task needs, for example "How to see it", "What's built",
      "Steps", "What to check", "Known gaps", "Background". No empty or forced sections; skip what doesn't apply.
    - see (optional): {{"url": ..., "how": ...}} when there is something to open (a preview, a page)
    - links (optional): [{{"label": ..., "url": ...}}]: PRs, docs, the official page
@@ -1004,7 +1024,12 @@ When the human answers (in this session, later):
 - When they give the decision, close it: `bl resolve {key} -m "<decision, by the human, and what follows>"`.
   If fixes were filed first, leave {key} open; it comes back to them when the fixes land."""
 
+TLDR_RULE = ("at most 3 short sentences of plain words; if it needs more, use '- ' bullets (at most 6, one line each). "
+             "Lead with what the human must do or decide. Anything longer belongs in a picture or mock, not prose.")
+
 HANDOFF_FIELDS = {
+    "tldr": "required: what the board shows on the 'Waiting on you' row. " + TLDR_RULE,
+    "pics": "optional: [{\"file\": \"/abs/path/shot.png\", \"caption\": \"...\"}] or [{\"url\": ...}]: screenshots and mocks, shown before the text",
     "summary": "one or two sentences: what this is and what you decide or do",
     "body": "Markdown shaped to this ticket, with the headings it needs (How to see it, Steps, What's built, Known gaps ...)",
     "checklist": "optional: [{\"item\": \"Apply on irs.gov/ein\", \"detail\": \"...\"}] steps to tick off; checklist_title names them",
@@ -1050,6 +1075,82 @@ def normalize_packet(pk):
     out["asks"] = asks
     return out
 
+def _sentences(text):
+    return [x for x in re.split(r"(?<=[.!?。！？])\s+", text.strip()) if x.strip()]
+
+def tldr_problem(text):
+    """None if text is a good TL;DR, else what is wrong with it."""
+    if isinstance(text, list):
+        text = "\n".join("- " + str(x).lstrip("-*• ") for x in text)
+    text = (text if isinstance(text, str) else "").strip()
+    if not text:
+        return "empty"
+    lines = [l for l in text.splitlines() if l.strip()]
+    bullets = [l for l in lines if re.match(r"\s*([-*•]|\d+[.)])\s+", l)]
+    if bullets and len(bullets) == len(lines) or (len(lines) > 1 and len(bullets) == len(lines) - 1 and not re.match(r"\s*([-*•]|\d+[.)])\s+", lines[0])):
+        items = bullets
+        if len(items) > 6:
+            return f"{len(items)} bullets; keep it to 6"
+        long = [b for b in items if len(b) > 160]
+        if long:
+            return "a bullet is over 160 characters; one line each"
+        lead = lines[0] if len(bullets) < len(lines) else ""
+        if lead and (len(_sentences(lead)) > 2 or len(lead) > 200):
+            return "the line before the bullets is long; one short lead-in at most"
+        return None
+    n = len(_sentences(text))
+    if n > 3:
+        return f"{n} sentences; at most 3, or switch to '- ' bullets"
+    if len(text) > 360:
+        return f"{len(text)} characters; keep it under 360, or use bullets"
+    return None
+
+def check_tldr(text, what="--tldr"):
+    if isinstance(text, list):
+        text = "\n".join("- " + str(x).lstrip("-*• ") for x in text)
+    if not isinstance(text, str):
+        die(f"{what} must be text. A TL;DR is {TLDR_RULE}")
+    why = tldr_problem(text)
+    if why:
+        die(f"{what} is too long ({why}). A TL;DR is {TLDR_RULE}")
+    return text.strip()
+
+def set_tldr(c, key, text, source):
+    t = ticket(c, key)
+    meta = json.loads(t["meta"])
+    if text:
+        meta["tldr"] = {"text": text.strip(), "at": now(), "by": source}
+    else:
+        meta.pop("tldr", None)
+    c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), key))
+
+def stash_pics(key, pics):
+    """Handoff pictures: files are copied under the showcase dir so the board can serve them; URLs pass through."""
+    out = []
+    if isinstance(pics, (str, dict)):
+        pics = [pics]
+    for i, x in enumerate(pics or []):
+        x = x if isinstance(x, dict) else {"file": str(x)}
+        if x.get("url"):
+            out.append({"url": x["url"], "caption": x.get("caption", "")}); continue
+        f = x.get("file") or x.get("path")
+        if not f:
+            continue
+        src = Path(f).expanduser()
+        if not src.is_absolute():
+            src = SHOWCASE_DIR / f
+        if not src.is_file():
+            die(f"picture not found (or not a file): {f}")
+        try:
+            rel = src.resolve().relative_to(SHOWCASE_DIR.resolve())
+        except ValueError:
+            dest = SHOWCASE_DIR / "handoff" / key / f"{i + 1}-{src.name}"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            rel = dest.relative_to(SHOWCASE_DIR)
+        out.append({"file": str(rel), "caption": x.get("caption", "")})
+    return out
+
 def handoff_of(t):
     return json.loads(t["meta"]).get("handoff") or {}
 
@@ -1090,15 +1191,21 @@ def cmd_handoff(a):
                 die(f"packet is not JSON: {e}")
             pk = normalize_packet(pk) if isinstance(pk, dict) else pk
             if pk.get("body") or pk.get("asks"):   # the flexible packet
-                missing = [k for k in ("summary", "body", "asks") if not pk.get(k)]
+                missing = [k for k in ("tldr", "summary", "body", "asks") if not pk.get(k)]
             else:                                   # the older fixed packet
                 missing = [k for k in ("summary", "see", "done", "tests", "questions") if not pk.get(k)]
             if missing:
                 die("packet is missing " + ", ".join(missing) + ". Fields:\n" + "\n".join(f"  {k}: {v}" for k, v in HANDOFF_FIELDS.items()))
+            if pk.get("tldr"):
+                pk["tldr"] = check_tldr(pk["tldr"], "the packet's tldr")
+            if pk.get("pics"):
+                pk["pics"] = stash_pics(t["key"], pk["pics"])
             sid = session_id()
+            if pk.get("tldr"):
+                set_tldr(c, t["key"], pk["tldr"], "handoff"); t = ticket(c, a.key)
             h = set_handoff(c, t, packet=pk, phase="awaiting", session=sid or handoff_of(t).get("session"), ready_at=now())
             event(c, "handoff", t["key"], body=f"handoff ready: {pk['summary'][:200]}", data={"phase": "awaiting"})
-            notify_human(c, t, pk["summary"][:180])
+            notify_human(c, t, (pk.get("tldr") or pk["summary"])[:180])
             print("awaiting: the human has been notified")
         elif a.phase:
             set_handoff(c, t, phase=a.phase, **({"answered_at": now()} if a.phase == "discussing" else {}))
@@ -1106,6 +1213,17 @@ def cmd_handoff(a):
             print(a.phase)
         else:
             print(json.dumps(handoff_of(t), indent=1))
+
+def cmd_tldr(a):
+    """Show or set the TL;DR the board shows for a ticket waiting on the human."""
+    c = connect()
+    with tx(c):
+        t = ticket(c, a.key)
+        if a.text is None:
+            print((json.loads(t["meta"]).get("tldr") or {}).get("text", "")); return
+        text = sys.stdin.read() if a.text == "-" else a.text
+        set_tldr(c, t["key"], check_tldr(text, "the TL;DR") if text.strip() else None, a.by or os.environ.get("BL_AGENT") or "human")
+    print("ok")
 
 def cmd_brief_prompt(a):
     c = connect()
@@ -1645,6 +1763,7 @@ def cmd_daemon(a):
     children = {}
     orchs = {}   # project -> (Popen, agent, t0, logfile) for orchestrator sessions
     briefs = {}  # ticket -> (Popen, agent, t0, logfile) for briefing sessions
+    tldrs = {}   # ticket -> (Popen, t0, outfile, ticket.updated) writing a TL;DR
     with tx(c):
         for t in c.execute("SELECT key, meta FROM tickets WHERE meta LIKE '%\"pending\": true%'").fetchall():
             m = json.loads(t["meta"]); m.pop("brief", None)
@@ -1712,6 +1831,7 @@ def cmd_daemon(a):
             auto_projects(c, children, orchs, me, lambda: probe is not None)
             if probe is None:
                 brief_humans(c, briefs, me)
+                tldr_backfill(c, tldrs)
             beat_children(c, children)
             with tx(c):
                 for pk, (pr, ag, t0, lf) in orchs.items():
@@ -1810,6 +1930,72 @@ def brief_humans(c, briefs, me):
             c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), t["key"]))
             event(c, "brief", t["key"], body="preparing a briefing session for the human", actor=ag, data={"pid": pr.pid, "log": lf.name})
         notify(c, t["project"], f"{t['key']}: preparing a briefing for you ({t['title']})")
+
+def waiting_without_tldr(c):
+    """Tickets on the human's plate with no TL;DR yet (and no failed attempt at one for this result)."""
+    rows = c.execute("""SELECT * FROM tickets WHERE state IN ('failed','in_review')
+                        OR (assignee='human' AND state NOT IN ('done','canceled'))""").fetchall()
+    out = []
+    for t in rows:
+        meta = json.loads(t["meta"])
+        pk = (meta.get("handoff") or {}).get("packet")
+        if meta.get("tldr") or (meta.get("tldr_try") or {}).get("updated") == t["updated"]:
+            continue
+        if t["result"] or pk:
+            out.append((t, pk))
+    return out
+
+def tldr_prompt(t, pk):
+    src = []
+    if pk:
+        src += [f"Handoff summary: {pk.get('summary', '')}", f"Handoff body:\n{pk.get('body', '')}"]
+        asks = [a.get("q") if isinstance(a, dict) else str(a) for a in pk.get("asks") or []]
+        if asks: src.append("Asked of the human:\n" + "\n".join("- " + q for q in asks if q))
+    if t["result"]:
+        src.append(f"Result:\n{t['result']}")
+    why = {"failed": "it failed and the human decides: retry, fix the spec or cancel",
+           "in_review": "it is in review and the human approves it"}.get(t["state"], "only the human can do it")
+    return (f"Backlog ticket {t['key']}: {t['title']}. It is waiting on the human because {why}.\n\n"
+            + "\n\n".join(src)[:8000] +
+            f"\n\nWrite the TL;DR the human reads on the board: {TLDR_RULE} "
+            "Plain words, no headings, no preamble, no quotes around it. Reply with the TL;DR only.")
+
+def tldr_backfill(c, jobs):
+    """Write a TL;DR (with a small model) for each waiting ticket that has none."""
+    for k, (pr, t0, out, upd) in list(jobs.items()):
+        if pr.poll() is None:
+            if time.monotonic() - t0 > 180:
+                pr.kill()
+            continue
+        del jobs[k]
+        text = Path(out).read_text(errors="replace").strip() if Path(out).exists() else ""
+        text = re.sub(r"^(TL;?DR:?\s*)", "", text, flags=re.I).strip().strip('"')
+        with tx(c):
+            t = ticket(c, k)
+            meta = json.loads(t["meta"])
+            if pr.returncode == 0 and text and not tldr_problem(text) and not meta.get("tldr") and t["updated"] == upd:
+                meta["tldr"] = {"text": text, "at": now(), "by": "daemon"}
+                meta.pop("tldr_try", None)
+            elif not meta.get("tldr"):
+                meta["tldr_try"] = {"at": now(), "updated": upd, "error": tldr_problem(text) or f"exit {pr.returncode}"}
+            c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), k))
+    if jobs or not setting(c, "tldr_backfill") or not setting(c, "daemon_enabled") or quota_until(c):
+        return
+    for t, pk in waiting_without_tldr(c)[:1]:
+        LOGS.mkdir(parents=True, exist_ok=True)
+        out = LOGS / f"tldr-{t['key']}.txt"
+        env = {k: v for k, v in os.environ.items() if not k.startswith("BL_") and k != "CLAUDE_CODE_SESSION_ID"}
+        try:
+            with open(out, "w") as f:
+                pr = subprocess.Popen(["claude", "-p", tldr_prompt(t, pk), "--model", str(setting(c, "tldr_model"))],
+                                      cwd=str(Path.home()), env=env, stdout=f, stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as e:   # no claude on PATH: note it once per result, keep the daemon alive
+            with tx(c):
+                meta = json.loads(ticket(c, t["key"])["meta"])
+                meta["tldr_try"] = {"at": now(), "updated": t["updated"], "error": str(e)[:200]}
+                c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), t["key"]))
+            return
+        jobs[t["key"]] = (pr, time.monotonic(), str(out), t["updated"])
 
 ORCH_QUICK_SECONDS = 60   # an orchestrator that fails faster than this did not get to work (login, flags, API errors)
 ORCH_BACKOFF = {}          # project -> (crashes in a row, monotonic time before which no new orchestrator starts)
@@ -2003,16 +2189,18 @@ def main():
     p = P("resolve", cmd_resolve); p.add_argument("key"); p.add_argument("-m", "--message")
     p.add_argument("--state", choices=["done", "canceled"], default="done"); p.add_argument("--force", action="store_true")
     p = P("brief-prompt", cmd_brief_prompt); p.add_argument("key")
+    p = P("tldr", cmd_tldr); p.add_argument("key"); p.add_argument("text", nargs="?", help="the TL;DR, - for stdin, '' to clear; none prints it")
+    p.add_argument("--by")
     p = P("handoff", cmd_handoff); p.add_argument("key"); p.add_argument("--packet", help="packet JSON file, or - for stdin")
     p.add_argument("--phase", choices=["preparing", "awaiting", "discussing"]); p.add_argument("--force", action="store_true")
-    p = P("done", cmd_done); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--force", action="store_true")
+    p = P("done", cmd_done); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--tldr", help="for the human, if it lands on them (review): " + TLDR_RULE); p.add_argument("--force", action="store_true")
     p.add_argument("--final", action="store_true", help="skip review: go straight to done")
-    p = P("fail", cmd_fail); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--force", action="store_true")
+    p = P("fail", cmd_fail); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--tldr", help="for the human: " + TLDR_RULE); p.add_argument("--force", action="store_true")
     p = P("comment", cmd_comment); p.add_argument("key"); p.add_argument("text", nargs="+")
     p = P("move", cmd_move); p.add_argument("key"); p.add_argument("state"); p.add_argument("--reason")
     p.add_argument("--reset", action="store_true", help="with todo: reset attempts")
     p = P("set", cmd_set); p.add_argument("key"); p.add_argument("fields", nargs="+", help="field=value")
-    p = P("config", cmd_config); p.add_argument("scope", help="global | MAP | project:MAP | label:ui")
+    p = P("config", cmd_config); p.add_argument("scope", help="global | MAP | project:MAP | repo:/path/to/repo | label:ui")
     p.add_argument("key", nargs="?"); p.add_argument("value", nargs="?"); p.add_argument("extra", nargs="*")
     p = P("prompt", cmd_prompt); p.add_argument("key"); p.add_argument("--compact", action="store_true")
     p = P("worktree", cmd_worktree); p.add_argument("key")
