@@ -290,7 +290,6 @@ export default {
   " Last: {key}.": " 最近一个：{key}。",
   "Retry now": "立即重试",
   "Clear the pause; the next claims try again": "解除暂停，下次认领时重试",
-  "Pause daemon": "暂停守护进程",
   "Workers already running finish; nothing new starts": "已在运行的执行者会做完，不再启动新的",
   "Resume daemon": "恢复守护进程",
   "Start it with ": "启动方式：",
@@ -654,4 +653,5 @@ export default {
   "Nothing new waiting on you.": "没有新的待处理事项。",
   "Hide dismissed": "隐藏已忽略",
   "Show {n} dismissed": "显示已忽略的 {n} 项",
+  "Open in a new tab": "在新标签页中打开",
 };
