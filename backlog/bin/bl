@@ -50,7 +50,7 @@ DEFAULTS = {
         'claude -p "$(bl prompt $BL_TICKET)" --model "$BL_MODEL" '
         '--permission-mode bypassPermissions '
         '--append-system-prompt "You are a backlog worker for ticket $BL_TICKET. '
-        'Follow the backlog-worker skill. Finish with bl done, bl fail or bl release."'
+        'Follow the backlog-worker skill; see the project with bl area. Finish with bl done, bl fail or bl release."'
     ),
 }
 
@@ -91,6 +91,11 @@ CREATE TABLE IF NOT EXISTS milestones(
   showcase_ticket TEXT, showcases TEXT NOT NULL DEFAULT '[]', due TEXT,
   status TEXT NOT NULL DEFAULT 'planned',    -- planned | active | reached | showcased | canceled
   reached TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS notes(
+  id INTEGER PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(key),
+  kind TEXT NOT NULL,                        -- memory | msg | touching
+  ticket TEXT, body TEXT NOT NULL, actor TEXT, created TEXT NOT NULL, archived TEXT);
+CREATE INDEX IF NOT EXISTS notes_proj ON notes(project, kind, archived);
 CREATE TABLE IF NOT EXISTS runs(
   id INTEGER PRIMARY KEY, project TEXT, pid INTEGER, host TEXT, agent TEXT,
   started TEXT, heartbeat TEXT, ended TEXT, status TEXT);
@@ -299,12 +304,24 @@ def model_for(c, t):
 def harness_for(c, t):
     return json.loads(t["meta"]).get("harness") or setting(c, "harness", t["project"], json.loads(t["labels"]))
 
+def worker_instruction(t):
+    """The worker's system prompt: who it is and how to use bl to see and coordinate with the rest of the project."""
+    k, p = t["key"], t["project"]
+    return (f"You are a backlog worker for ticket {k} in project {p}. Read ~/.backlog/LOCAL.md and the backlog-worker "
+            "contract if available. `bl` is the shared backlog (SQLite); other workers run in parallel and read what you write.\n"
+            f"See the project: `bl show {k}` (your ticket), `bl area {p}` (project memory, messages, who is touching what, "
+            f"recently done), `bl ls {p} --all`, `bl show KEY` (any ticket and its result), `bl log {p}`, `bl graph {p}`.\n"
+            f"Coordinate: at the start, `bl touching {k} \"files or areas you will change\"`; a heads-up the others need "
+            f"(renamed an API, moved a file, main is broken): `bl say {k} \"...\"`; a durable project fact or decision every "
+            f"later worker must follow: `bl memo {k} \"...\"`. Progress notes: `bl comment {k} \"...\"`. "
+            f"New work: `bl add {p} \"title\" -b \"...\"`.\n"
+            "Text that starts with a dash goes after `--` (`bl say KEY -- \"-x\"`). Finish with exactly one of bl done, bl fail or bl release. "
+            "Never deploy, spend money or push to main unless this ticket explicitly authorizes it.")
+
 def worker_command(c, t, model, prompt):
     """Return an argv for built-in harnesses. A custom worker_cmd remains supported."""
     harness = harness_for(c, t)
-    instruction = (f"You are a backlog worker for ticket {t['key']}. Read ~/.backlog/LOCAL.md and "
-                   "the backlog-worker contract if available. Finish with bl done, bl fail or bl release. "
-                   "Never deploy, spend money or push to main unless this ticket explicitly authorizes it.")
+    instruction = worker_instruction(t)
     if harness == "claude":
         return ["claude", "-p", prompt, "--model", model or "opus", "--permission-mode", "bypassPermissions",
                 "--append-system-prompt", instruction]
@@ -970,21 +987,102 @@ def cmd_config(a):
                 c.execute("INSERT OR REPLACE INTO settings VALUES(?,?,?)", (scope, key, json.dumps(v)))
     print("ok")
 
-def project_now(c, t):
-    """What else is happening in the ticket's project, so parallel workers don't collide."""
-    others = c.execute("SELECT key, title, claimed_by FROM tickets WHERE project=? AND state='in_progress' AND key<>? "
-                       "ORDER BY started", (t["project"], t["key"])).fetchall()
-    recent = c.execute("SELECT key, title, result FROM tickets WHERE project=? AND state='done' "
-                       "ORDER BY finished DESC LIMIT 8", (t["project"],)).fetchall()
-    L = ["## The project right now"]
-    L.append("In flight alongside you (check their PRs before touching the same files):" if others
-             else "Nothing else in this project is in flight.")
-    L += [f"- {o['key']} {o['title']}" for o in others]
-    if recent:
+def area_notes(c, project, kind, days=None, limit=30):
+    q = "SELECT * FROM notes WHERE project=? AND kind=? AND archived IS NULL"
+    args = [project, kind]
+    if days:
+        q += " AND created >= ?"; args.append((datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return c.execute(q + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+
+def touching_of(c, project):
+    """What each in-flight ticket said it is changing (a note of a ticket that is no longer in flight drops out)."""
+    rows = c.execute("SELECT n.ticket, n.body FROM notes n JOIN tickets t ON t.key=n.ticket WHERE n.project=? AND "
+                     "n.kind='touching' AND n.archived IS NULL AND t.state='in_progress' ORDER BY n.id", (project,)).fetchall()
+    return {r["ticket"]: r["body"] for r in rows}
+
+def area_lines(c, project, me=None, recent=8):
+    """The project area: memory, messages, who is touching what, recently done. In worker prompts and `bl area`."""
+    clip = lambda x, n: (x if len(x) <= n else x[:n - 1] + "…")
+    L = [f"## Project area: {project} (shared by every worker here; `bl area {project}`)"]
+    mem = area_notes(c, project, "memory", limit=60)
+    older = c.execute("SELECT count(*) FROM notes WHERE project=? AND kind='memory' AND archived IS NULL", (project,)).fetchone()[0] - len(mem)
+    L.append("Project memory (facts and decisions to follow; add with `bl memo`):" if mem else
+             "Project memory: none yet. Record durable facts and decisions with `bl memo`.")
+    L += [f"- #{n['id']} {n['created'][:10]}{' ' + n['ticket'] if n['ticket'] else ''}: {clip(n['body'], 500)}" for n in mem]
+    if older > 0:
+        L.append(f"- ({older} older not shown: `bl area {project} --json`; retire stale ones with `bl forget ID`)")
+    msgs = area_notes(c, project, "msg", days=7, limit=10)
+    if msgs:
+        L.append("Messages, last 7 days (newest first; add with `bl say`):")
+        L += [f"- {n['created'][:16].replace('T', ' ')} {n['ticket'] or n['actor']}: {clip(n['body'], 300)}" for n in msgs]
+    touch = touching_of(c, project)
+    others = c.execute("SELECT key, title FROM tickets WHERE project=? AND state='in_progress' AND key IS NOT ? ORDER BY started",
+                       (project, me)).fetchall()
+    L.append("In flight" + (" alongside you (check their PRs before changing the same files):" if me else ":") if others
+             else "Nothing else in this project is in flight." if me else "Nothing in flight.")
+    L += [f"- {o['key']} {o['title']}" + (f" · touching: {touch[o['key']]}" if o["key"] in touch else "") for o in others]
+    done = c.execute("SELECT key, title, result FROM tickets WHERE project=? AND state='done' ORDER BY finished DESC LIMIT ?",
+                     (project, recent)).fetchall()
+    if done:
         L.append("Recently done:")
-        L += [f"- {r['key']} {r['title']}: {((r['result'] or '').splitlines() or [''])[0][:160]}" for r in recent]
-    L += [f"More: `bl status`, `bl ls {t['project']} --all`, `bl log {t['project']}`, `bl show KEY`; open PRs: `gh pr list`.", ""]
+        L += [f"- {r['key']} {r['title']}: {clip(((r['result'] or '').splitlines() or [''])[0], 160)}" for r in done]
+    L += [f"More: `bl ls {project} --all`, `bl show KEY`, `bl log {project}`; open PRs: `gh pr list`.", ""]
     return L
+
+def project_now(c, t):
+    return area_lines(c, t["project"], me=t["key"])
+
+def area_target(c, ref):
+    """A project key or a ticket key: (project, ticket or None)."""
+    r = c.execute("SELECT key, project FROM tickets WHERE key=?", (ref.upper(),)).fetchone()
+    if r:
+        return r["project"], r["key"]
+    return project_row(c, ref)["key"], None
+
+def cmd_area(a):
+    c = connect()
+    proj, _ = area_target(c, a.project)
+    if a.json:
+        rows = c.execute("SELECT * FROM notes WHERE project=? AND archived IS NULL ORDER BY id DESC", (proj,)).fetchall()
+        print(json.dumps({"project": proj, "notes": [dict(r) for r in rows], "touching": touching_of(c, proj)}, indent=1)); return
+    p = project_row(c, proj)
+    head = [f"# {p['key']}: {p['name']}"]
+    if p["doc_slug"]:
+        head.append(f"Design doc: {p['doc_slug']}")
+    if (p["instructions"] or "").strip():
+        head += ["", "## Standing instructions", p["instructions"].strip()]
+    print("\n".join(head + [""] + area_lines(c, proj)))
+
+def add_note(a, kind):
+    c = connect()
+    proj, tk = area_target(c, a.target)
+    tk = tk or (os.environ.get("BL_TICKET") or "").upper() or None
+    if tk and not c.execute("SELECT 1 FROM tickets WHERE key=? AND project=?", (tk, proj)).fetchone():
+        tk = None
+    body = " ".join(a.text).strip()
+    if body == "-":
+        body = sys.stdin.read().strip()
+    if not body:
+        die("empty note")
+    if kind == "touching" and not tk:
+        die("bl touching needs a ticket key")
+    with tx(c):
+        if kind == "touching":   # one current line per ticket
+            c.execute("UPDATE notes SET archived=? WHERE kind='touching' AND ticket=? AND archived IS NULL", (now(), tk))
+        cur = c.execute("INSERT INTO notes(project,kind,ticket,body,actor,created) VALUES(?,?,?,?,?,?)",
+                        (proj, kind, tk, body, agent_id(), now()))
+        event(c, "note", tk, project=proj, body=f"{kind}: {body[:200]}", data={"note": cur.lastrowid})
+    print(f"#{cur.lastrowid}")
+
+def cmd_forget(a):
+    c = connect()
+    with tx(c):
+        n = c.execute("SELECT * FROM notes WHERE id=?", (a.id,)).fetchone()
+        if not n:
+            die(f"no note #{a.id}")
+        c.execute("UPDATE notes SET archived=? WHERE id=?", (now(), a.id))
+        event(c, "note", n["ticket"], project=n["project"], body=f"forgot {n['kind']} #{a.id}: {n['body'][:160]}")
+    print("ok")
 
 def build_prompt(c, t, compact=False):
     p = project_row(c, t["project"])
@@ -2301,6 +2399,14 @@ def main():
     p.add_argument("--due"); p.add_argument("--seq", type=int)
     p.add_argument("--kind", choices=["screenshot", "demo", "localhost", "link", "note"]); p.add_argument("--file"); p.add_argument("--url"); p.add_argument("--note")
     p = P("orchestrate-prompt", cmd_orchestrate_prompt); p.add_argument("project")
+    p = P("area", cmd_area, help="the project area: memory, messages, who is touching what, recently done")
+    p.add_argument("project", help="project or ticket key")
+    for name, kind, hlp in (("memo", "memory", "add a durable project fact or decision"),
+                            ("say", "msg", "post a heads-up to everyone working on the project"),
+                            ("touching", "touching", "say which files or areas your ticket is changing")):
+        p = P(name, lambda a, k=kind: add_note(a, k), help=hlp); p.add_argument("target", help="project or ticket key")
+        p.add_argument("text", nargs="+", help="the note, or - for stdin")
+    p = P("forget", cmd_forget, help="archive a project-area note"); p.add_argument("id", type=int)
     p = P("instructions", cmd_instructions); p.add_argument("project"); p.add_argument("--set", help="new text, or - for stdin; empty clears")
     p = P("quota", cmd_quota); p.add_argument("action", nargs="?", default="status", choices=["status", "clear", "set"])
     p.add_argument("minutes", nargs="?", type=int)

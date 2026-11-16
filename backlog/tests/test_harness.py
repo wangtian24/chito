@@ -159,11 +159,34 @@ class TldrAndRepoScopeTest(HarnessTest):
         c.execute("INSERT INTO tickets(key,project,title,state,created,updated,started) VALUES('B-2','B','other project','in_progress','x','x','x')")
         t = c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone()
         p = self.bl["build_prompt"](c, t)
-        self.assertIn("## The project right now", p)
+        self.assertIn("## Project area: A", p)
         self.assertIn("- A-2 sibling work", p)
         self.assertIn("- A-3 landed: PR #9 merged", p)
         self.assertNotIn("B-2", p)
-        self.assertNotIn("more", p.split("## The project right now")[1].split("## Protocol")[0])
+        self.assertNotIn("more", p.split("## Project area: A")[1].split("## Protocol")[0])
+
+    def test_project_area_notes(self):
+        c, bl = self.c, self.bl
+        c.execute("INSERT INTO tickets(key,project,title,state,created,updated,started) VALUES('A-2','A','sibling','in_progress','x','x','x')")
+        ns = lambda **k: type("A", (), k)
+        bl["add_note"](ns(target="A-2", text=["render.js", "drawRiver"]), "touching")
+        bl["add_note"](ns(target="A-2", text=["render.js only"]), "touching")
+        bl["add_note"](ns(target="A", text=["Generate groups are land, terrain, type"]), "memory")
+        bl["add_note"](ns(target="A-2", text=["renamed GROUPS.roads"]), "msg")
+        bl["add_note"](ns(target="B", text=["other project fact"]), "memory")
+        p = bl["build_prompt"](c, c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone())
+        self.assertIn("Generate groups are land, terrain, type", p)
+        self.assertIn("renamed GROUPS.roads", p)
+        self.assertIn("- A-2 sibling · touching: render.js only", p)
+        self.assertNotIn("drawRiver", p)
+        self.assertNotIn("other project fact", p)
+        c.execute("UPDATE tickets SET state='done' WHERE key='A-2'")
+        self.assertEqual(bl["touching_of"](c, "A"), {})
+        mid = c.execute("SELECT id FROM notes WHERE kind='memory' AND project='A'").fetchone()[0]
+        bl["cmd_forget"](ns(id=mid))
+        p = bl["build_prompt"](c, c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone())
+        self.assertNotIn("Generate groups", p)
+        self.assertIn("bl area A", bl["worker_instruction"](c.execute("SELECT * FROM tickets WHERE key='A-1'").fetchone()))
 
     def test_project_cap_unlimited_by_default(self):
         self.assertIsNone(self.bl["project_cap"](self.c, "A"))

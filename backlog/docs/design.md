@@ -29,6 +29,7 @@ A lightweight, Linear-like backlog in one SQLite file. Many Claude Code sessions
 | `events` | Append-only log: created, state, comment, claim, spawn, dep, edit, project, run, daemon. Each records an actor and **the Claude Code session id that wrote it**, which chito uses to link tickets to sessions |
 | `settings` | `(scope, key, JSON value)`; resolved `label:x`, then `project:X`, then `global` |
 | `runs` | Orchestrator and daemon processes (`kind`), with pid and heartbeat |
+| `notes` | The **project area**: `kind` memory (durable facts and decisions, `bl memo`), msg (heads-ups, `bl say`, shown for 7 days) or touching (what an in-flight ticket is changing, `bl touching`; one current row per ticket, hidden once it leaves in_progress), with ticket, actor, `archived` (`bl forget`). `bl area PROJ` prints it; every worker prompt includes it with the in-flight and recently done tickets, so parallel workers coordinate without an orchestrator |
 
 ## 3. Lifecycles
 

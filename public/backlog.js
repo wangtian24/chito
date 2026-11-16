@@ -606,7 +606,9 @@ function inFlight(tks) {
     const [ex, cls] = executorOf(t);
     const since = t.spawn?.at || t.started;
     const sess = workerSession(t);
-    r.append(stateIcon('in_progress'), el('span', 'num bl-flight-key', t.key), el('span', 'bl-flight-title', t.title),
+    const ttl = el('span', 'bl-flight-title', t.title);
+    if (t.touching) { ttl.append(el('span', 'bl-flight-touch', tr('touching: {what}', { what: t.touching }))); }
+    r.append(stateIcon('in_progress'), el('span', 'num bl-flight-key', t.key), ttl,
       el('span', 'bl-flight-model', t.spawn?.model || ''),
       el('span', 'num bl-flight-since', since ? ctx.fmtRel(since) : ''));
     r.lastChild.title = since ? `${tr('Started {when}', { when: ctx.fmtDateTime(since) })}${t.attempts > 1 ? ` · ${tr('attempt {n}', { n: t.attempts })}` : ''}` : '';
@@ -638,6 +640,39 @@ function instructionsBox(p) {
   save.addEventListener('click', () => { save.disabled = true; act('project-instructions', p.key, ta.value); });
   const row = el('div', 'bl-instr-row'); row.append(save, el('span', 'bl-instr-hint', tr('A running orchestrator picks changes up at its next round.')));
   box.append(sum, ta, row);
+  return box;
+}
+// The project area (bl area KEY): memory every worker follows, recent messages between workers. Each worker prompt
+// includes it, with what every in-flight ticket is touching.
+function projectArea(p) {
+  const notes = (bl.data.notes || []).filter(n => n.project === p.key);
+  const mem = notes.filter(n => n.kind === 'memory'), msgs = notes.filter(n => n.kind === 'msg');
+  const box = el('details', 'bl-instr bl-area'); if (mem.length || msgs.length) box.open = true;
+  const sum = el('summary', null, tr('Project area'));
+  sum.append(el('span', 'bl-instr-hint', tr(' memory and messages every worker in this project sees (bl area {key})', { key: p.key })));
+  box.append(sum);
+  const list = (title, rows, forget) => {
+    box.append(el('div', 'bl-area-h', title));
+    if (!rows.length) { box.append(el('div', 'bl-area-empty', forget ? tr('No project memory yet.') : tr('No messages in the last 7 days.'))); return; }
+    const ul = el('ul', 'bl-area-list');
+    for (const n of rows) {
+      const li = el('li');
+      li.append(el('span', 'bl-area-body', n.body));
+      const who = n.ticket || n.actor || '';
+      li.append(el('span', 'num bl-area-meta', `${who ? who + ' · ' : ''}${ctx.fmtRel(n.created)}`));
+      if (forget) li.append(actBtn(tr('Forget'), 'note-forget', String(n.id), null, { confirm: true, title: tr('Retire this note; workers stop seeing it') }));
+      ul.append(li);
+    }
+    box.append(ul);
+  };
+  list(tr('Memory'), mem, true);
+  list(tr('Messages'), msgs, false);
+  const ta = el('textarea'); ta.rows = 2; ta.placeholder = tr('A fact or decision every worker here should follow, e.g. Generate groups are land, terrain, type.');
+  ta.addEventListener('keydown', e => e.stopPropagation());
+  const add = el('button', 'btn primary', tr('Add to memory')); add.type = 'button';
+  add.addEventListener('click', () => { if (!ta.value.trim()) return; add.disabled = true; act('project-memo', p.key, ta.value); });
+  const row = el('div', 'bl-instr-row'); row.append(add);
+  box.append(ta, row);
   return box;
 }
 function execLine(p, compact) {
@@ -1326,6 +1361,7 @@ function renderProject(root, p) {
     root.append(q);
   }
   root.append(instructionsBox(p));
+  root.append(projectArea(p));
   if (tks.some(t => t.state === 'in_progress')) root.append(el('h2', 'bl-h2', tr('In flight')), inFlight(tks));
 
   const stats = el('div', 'bl-stats');
