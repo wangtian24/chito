@@ -411,14 +411,14 @@ async function act(action, key, value) {
   renderBacklog();
 }
 
-function actBtn(label, action, key, value, { confirm = false, primary = false, title } = {}) {
+function actBtn(label, action, key, value, { confirm = false, confirmText = null, primary = false, title } = {}) {
   const b = el('button', `btn${primary ? ' primary' : ''} bl-act`, label);
   b.type = 'button'; if (title) b.title = title;
   let armed = null;
   b.addEventListener('click', e => {
     e.preventDefault(); e.stopPropagation();
     if (confirm && !armed) {
-      b.textContent = tr('Confirm {action}?', { action: lang === 'zh' ? label : label.toLowerCase() }); b.classList.add('armed');
+      b.textContent = confirmText || tr('Confirm {action}?', { action: lang === 'zh' ? label : label.toLowerCase() }); b.classList.add('armed');
       armed = setTimeout(() => { armed = null; b.textContent = label; b.classList.remove('armed'); }, 3000);
       return;
     }
@@ -528,10 +528,18 @@ function workerPicker(key, action, harness, model, projectDefault = false) {
   wrap.append(select);
   return wrap;
 }
+// Pause stops the project's running sessions at once (bl project pause), so it asks first: the first click
+// arms it and says how many sessions will stop; a second click within 3 s pauses.
+function pauseBtn(p, label = tr('Pause')) {
+  const n = (bl.data.tickets || []).filter(t => t.project === p.key && t.state === 'in_progress').length;
+  return actBtn(label, 'project-pause', p.key, null, { confirm: true,
+    confirmText: n ? trp(n, 'Stop {n} running session?', 'Stop {n} running sessions?') : tr('Pause? Nothing is running'),
+    title: tr('Stops everything in this project now (orchestrators, workers, their dev servers); in-flight tickets go back to todo, and their sessions resume when it runs again') });
+}
 function lifecycleButtons(p, compact) {
   const box = el('div', 'bl-ctl');
   if (p.status === 'planning') box.append(actBtn(tr('Start'), 'project-start', p.key, null, { primary: true, title: tr('Move to executing so its executor picks up ready tickets') }));
-  if (p.status === 'executing') box.append(actBtn(tr('Pause'), 'project-pause', p.key, null, { title: tr('Stops everything in this project now (orchestrators, workers, their dev servers); in-flight tickets go back to todo') }));
+  if (p.status === 'executing') box.append(pauseBtn(p));
   if (p.status === 'paused') box.append(actBtn(tr('Resume'), 'project-resume', p.key, null, { primary: true }));
   if (!compact) {
     if (p.status !== 'planning') box.append(actBtn(tr('Back to planning'), 'project-plan', p.key));
@@ -1246,7 +1254,11 @@ function compactLane(p, tks, shown, nameRow, inPlace = false) {
   const stCol = el('div', 'bl-compact-status');
   const st = el('span', `bl-pstatus pst-${orphan ? 'orphan' : p.status}`, orphan ? tr('Orphaned') : PSTATE[p.status] || p.status);
   st.title = projState(p).title;
-  stCol.append(st); head.append(stCol);
+  stCol.append(st);
+  // a small pause (or resume) icon right by the status chip; pause asks first, since it stops running sessions
+  if (inPlace && p.status === 'executing') { const b = pauseBtn(p, '❚❚'); b.classList.add('bl-chip-act'); b.setAttribute('aria-label', tr('Pause')); stCol.append(b); }
+  if (inPlace && p.status === 'paused') { const b = actBtn('▶', 'project-resume', p.key, null, { title: tr('Resume') }); b.classList.add('bl-chip-act'); b.setAttribute('aria-label', tr('Resume')); stCol.append(b); }
+  head.append(stCol);
   const b2 = el('div', 'bl-lane-badges'); b2.append(...laneBadges(p).filter(b => !b.classList.contains('bl-pstate'))); head.append(b2);
   const counts = el('div', 'bl-compact-counts');
   for (const st of LANE_COLS) { const n = shown.filter(t => t.state === st).length; if (n) { const x = statePill(st); x.append(el('span', 'num', String(n))); counts.append(x); } }

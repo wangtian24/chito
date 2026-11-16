@@ -1716,3 +1716,10 @@ body.fx-full .sidebar, body.fx-full .topbar, body.fx-full #backlog .board-head, 
 body.fx-full .app { grid-template-columns: 1fr !important; }
 body.fx-full #backlog .board-inner { max-width: none; padding: var(--space-md) var(--space-lg); }
 body.fx-full .fx-chart { height: 220px; }
+
+.bl-compact-status { display: flex; align-items: center; gap: 4px; }
+.bl-chip-act { height: 22px; min-width: 22px; padding: 0 5px; font-size: 9px; letter-spacing: -1px; line-height: 1; border: 1px solid var(--color-rule-sheet); color: var(--color-muted); }
+.bl-chip-act:hover { color: var(--color-ink); }
+.bl-compact-status { position: relative; }
+.bl-chip-act.armed { position: absolute; z-index: 5; font-size: 11.5px; letter-spacing: 0; white-space: nowrap; box-shadow: 0 2px 8px color-mix(in srgb, var(--color-ink) 18%, transparent); }
+.bl-act.armed { color: var(--bl-failed); border-color: var(--bl-failed); background: color-mix(in srgb, var(--bl-failed) 10%, var(--color-sheet)); }
