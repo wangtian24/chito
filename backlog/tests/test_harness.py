@@ -119,3 +119,35 @@ class TldrAndRepoScopeTest(HarnessTest):
         meta["tldr_try"]["tries"] = 2
         self.c.execute("UPDATE tickets SET meta=? WHERE key='A-1'", (json.dumps(meta),))
         self.assertNotIn("A-1", [t["key"] for t, _ in self.bl["waiting_without_tldr"](self.c)])
+
+    def _gh(self, state):
+        from types import SimpleNamespace
+        return patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout=state + "\n"))
+
+    def _state(self):
+        return self.c.execute("SELECT state FROM tickets WHERE key='A-1'").fetchone()["state"]
+
+    def test_done_waits_for_pr_merge(self):
+        from argparse import Namespace
+        url = "PR https://github.com/o/r/pull/7 open"
+        self.c.execute("UPDATE tickets SET state='in_review', result=? WHERE key='A-1'", (url,))
+        approve = Namespace(key="A-1", state="done", reset=False, reason="from chito", force_merge=False)
+        with self._gh("OPEN"), self.assertRaises(SystemExit):
+            self.bl["cmd_move"](approve)
+        self.assertEqual(self._state(), "in_review")
+        with self._gh("OPEN"):   # worker's bl done on an in_review ticket stays with the human
+            self.bl["cmd_done"](Namespace(key="A-1", message=None, tldr=None, force=False, final=True, force_merge=False))
+        self.assertEqual(self._state(), "in_review")
+        with self._gh("MERGED"):
+            self.bl["cmd_move"](approve)
+        self.assertEqual(self._state(), "done")
+
+    def test_done_without_pr_or_forced(self):
+        from argparse import Namespace
+        self.c.execute("UPDATE tickets SET state='in_review', result='no PR, a doc' WHERE key='A-1'")
+        self.bl["cmd_move"](Namespace(key="A-1", state="done", reset=False, reason=None, force_merge=False))
+        self.assertEqual(self._state(), "done")
+        self.c.execute("UPDATE tickets SET state='in_review', result='https://github.com/o/r/pull/8' WHERE key='A-1'")
+        with self._gh("CLOSED"):
+            self.bl["cmd_move"](Namespace(key="A-1", state="done", reset=False, reason=None, force_merge=True))
+        self.assertEqual(self._state(), "done")

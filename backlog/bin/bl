@@ -800,12 +800,44 @@ def cmd_release(a):
         new = release_ticket(c, t, a.reason or "released")
     print(new)
 
+PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+
+def pr_state(repo, num):
+    """MERGED / OPEN / CLOSED, or None if gh can't tell (offline, no auth)."""
+    try:
+        r = subprocess.run(["gh", "pr", "view", num, "-R", repo, "--json", "state", "-q", ".state"],
+                           capture_output=True, text=True, timeout=8)
+        return r.stdout.strip() or None if r.returncode == 0 else None
+    except Exception:
+        return None
+
+def unmerged_prs(*texts):
+    """PRs named in a ticket's result that are not merged. A ticket isn't done until its PR is merged."""
+    seen, bad = set(), []
+    for repo, num in PR_URL.findall(" ".join(x for x in texts if x)):
+        if (repo, num) in seen:
+            continue
+        seen.add((repo, num))
+        st = pr_state(repo, num)
+        if st != "MERGED":
+            bad.append(f"{repo}#{num} ({(st or 'unknown').lower()})")
+    return bad
+
+def merge_gate(t, message=None, force=False):
+    """Refuse done while a linked PR is unmerged: the ticket stays with the human (in_review) instead."""
+    if force or os.environ.get("BL_SKIP_MERGE_GATE"):
+        return None
+    bad = unmerged_prs(message, t["result"])
+    return ("not merged: " + ", ".join(bad) + ". A ticket is done only once its PR is merged; merge it "
+            "(or close the PR and say why in the result), or pass --force-merge") if bad else None
+
 def review_policy(c, t):
     m = json.loads(t["meta"])
     return m.get("review") or setting(c, "review", t["project"], json.loads(t["labels"]))
 
 def cmd_done(a):
     c = connect()
+    gate = merge_gate(ticket(c, a.key), a.message, getattr(a, "force_merge", False))   # outside the write lock
     with tx(c):
         t = ticket(c, a.key)
         if t["state"] == "in_review":
@@ -814,14 +846,17 @@ def cmd_done(a):
             own_check(t, a)
             pol = "self" if a.final else review_policy(c, t)
             new = "done" if pol == "self" else "in_review"
+        gate = gate if new == "done" else None
+        if gate:
+            new = "in_review"
         tl = check_tldr(a.tldr) if a.tldr else None
         c.execute("UPDATE tickets SET state=?, result=coalesce(?, result), claimed_by=NULL, lease_until=NULL, updated=?, "
                   "finished=CASE WHEN ?='done' THEN ? ELSE finished END WHERE key=?",
                   (new, a.message, now(), new, now(), t["key"]))
         if tl or a.message:   # a new result replaces the old TL;DR (the daemon writes one if none was given)
             set_tldr(c, t["key"], tl, "worker")
-        note = ""
-        if new == "in_review" and review_policy(c, t) == "ask":
+        note = f" (needs you: {gate})" if gate else ""
+        if not gate and new == "in_review" and review_policy(c, t) == "ask":
             note = " (no review policy for this repo: needs a human to approve, or set one with `bl config project:"\
                    f"{t['project']} review self|pr`)"
         event(c, "state", t["key"], body=f"{t['state']} → {new}{note}" + (f": {a.message}" if a.message else ""))
@@ -853,6 +888,11 @@ def cmd_move(a):
     c = connect()
     if a.state not in STATES:
         die(f"state must be one of {STATES}")
+    if a.state == "done":
+        t = ticket(c, a.key)
+        gate = merge_gate(t, None, getattr(a, "force_merge", False))
+        if gate:
+            die(f"{t['key']} stays {t['state']}: {gate}")
     with tx(c):
         t = ticket(c, a.key)
         fin = now() if a.state in FINAL + ("failed",) else None
@@ -1232,6 +1272,10 @@ def cmd_brief_prompt(a):
 def cmd_resolve(a):
     """Close a human ticket with the human's decision (no claim needed)."""
     c = connect()
+    if a.state == "done":
+        gate = merge_gate(ticket(c, a.key), a.message, getattr(a, "force_merge", False))
+        if gate:
+            die(f"{a.key} stays open: {gate}")
     with tx(c):
         t = ticket(c, a.key)
         if t["state"] in FINAL:
@@ -2194,6 +2238,7 @@ def main():
     p = P("release", cmd_release); p.add_argument("key"); p.add_argument("--reason"); p.add_argument("--force", action="store_true")
     p = P("resolve", cmd_resolve); p.add_argument("key"); p.add_argument("-m", "--message")
     p.add_argument("--state", choices=["done", "canceled"], default="done"); p.add_argument("--force", action="store_true")
+    p.add_argument("--force-merge", dest="force_merge", action="store_true", help="mark done even though a linked PR is not merged")
     p = P("brief-prompt", cmd_brief_prompt); p.add_argument("key")
     p = P("tldr", cmd_tldr); p.add_argument("key"); p.add_argument("text", nargs="?", help="the TL;DR, - for stdin, '' to clear; none prints it")
     p.add_argument("--by")
@@ -2201,9 +2246,11 @@ def main():
     p.add_argument("--phase", choices=["preparing", "awaiting", "discussing"]); p.add_argument("--force", action="store_true")
     p = P("done", cmd_done); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--tldr", help="for the human, if it lands on them (review): " + TLDR_RULE); p.add_argument("--force", action="store_true")
     p.add_argument("--final", action="store_true", help="skip review: go straight to done")
+    p.add_argument("--force-merge", dest="force_merge", action="store_true", help="mark done even though a linked PR is not merged")
     p = P("fail", cmd_fail); p.add_argument("key"); p.add_argument("-m", "--message"); p.add_argument("--tldr", help="for the human: " + TLDR_RULE); p.add_argument("--force", action="store_true")
     p = P("comment", cmd_comment); p.add_argument("key"); p.add_argument("text", nargs="+")
     p = P("move", cmd_move); p.add_argument("key"); p.add_argument("state"); p.add_argument("--reason")
+    p.add_argument("--force-merge", dest="force_merge", action="store_true", help="mark done even though a linked PR is not merged")
     p.add_argument("--reset", action="store_true", help="with todo: reset attempts")
     p = P("set", cmd_set); p.add_argument("key"); p.add_argument("fields", nargs="+", help="field=value")
     p = P("config", cmd_config); p.add_argument("scope", help="global | MAP | project:MAP | repo:/path/to/repo | label:ui")
@@ -2235,6 +2282,7 @@ def main():
     # convenience aliases for states
     for st, alias in (("reopen", "todo"), ("cancel", "canceled"), ("approve", "done")):
         p = sp.add_parser(st); p.add_argument("key"); p.add_argument("--reason"); p.add_argument("--json", action="store_true")
+        p.add_argument("--force-merge", dest="force_merge", action="store_true", help="approve: mark done even though a linked PR is not merged")
         p.set_defaults(fn=lambda a, s=alias: (setattr(a, "state", s), setattr(a, "reset", s == "todo"), cmd_move(a)))
 
     a = ap.parse_args()
