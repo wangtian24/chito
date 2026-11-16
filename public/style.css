@@ -1723,3 +1723,13 @@ body.fx-full .fx-chart { height: 220px; }
 .bl-compact-status { position: relative; }
 .bl-chip-act.armed { position: absolute; z-index: 5; font-size: 11.5px; letter-spacing: 0; white-space: nowrap; box-shadow: 0 2px 8px color-mix(in srgb, var(--color-ink) 18%, transparent); }
 .bl-act.armed { color: var(--bl-failed); border-color: var(--bl-failed); background: color-mix(in srgb, var(--bl-failed) 10%, var(--color-sheet)); }
+
+/* Collapsed lanes: the same fixed columns in every project, so keys, models, workers, times and sessions line up
+   down the whole board (each lane is its own grid, so max-content columns used to differ per project). */
+.bl-compact-run { grid-template-columns: 18px 2.8rem minmax(0, 1fr) 8rem 6.5rem 2.8rem 15rem; }
+.bl-compact-run > .bl-compact-row > * { min-width: 0; }
+.bl-compact-row .bl-compact-model, .bl-compact-row .bl-compact-why, .bl-compact-row .bl-compact-exec { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bl-compact-row .bl-compact-since { text-align: right; }
+.bl-compact-head { grid-template-columns: minmax(0, 1fr) 8.5rem 8.5rem 19rem 180px; }
+.bl-chip-act { letter-spacing: 1.5px; font-size: 8px; padding: 0 4px 0 5.5px; }
+@media (max-width: 900px) { .bl-compact-run { grid-template-columns: 18px 2.8rem minmax(0, 1fr) 12rem; } }
