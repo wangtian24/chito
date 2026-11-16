@@ -147,3 +147,14 @@ test('search finds a ticket by key and Enter opens it; the session header links 
   await page.waitForSelector(`#session-tickets .session-ticket[href="/projects/${tk.project}/${tk.key}"]`);
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'session-tickets.png') });
 });
+
+test('Settings keeps its top edge when switching tabs of different heights', { skip }, async () => {
+  await page.goto(BASE + '/');
+  await page.click('#b-settings');
+  const tops = new Set();
+  for (const tab of await page.locator('#settings .tab').all()) {
+    await tab.click();
+    tops.add(Math.round(await page.locator('#settings .modal-card').evaluate(c => c.getBoundingClientRect().top)));
+  }
+  assert.equal(tops.size, 1, `card top moved between tabs: ${[...tops]}`);
+});

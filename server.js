@@ -52,7 +52,7 @@ function blArgs(b) {
     case 'daemon-pause': case 'daemon-resume': return ['daemon', action.slice(7)];
     case 'quota-clear': return key == null ? ['quota', 'clear'] : k && ['config', k, 'quota_until', '""'];
     case 'ticket-reopen': case 'ticket-cancel': case 'ticket-approve': return k && [action.slice(7), k, '--reason', 'from chito'];
-    case 'ticket-resolve': return k && ['resolve', k];
+    case 'ticket-resolve': return k && ['resolve', k, ...(typeof value === 'string' && value.trim() ? ['-m', value.trim().slice(0, 8000)] : [])];
     case 'ticket-approved': return k && ['set', k, `meta.approved=${JSON.stringify({ at: new Date().toISOString(), by: 'human', via: 'chito', notes: typeof value === 'string' ? value.slice(0, 8000) : '' })}`];
     case 'ticket-comment': return k && typeof value === 'string' && value.trim() && value.length <= 8000 && ['comment', k, value.trim()];
     case 'project-instructions': {
