@@ -842,7 +842,25 @@ function roadmap(p) {
   const ms = (bl.data.milestones || []).filter(m => m.project === p.key && (ui.closed === 'all' || m.status !== 'canceled'));
   if (!ms.length) return null;
   const wrap = el('div', 'bl-roadmap');
+  // Dismissed milestones fold into small chips at the start of the strip (remembered in this browser); a chip
+  // click brings the card back.
+  const dis = new Set(store.get('blMsDismissed', []));
+  const setDis = (key, on) => { const d = new Set(store.get('blMsDismissed', [])); on ? d.add(key) : d.delete(key); store.set('blMsDismissed', [...d]); renderBacklog(); };
+  const folded = ms.filter(m => dis.has(m.key));
+  if (folded.length) {
+    const tray = el('div', 'bl-ms-tray');
+    tray.append(el('span', 'bl-ms-tray-cap', trp(folded.length, '{n} dismissed', '{n} dismissed')));
+    for (const m of folded) {
+      const chip = el('button', `bl-ms-fold ms-${m.status}`); chip.type = 'button';
+      chip.title = tr('{title}: show this milestone again', { title: m.title });
+      chip.append(el('span', 'num', m.key.slice(p.key.length + 1)), el('span', `bl-ms-dot ms-${m.status}`), el('span', 'bl-ms-fold-t', m.title));
+      chip.addEventListener('click', () => setDis(m.key, false));
+      tray.append(chip);
+    }
+    wrap.append(tray);
+  }
   for (const m of ms) {
+    if (dis.has(m.key)) continue;
     const tks = msTickets(m);
     const card = el('div', `bl-ms ms-${m.status}${ui.milestone === m.key ? ' on' : ''}`);
     card.setAttribute('role', 'button'); card.tabIndex = 0;
@@ -852,6 +870,10 @@ function roadmap(p) {
     const top = el('div', 'bl-ms-top');
     top.append(el('span', 'num bl-ms-key', m.key.slice(p.key.length + 1)), el('span', `bl-ms-state ms-${m.status}`, MS_LABEL[m.status] || m.status));
     if (m.due) { const due = el('span', 'bl-ms-due', tr('due {date}', { date: m.due })); if (m.due < new Date().toISOString().slice(0, 10) && !['reached', 'showcased'].includes(m.status)) due.classList.add('late'); top.append(due); }
+    const x = el('button', 'bl-ms-x', '×'); x.type = 'button';
+    x.title = tr('Dismiss: fold this milestone into a small chip'); x.setAttribute('aria-label', tr('Dismiss milestone'));
+    x.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (ui.milestone === m.key) ui.milestone = null; setDis(m.key, true); });
+    top.append(x);
     card.append(top, el('div', 'bl-ms-title', m.title));
     const meta = el('div', 'bl-ms-meta'); meta.append(el('span', null, msTrigger(m)));
     // When it was reached: '3h ago', the exact time on hover.
