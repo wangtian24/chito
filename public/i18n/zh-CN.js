@@ -595,7 +595,6 @@ export default {
   "Starting…": "正在启动…",
   "Deploy started. Tests take about 10 minutes; the result posts to Slack.": "部署已启动。测试约需 10 分钟，结果会发到 Slack。",
   "Could not start the deploy: {err}": "无法启动部署：{err}",
-  "merges deploy at scheduled hours or when you press Deploy": "合并会在计划时间或你点击部署时上线",
   "Fetch main and the release tags again": "重新拉取 main 和发布标签",
   "Live": "线上",
   "deployed {ago}": "{ago}部署",
@@ -643,4 +642,7 @@ export default {
   "Hide the sidebar": "隐藏侧边栏",
   "Show the sidebar ([)": "显示侧边栏 ([)",
   "Hide or show the sidebar (a strip of icons stays)": "隐藏或显示侧边栏（保留一列图标）",
+  "checks every hour and deploys only when main has something new; or press Deploy": "每小时检查一次，main 有新内容时才部署；也可点击部署",
+  "checks on a schedule ({when}) and deploys only when main has something new; or press Deploy": "按计划检查（{when}），main 有新内容时才部署；也可点击部署",
+  "deploys when you press Deploy": "点击部署时上线",
 };
