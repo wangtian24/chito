@@ -151,3 +151,10 @@ class TldrAndRepoScopeTest(HarnessTest):
         with self._gh("CLOSED"):
             self.bl["cmd_move"](Namespace(key="A-1", state="done", reset=False, reason=None, force_merge=True))
         self.assertEqual(self._state(), "done")
+
+    def test_project_cap_unlimited_by_default(self):
+        self.assertIsNone(self.bl["project_cap"](self.c, "A"))
+        self.c.execute("INSERT INTO settings VALUES('project:A','max_parallel','2')")
+        self.assertEqual(self.bl["project_cap"](self.c, "A"), 2)
+        self.c.execute("UPDATE settings SET value='0' WHERE scope='project:A' AND key='max_parallel'")
+        self.assertIsNone(self.bl["project_cap"](self.c, "A"))
