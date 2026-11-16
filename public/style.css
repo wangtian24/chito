@@ -1600,3 +1600,4 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-proj-boxes > .bl-instr { margin: 0; min-width: 0; }
 @media (max-width: 760px) { .bl-proj-boxes { grid-template-columns: 1fr; } }
 .bl-h2-count { font: 400 13px var(--font-body); color: var(--color-muted); }
+.catchup-link { text-decoration: none; }

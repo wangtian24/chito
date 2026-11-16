@@ -41,7 +41,7 @@
         <button class="btn icon" id="b-settings" title="Settings (,)" aria-label="Settings" data-i18n-attr="title aria-label"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
       <nav class="views" aria-label="Views">
-        <a class="view-tab" href="/" data-view="sessions"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg><span data-i18n>Sessions</span> <span class="num view-count" id="count"></span></a>
+        <a class="view-tab" href="/catchup" data-view="sessions"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg><span data-i18n>Sessions</span> <span class="num view-count" id="count"></span></a>
         <a class="view-tab" href="/artifacts" data-view="artifacts"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8v8M18 16V9a2 2 0 0 0-2-2h-4M14 4.5 11.5 7 14 9.5"/></svg><span data-i18n>Artifacts</span> <span class="num view-count" id="art-count"></span></a>
         <a class="view-tab" href="/projects" data-view="backlog"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.5 4v16M14.5 4v16M5.5 8h2.5M11 8h2M11 11.5h2M16 8h2.5"/></svg><span data-i18n>Projects</span> <span class="num view-count" id="bl-count"></span></a>
         <a class="view-tab" href="/deploy" data-view="deploy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="M12 7v3M12 14v3"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg><span data-i18n>Deployment</span> <span class="num view-count" id="dp-count" title="Merges waiting to deploy" data-i18n-attr="title"></span></a>
@@ -58,6 +58,7 @@
           <option value="pi">Pi</option>
           <option value="codex">Codex</option>
         </select>
+        <a class="btn catchup-link" id="catchup-link" href="/catchup" title="Unread sessions since you last looked" data-i18n-attr="title"><span data-i18n>Catch up</span></a>
         <span class="filters-spacer"></span>
         <button class="btn icon help-btn" id="help-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" data-i18n-attr="title aria-label">?</button>
       </div>

@@ -291,7 +291,7 @@ function head(title, sub, extra) {
   return h;
 }
 
-function controls(withSearch = true) {
+function controls(withSearch = true, withFinished = true) {
   const row = el('div', 'board-controls');
   if (withSearch) {
     const box = el('div', 'search board-search');
@@ -303,7 +303,7 @@ function controls(withSearch = true) {
     row.append(box);
   }
   const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup');
-  for (const [v, label, tip] of [['none', tr('Open|tickets'), tr('Open tickets only')], ['recent', tr('+ 24h'), tr('Open, plus tickets closed in the last 24 hours')], ['all', tr('All'), tr('Every ticket, however old')], ['finished', tr('Finished'), tr('Only tickets finished (done, canceled or failed) in the last 7 days, across all projects, newest first')]]) {
+  for (const [v, label, tip] of [['none', tr('Open|tickets'), tr('Open tickets only')], ['recent', tr('+ 24h'), tr('Open, plus tickets closed in the last 24 hours')], ['all', tr('All'), tr('Every ticket, however old')], ...(withFinished ? [['finished', tr('Finished'), tr('Only tickets finished (done, canceled or failed) in the last 7 days, across all projects, newest first')]] : [])]) {
     const b = el('button', null, label); b.setAttribute('aria-checked', String(ui.closed === v)); b.title = tip;
     b.addEventListener('click', () => { setClosed(v); renderBacklog(); });
     seg.append(b);
@@ -1154,7 +1154,8 @@ function renderLanes(root) {
     root.append(el('h2', 'bl-h2', tr('Open projects')), openProjects(projects, all));
     return;
   }
-  const ctl = controls();
+  if (finishedMode()) setClosed('none');   // the Projects tab has no Finished view (it lives on the Tickets tab)
+  const ctl = controls(true, false);
   projects = sortProjects(projects, all);
   if (!finishedMode()) ctl.append(projSortControl());
   const visible = projects.map(p => p.key);

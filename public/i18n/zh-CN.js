@@ -307,6 +307,7 @@ export default {
   "{title}: give the orchestrator general instructions for this project here": "{title}：在这里给编排器下达这个项目的总体指示",
   "Standing instructions": "长期指示",
   "Project area": "项目区",
+  "Unread sessions since you last looked": "上次查看后的未读会话",
   "({n} tickets, {open} open, {wip} in progress)": "（{n} 个工单，{open} 个未完成，{wip} 个进行中）",
   " memory and messages every worker in this project sees (bl area {key})": " 本项目每个工作进程都能看到的记忆和消息（bl area {key}）",
   "No project memory yet.": "还没有项目记忆。",

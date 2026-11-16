@@ -287,7 +287,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(301, { location: '/projects' + p.slice('/backlog'.length) + url.search });
       return res.end();
     }
-    if (p === '/' || p.startsWith('/s/') || p === '/artifacts' || p === '/deploy' || p === '/projects' || p.startsWith('/projects/')) {
+    if (p === '/' || p === '/catchup' || p.startsWith('/s/') || p === '/artifacts' || p === '/deploy' || p === '/projects' || p.startsWith('/projects/')) {
       return send(res, 200, fs.readFileSync(path.join(ROOT, 'public/index.html')), 'text/html; charset=utf-8');
     }
     if (STATIC[p]) {
