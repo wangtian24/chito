@@ -152,6 +152,11 @@ bl status
 
 Machine-specific conventions go in `~/.backlog/LOCAL.md`, which the skills read first: where design docs live, which repos may self-merge (`review self`) and which need PR review, and how to notify you.
 
+## How the backlog keeps agents in line
+
+Simple mode, the project area, pause and resume, speculation (stacked branches), parking (a merge queue), main
+health, and the local test gate and watchdog are all on one page: [backlog/docs/mechanisms.md](backlog/docs/mechanisms.md).
+
 ## Setting it up with an AI agent
 
 See [SETUP.md](SETUP.md): step-by-step instructions written for agents (check, install, verify, personalize,
