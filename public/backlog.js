@@ -66,15 +66,12 @@ function sortProjects(projects, all) {
   return [...projects].sort(cmp);
 }
 function projSortControl() {
-  const wrap = el('div', 'bl-proj-sort');
+  const wrap = el('label', 'bl-proj-sort');
   wrap.append(el('span', 'bl-cap', tr('Sort')));
-  const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', tr('Sort projects'));
-  for (const [k, label] of PROJ_SORTS) {
-    const b = el('button', null, label); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(ui.projSort === k));
-    b.addEventListener('click', () => { ui.projSort = k; store.set('blLaneSort', k); renderBacklog(); });
-    seg.append(b);
-  }
-  wrap.append(seg);
+  const s = el('select'); s.setAttribute('aria-label', tr('Sort projects'));
+  for (const [k, label] of PROJ_SORTS) { const o = el('option', null, label); o.value = k; if (ui.projSort === k) o.selected = true; s.append(o); }
+  s.addEventListener('change', () => { ui.projSort = s.value; store.set('blLaneSort', s.value); renderBacklog(); });
+  wrap.append(s);
   return wrap;
 }
 // What a collapsed lane lists under its project row: tickets in flight, ones that need you, failed ones. All on by default.
@@ -1071,8 +1068,13 @@ function needsYouPanel(tks) {
 // ---- swim lanes ----
 const LANE_COLS = ['backlog', 'todo', 'in_progress', 'in_review', 'failed', 'done'];
 
+// 'needs-you' (red), or 'needs-you dismissed' (lighter red) once dismissed from the Waiting on you panel.
+function needsCls(t) {
+  if (!needsYou(t)) return '';
+  return dismissedMap()[t.key] === needSig(t) ? ' needs-you dismissed' : ' needs-you';
+}
 function card(t, inPlace = false) {
-  const c = el('a', `bl-card bl-${t.state}${isBlocked(t) ? ' blocked' : ''}${needsYou(t) ? ' needs-you' : ''}${inPlace && queryTicket() === t.key ? ' sel' : ''}`);
+  const c = el('a', `bl-card bl-${t.state}${isBlocked(t) ? ' blocked' : ''}${needsCls(t)}${inPlace && queryTicket() === t.key ? ' sel' : ''}`);
   linkTo(c, openPath(t));
   const top = el('div', 'bl-card-top');
   const kk = el('span', 'bl-key num', t.key.slice(t.project.length + 1)); kk.title = t.key;
@@ -1600,7 +1602,7 @@ function table(tks, all = false) {
   // Tree gutter: each title has a node dot; lines run between dots, left of the text, so they never cross it.
   const STEP = 18, PAD = 8, DOT = 5, TEXT = 16, MAXD = 8;
   for (const t of rows) {
-    const r = el('tr', `bl-${t.state}${openKey === t.key ? ' sel' : ''}${needsYou(t) ? ' needs-you' : ''}`); r.dataset.key = t.key;
+    const r = el('tr', `bl-${t.state}${openKey === t.key ? ' sel' : ''}${needsCls(t)}`); r.dataset.key = t.key;
     r.addEventListener('click', e => { if (e.target.closest('a')) return; go(openPath(t)); });
     bl.rowOrder.push(t);
     // Cells are built by column id and laid out in the columns' order (so a tab can reorder or hide them).
