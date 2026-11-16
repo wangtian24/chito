@@ -9,7 +9,7 @@ import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
 import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, searchTickets } from './lib/backlog.js';
 import { workerModel } from './lib/worker-models.js';
-import { deploySummary, triggerDeploy } from './lib/deploy.js';
+import { deploySummary, triggerDeploy, startDeployBackup } from './lib/deploy.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CHITO_PORT || 8791);
@@ -398,3 +398,5 @@ const t0 = Date.now();
 const n = scan(true).length;
 console.log(`[chito] indexed ${n} sessions in ${Date.now() - t0}ms from ${PROJECTS_DIR}`);
 server.listen(PORT, HOST, () => console.log(`[chito] http://localhost:${PORT}`));
+// Only the long-running instance on the default port backs up the deploy schedule (not test servers on other ports).
+if (PORT === 8791 || process.env.CHITO_DEPLOY_BACKUP === '1') startDeployBackup();
