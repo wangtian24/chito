@@ -1642,7 +1642,6 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
   background: color-mix(in srgb, var(--fx-proj) 10%, var(--color-sheet)); transition: transform .15s ease, box-shadow .15s ease; }
 .fx-slot:hover { transform: translateY(-2px); box-shadow: 0 4px 14px color-mix(in srgb, var(--fx-proj) 30%, transparent); }
 .fx-slot:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
-.fx-slot::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--fx-proj) 18%, transparent) 50%, transparent 70%); transform: translateX(-100%); animation: fx-shimmer 3.2s ease-in-out infinite; pointer-events: none; }
 .fx-slot-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .fx-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--fx-proj); box-shadow: 0 0 0 0 var(--fx-proj); animation: fx-pulse 1.8s ease-out infinite; }
 .fx-proj { font-size: 11.5px; font-weight: 600; color: color-mix(in srgb, var(--fx-proj) 80%, var(--color-ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1652,16 +1651,14 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .fx-slot-foot { margin-top: auto; display: flex; gap: 8px; font-size: 11.5px; color: var(--color-muted); }
 .fx-slot-foot b { margin-left: auto; color: var(--color-ink); }
 .fx-slot.idle { align-items: center; justify-content: center; border: 1.5px dashed var(--color-rule); background: transparent; }
-.fx-slot.idle::after { display: none; }
 .fx-slot-n { position: absolute; top: 6px; left: 8px; font-size: 11px; color: var(--color-muted); }
 .fx-idle { font: 500 12px var(--font-display); color: var(--color-muted); letter-spacing: .02em; }
 @keyframes fx-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fx-proj) 60%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-@keyframes fx-shimmer { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(100%); } }
 @keyframes fx-belt { to { background-position: 20px 0; } }
 @keyframes fx-spin { to { transform: rotate(360deg); } }
 @media (max-width: 1100px) { .fx-top { grid-template-columns: repeat(3, minmax(0, 1fr)); } .fx-floor { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 620px) { .fx-top { grid-template-columns: 1fr 1fr; } .fx-floor { grid-template-columns: 1fr 1fr; } }
-@media (prefers-reduced-motion: reduce) { .fx-dot, .fx-slot::after, .fx-gauge::after, .fx-floor::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .fx-dot, .fx-gauge::after, .fx-floor::before { animation: none; } }
 
 /* the hamster wheel */
 .fx-hamster { position: absolute; right: 4px; bottom: 24px; width: 58px; height: 60px; opacity: .95; pointer-events: none; }
