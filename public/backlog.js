@@ -176,8 +176,17 @@ function linkTo(a, path) {
 }
 const projPath = p => `/projects/${encodeURIComponent(p)}`;
 const ticketPath = t => `/projects/${encodeURIComponent(t.project)}/${encodeURIComponent(t.key)}`;
-// On the Projects tab a ticket opens in the side panel right there (?ticket=KEY), without going into its project.
+// A ticket always opens in the side panel over the page you're on: ?ticket=KEY on any Projects page, or the
+// /projects/P/KEY form when you're already on project P (and on a P/KEY page, swapping the key). Nothing moves.
 const inPlacePath = t => { const u = new URL(location.href); u.searchParams.set('ticket', t.key); return u.pathname + u.search; };
+function openPath(t) {
+  const r = parseBacklogPath(location.pathname) || {};
+  if (r.project && r.project.toUpperCase() === t.project) {
+    const u = new URL(location.href); u.searchParams.delete('ticket');
+    return ticketPath(t) + u.search;
+  }
+  return inPlacePath(t);
+}
 const queryTicket = () => new URLSearchParams(location.search).get('ticket');
 
 function sessionLink(s, label) {
@@ -197,6 +206,11 @@ function sessionLink(s, label) {
 export function renderBacklog() {
   const root = $('#backlog-inner');
   if (!root) return;
+  // Re-rendering empties the page for a moment, which would reset the scroll; keep it so opening a panel never moves the page.
+  const scroller = $('#backlog'), y = scroller ? scroller.scrollTop : 0;
+  try { renderBacklogInner(root); } finally { if (scroller) scroller.scrollTop = y; }
+}
+function renderBacklogInner(root) {
   const route = parseBacklogPath(location.pathname) || {};
   root.textContent = '';
   if (bl.error) { root.append(el('div', 'board-status', tr('Could not load the backlog: {error}', { error: bl.error }))); return; }
@@ -212,7 +226,7 @@ export function renderBacklog() {
   if (route.project && !project) { root.append(head(tr('Projects'), ''), el('div', 'prs-empty', tr('No project {key}.', { key: route.project }))); }
   else if (project) { document.title = `${project.key} · ${tr('Projects')} · chito`; renderProject(root, project); }
   else { document.title = `${tr('Projects')} · chito`; renderLanes(root); }
-  const inPlace = !route.project && queryTicket();
+  const inPlace = queryTicket();
   renderDrawer(route.ticket ? route.ticket.toUpperCase() : inPlace ? inPlace.toUpperCase() : null);
 }
 
@@ -531,7 +545,7 @@ function inFlight(tks) {
   const wrap = el('div', 'bl-flight');
   if (!rows.length) { wrap.append(el('div', 'bl-flight-empty', tr('Nothing running right now.'))); return wrap; }
   for (const t of rows) {
-    const r = linkTo(el('a', 'bl-flight-row'), ticketPath(t));
+    const r = linkTo(el('a', 'bl-flight-row'), openPath(t));
     const [ex, cls] = executorOf(t);
     const since = t.spawn?.at || t.started;
     const sess = workerSession(t);
@@ -750,7 +764,7 @@ function roadmap(p) {
     if (m.showcases?.length) card.append(showcaseItems(m));
     else if (m.showcase_ticket) {
       const st = bl.byKey.get(m.showcase_ticket);
-      if (st) { const l = linkTo(el('a', 'bl-ms-st'), ticketPath(st)); l.append(stateIcon(st.state), el('span', null, tr('Showcase {key}: {state}', { key: st.key.slice(p.key.length + 1), state: lang === 'zh' ? LABEL[st.state] : LABEL[st.state].toLowerCase() }))); card.append(l); }
+      if (st) { const l = linkTo(el('a', 'bl-ms-st'), openPath(st)); l.append(stateIcon(st.state), el('span', null, tr('Showcase {key}: {state}', { key: st.key.slice(p.key.length + 1), state: lang === 'zh' ? LABEL[st.state] : LABEL[st.state].toLowerCase() }))); card.append(l); }
     }
     wrap.append(card);
   }
@@ -796,8 +810,7 @@ async function openInTerminal(id) {
     ctx.toast(j.action === 'focused' ? tr('Focused its terminal') : j.action === 'forked' ? tr('Still running in the background, so this opened a forked copy; the running session will not see what you type there') : tr('Opened in a terminal'));
   } catch (e) { ctx.toast(tr('Could not open: {error}', { error: e.message })); }
 }
-// The TL;DR the human reads first (bl done/fail --tldr, the handoff's tldr, or one the daemon wrote), and the
-// handoff's pictures: the user reads pictures and mocks, not long text.
+// The handoff's pictures (screenshots, mocks): the user reads pictures, not long text. The TL;DR shows atop the panel.
 const picSrc = p => (p.url && /^https?:\/\//i.test(p.url)) ? p.url : p.file ? `/api/backlog/showcase?f=${encodeURIComponent(p.file)}` : '';
 function pics(list, cls) {
   const ps = (list || []).filter(p => p && picSrc(p));
@@ -810,17 +823,6 @@ function pics(list, cls) {
     if (cls === 'bl-ho-pics' && p.caption) { const f = el('figure'); f.append(a, el('figcaption', null, p.caption)); strip.append(f); } else strip.append(a);
   }
   return strip;
-}
-function tldrBlock(t, cls) {
-  const tl = t.meta?.tldr?.text;
-  const pk = t.meta?.handoff?.packet;
-  if (!tl && !pk?.summary && !pk?.pics?.length) return null;
-  const box = el('div', cls);
-  if (tl) box.append(md(tl));
-  else if (pk?.summary) box.append(Object.assign(el('p', 'bl-tldr-fallback', pk.summary), { title: tr('No TL;DR yet; this is the full summary') }));
-  const strip = pics(pk?.pics, 'bl-tldr-pics');
-  if (strip) box.append(strip);
-  return box;
 }
 
 // '· created 3h ago', the exact time on hover.
@@ -841,14 +843,14 @@ function needsYouPanel(tks) {
   box.append(h);
   for (const t of items) {
     const row = el('div', 'bl-needs-row');
-    const title = linkTo(el('a', 'bl-needs-title'), ticketPath(t));
+    const title = linkTo(el('a', 'bl-needs-title'), openPath(t));
     title.append(el('span', 'num', t.key), el('span', null, t.title));
     const why = el('span', 'bl-needs-why', needReason(t));
     if (t.created) why.append(ago(t.created));
     const act = el('div', 'bl-needs-act');
     const b = t.meta?.brief;
     const sess = answerSession(t);
-    if (t.meta?.handoff?.packet) act.append(linkTo(el('a', 'btn primary bl-open-handoff', tr('Open handoff')), ticketPath(t)));
+    if (t.meta?.handoff?.packet) act.append(linkTo(el('a', 'btn primary bl-open-handoff', tr('Open handoff')), openPath(t)));
     else if (b?.pending) act.append(el('span', 'bl-needs-pending', tr('Preparing a briefing')));
     if (sess) {
       const open = sessionLink(sess, sess.kind === 'Briefing' ? tr('Read the briefing') : SESS_KIND[sess.kind] || sess.kind);
@@ -860,8 +862,6 @@ function needsYouPanel(tks) {
     if (b?.error) act.append(el('span', 'bl-needs-pending', tr('Briefing failed; the daemon retries after a restart')));
     if (t.meta?.handoff?.phase) row.classList.add(`ph-${t.meta.handoff.phase}`);
     row.append(title, why, act);
-    const tl = tldrBlock(t, 'bl-needs-tldr');
-    if (tl) row.append(tl);
     box.append(row);
   }
   for (const m of ms) {
@@ -882,7 +882,7 @@ const LANE_COLS = ['backlog', 'todo', 'in_progress', 'in_review', 'failed', 'don
 
 function card(t, inPlace = false) {
   const c = el('a', `bl-card bl-${t.state}${isBlocked(t) ? ' blocked' : ''}${needsYou(t) ? ' needs-you' : ''}${inPlace && queryTicket() === t.key ? ' sel' : ''}`);
-  linkTo(c, inPlace ? inPlacePath(t) : ticketPath(t));
+  linkTo(c, openPath(t));
   const top = el('div', 'bl-card-top');
   const kk = el('span', 'bl-key num', t.key.slice(t.project.length + 1)); kk.title = t.key;
   top.append(stateIcon(t.state), kk);
@@ -1096,7 +1096,7 @@ function waitRow(t, p, kind) {
 }
 // An in-flight ticket: key, title, the worker's model and executor, how long it has run, and its session.
 function flightRow(t, p, inPlace = false) {
-  const r = linkTo(el('a', `bl-compact-row${inPlace && queryTicket() === t.key ? ' sel' : ''}`), inPlace ? inPlacePath(t) : ticketPath(t));
+  const r = linkTo(el('a', `bl-compact-row${inPlace && queryTicket() === t.key ? ' sel' : ''}`), openPath(t));
   const [ex] = executorOf(t);
   const since = t.spawn?.at || t.started;
   const model = el('span', 'bl-compact-model', t.spawn?.model || t.meta?.model || '');
@@ -1239,7 +1239,7 @@ function graph(tks, big = false) {
   const layer = el('div', 'bl-nodes'); layer.style.width = width + 'px'; layer.style.height = height + 'px';
   for (const t of shown) {
     const p = pos.get(t.key);
-    const n = linkTo(el('a', `bl-node bl-${t.state}${isReady(t) ? ' ready' : ''}${bl.ticketKey === t.key ? ' sel' : ''}`), ticketPath(t));
+    const n = linkTo(el('a', `bl-node bl-${t.state}${isReady(t) ? ' ready' : ''}${bl.ticketKey === t.key ? ' sel' : ''}`), openPath(t));
     n.style.left = p.x + 'px'; n.style.top = p.y + 'px'; n.style.width = W + 'px'; n.style.height = H + 'px';
     n.title = `${t.key} · ${LABEL[t.state]}${isReady(t) ? ' · ' + tr('ready') : ''}\n${t.title}`;
     const top = el('div', 'bl-node-top'); top.append(stateIcon(t.state), el('span', 'num', t.project === tks[0].project ? t.key.slice(t.project.length + 1) : t.key));
@@ -1317,7 +1317,7 @@ function cmp(a, b) {
 function depChip(k, proj = bl.byKey.get(bl.ticketKey || '')?.project) {
   const t = bl.byKey.get(k);
   if (!t) return el('span', 'bl-chip', k);
-  const c = linkTo(el('a', `bl-chip bl-${t.state}`), ticketPath(t)); c.title = `${t.title} · ${LABEL[t.state]}`;
+  const c = linkTo(el('a', `bl-chip bl-${t.state}`), openPath(t)); c.title = `${t.title} · ${LABEL[t.state]}`;
   c.append(stateIcon(t.state), el('span', 'num', t.project === proj ? k.slice(t.project.length + 1) : k));
   if (FINAL.has(t.state)) c.classList.add('met');
   return c;
@@ -1374,11 +1374,11 @@ function table(tks) {
   const STEP = 18, PAD = 8, DOT = 5, TEXT = 16, MAXD = 8;
   for (const t of rows) {
     const r = el('tr', `bl-${t.state}${openKey === t.key ? ' sel' : ''}${needsYou(t) ? ' needs-you' : ''}`); r.dataset.key = t.key;
-    r.addEventListener('click', e => { if (e.target.closest('a')) return; go(ticketPath(t)); });
+    r.addEventListener('click', e => { if (e.target.closest('a')) return; go(openPath(t)); });
     bl.rowOrder.push(t);
     const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); r.append(c); return c; };
     if (on('order')) td('c-order num', String(bl.order.get(t.key) - Math.min(...tks.map(x => bl.order.get(x.key))) + 1));
-    const kl = linkTo(el('a', null, fin ? t.key : t.key.slice(t.project.length + 1)), ticketPath(t)); kl.title = t.key;
+    const kl = linkTo(el('a', null, fin ? t.key : t.key.slice(t.project.length + 1)), openPath(t)); kl.title = t.key;
     td('c-key num', kl);
     const ttl = el('div', 'bl-tt');
     // A blocked ticket has nothing to open yet: its title is plain text.
@@ -1465,7 +1465,7 @@ function closeBtn() {
 export function closeDrawer() {
   const r = parseBacklogPath(location.pathname);
   if (r?.ticket) { go(projPath(r.project)); return true; }
-  if (r && !r.project && queryTicket()) { const u = new URL(location.href); u.searchParams.delete('ticket'); go(u.pathname + u.search); return true; }
+  if (r && queryTicket()) { const u = new URL(location.href); u.searchParams.delete('ticket'); go(u.pathname + u.search); return true; }
   return false;
 }
 
@@ -1587,7 +1587,7 @@ export function initBacklog(c) {
     const next = order[i < 0 ? 0 : i + (e.key === 'ArrowRight' ? 1 : -1)];
     if (!next) return;
     e.preventDefault();
-    go(ticketPath(next));
+    go(openPath(next));
     document.querySelector(`.bl-table tr[data-key="${CSS.escape(next.key)}"]`)?.scrollIntoView({ block: 'nearest' });
   });
   document.addEventListener('click', e => {
