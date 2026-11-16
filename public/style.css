@@ -1595,3 +1595,9 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-area-list li { display: flex; align-items: baseline; gap: var(--space-sm); padding: var(--space-xs) 0; border-top: 1px solid var(--color-rule-sheet); }
 .bl-area-body { flex: 1; min-width: 0; font: 400 13px/1.45 var(--font-body); color: var(--color-ink); overflow-wrap: anywhere; }
 .bl-area-meta { flex: none; font-size: 12px; color: var(--color-muted); }
+/* Standing instructions and the project area: collapsed, side by side (stacked on narrow screens). */
+.bl-proj-boxes { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); align-items: start; margin: 0 0 var(--space-md); }
+.bl-proj-boxes > .bl-instr { margin: 0; min-width: 0; }
+@media (max-width: 760px) { .bl-proj-boxes { grid-template-columns: 1fr; } }
+.bl-h2-count { font: 400 13px var(--font-body); color: var(--color-muted); }
+.catchup-link { text-decoration: none; }

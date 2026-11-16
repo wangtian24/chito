@@ -1283,7 +1283,7 @@ $('#board-refresh').addEventListener('click', async () => { toast(t('Refreshing 
 document.querySelectorAll('.views .view-tab').forEach(t => t.addEventListener('click', e => {
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
-  const path = { artifacts: '/artifacts', backlog: '/projects', deploy: '/deploy' }[t.dataset.view] || '/';
+  const path = { artifacts: '/artifacts', backlog: '/projects', deploy: '/deploy' }[t.dataset.view] || '/catchup';
   if (location.pathname !== path) history.pushState({}, '', path);
   route();
 }));
@@ -1407,8 +1407,8 @@ document.addEventListener('keydown', e => {
     '/': () => { const box = state.view === 'artifacts' ? $('#bq') : state.view === 'backlog' ? ($('#blq') || $('#q')) : $('#q'); box.focus(); box.select(); },
     '?': () => openSettings('keyboard'),
     ',': () => openSettings(),
-    P: () => { const path = state.view === 'artifacts' ? '/' : '/artifacts'; history.pushState({}, '', path); route(); },
-    B: () => { const path = state.view === 'backlog' ? '/' : '/projects'; history.pushState({}, '', path); route(); },
+    P: () => { const path = state.view === 'artifacts' ? '/catchup' : '/artifacts'; history.pushState({}, '', path); route(); },
+    B: () => { const path = state.view === 'backlog' ? '/catchup' : '/projects'; history.pushState({}, '', path); route(); },
     f: () => togglePin(),
     j: () => moveCursor(1),
     k: () => moveCursor(-1),
@@ -1481,6 +1481,12 @@ $('#home').addEventListener('click', e => {
   if (location.pathname !== '/') history.pushState({}, '', '/' + location.search);
   route();
 });
+$('#catchup-link').addEventListener('click', e => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+  e.preventDefault();
+  if (location.pathname !== '/catchup') history.pushState({}, '', '/catchup');
+  route();
+});
 $('#settings-close').addEventListener('click', closeSettings);
 $('#settings').addEventListener('click', e => { if (e.target.id === 'settings') closeSettings(); });
 document.querySelectorAll('#settings .tab').forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
@@ -1512,6 +1518,8 @@ document.addEventListener('click', e => {
 });
 
 function route() {
+  // chito lands on Projects; the Catch up page (unread sessions) lives at /catchup.
+  if (location.pathname === '/') history.replaceState({}, '', '/projects' + location.search);
   const m = location.pathname.match(/^\/s\/([0-9a-f-]{36})/i);
   const artifacts = location.pathname === '/artifacts';
   const backlog = !!parseBacklogPath(location.pathname);
