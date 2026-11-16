@@ -2113,7 +2113,7 @@ def cmd_daemon(a):
               f"{'' if d['enabled'] else ' · PAUSED'} · heartbeat {d['heartbeat']} · {d['workers']} workers · "
               f"{d['runs_today']}/{setting(c, 'daemon_max_runs_per_day')} runs today · in flight {d['in_flight']}/{setting(c, 'global_max_parallel')}")
         for r in rows:
-            print(f"  {r['key']:20} {r['claimed_by']:34} since {r['started']}  {r['title'][:60]}")
+            print(f"  {r['key']:20} {r['claimed_by'] or '(by hand, no claim)':34} since {r['started']}  {r['title'][:60]}")
         return
     if a.action in ("pause", "resume"):
         with tx(c):
