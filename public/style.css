@@ -1549,3 +1549,11 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .dp-backup a { color: var(--color-ink-2); }
 .dp-backup-err { color: var(--bl-failed); }
 .deploy-inner .board-head .btn { white-space: nowrap; }
+/* Approve with notes */
+.bl-approve-notes { display: grid; gap: var(--space-sm); margin: var(--space-sm) 0 var(--space-md); padding: var(--space-md); border: 1px solid var(--color-accent); border-radius: var(--radius-ctl); background: var(--color-sheet); }
+.bl-approve-notes textarea { width: 100%; resize: vertical; min-height: 84px; padding: var(--space-sm); border: 1px solid var(--color-rule); border-radius: var(--radius-ctl); background: var(--color-paper); color: var(--color-ink); font: 400 14px/1.45 var(--font-body); }
+.bl-approve-notes textarea:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 0; }
+.bl-approve-row { display: flex; align-items: center; gap: var(--space-sm); }
+.bl-approve-to { flex: 1; min-width: 0; font: 400 12.5px var(--font-body); color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bl-approve-row .btn.primary { margin-left: 0; }
+.bl-approved { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; background: var(--bl-done-wash); color: var(--bl-done); font: 600 12.5px var(--font-display); }

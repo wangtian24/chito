@@ -43,6 +43,8 @@ function blArgs(b) {
     case 'quota-clear': return key == null ? ['quota', 'clear'] : k && ['config', k, 'quota_until', '""'];
     case 'ticket-reopen': case 'ticket-cancel': case 'ticket-approve': return k && [action.slice(7), k, '--reason', 'from chito'];
     case 'ticket-resolve': return k && ['resolve', k];
+    case 'ticket-approved': return k && ['set', k, `meta.approved=${JSON.stringify({ at: new Date().toISOString(), by: 'human', via: 'chito', notes: typeof value === 'string' ? value.slice(0, 8000) : '' })}`];
+    case 'ticket-comment': return k && typeof value === 'string' && value.trim() && value.length <= 8000 && ['comment', k, value.trim()];
     case 'project-instructions': {
       const v = String(value ?? '').trim().slice(0, 4000);
       return k && v !== '-' && ['instructions', k, `--set=${v}`];
