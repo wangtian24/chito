@@ -1908,7 +1908,7 @@ function renderFactoryTab(root, all) {
   // keep the floor live while the tab is open
   if (!factory.timer) factory.timer = setInterval(async () => {
     if (currentTab() !== 'factory' || document.hidden || location.pathname !== '/projects') return;
-    await loadBacklog(); renderBacklog();
+    await loadBacklog(); if (!midEdit()) renderBacklog();
   }, 10000);
 }
 
@@ -2143,13 +2143,18 @@ export function initBacklog(c) {
   loadBacklog().then(() => { if (!$('#backlog').hidden) renderBacklog(); });
 }
 
+// True while the person is in a field or form the auto-refresh would rebuild under them.
+function midEdit() {
+  const a = document.activeElement;
+  return a?.id === 'blq' || a?.id === 'bltq' || !!a?.closest?.('.bl-approve-notes, .bl-ho-reply');
+}
 export function startBacklogPolling() {
   stopBacklogPolling();
   if (!ui.refresh) return;
   bl.timer = setInterval(async () => {
     if (document.hidden) return;
     await loadBacklog();
-    if (document.activeElement?.id === 'blq' || document.activeElement?.id === 'bltq' || document.activeElement?.closest?.('.bl-approve-notes')) return; // don't steal focus mid-typing
+    if (midEdit()) return; // don't steal focus mid-typing
     const scroller = $('#backlog'); const y = scroller.scrollTop;
     renderBacklog();
     scroller.scrollTop = y;
@@ -2161,6 +2166,8 @@ export function backlogRefreshCount() { return loadBacklog(); }
 // Approve with notes: the notes go on the ticket as a comment, the ticket is approved, and the notes are sent to
 // the session that did the work (its worker, else the project's orchestrator), resumed in the background.
 ui.notesFor = null; ui.notesDraft = {};
+// Handoff replies in progress, per ticket: picked options, typed answers and the free text survive re-renders.
+ui.hoDraft = {};
 function notesTarget(t) {
   const ws = workerSession(t);
   if (ws && !ws.missing) return { ...ws, kind: tr('Worker session') };
@@ -2336,7 +2343,8 @@ function handoffView(t) {
   }
   if (sess && t.state !== 'done') {
     const form = el('form', 'bl-ho-reply');
-    const answers = asks.map(() => ({ v: '' }));
+    const draft = ui.hoDraft[t.key] ||= { answers: [], text: '' };
+    const answers = asks.map((_, i) => (draft.answers[i] ||= { v: '' }));
     if (asks.length) {
       form.append(el('h4', 'bl-d-h', tr('Asked of you')));
       asks.forEach((a, i) => {
@@ -2346,21 +2354,23 @@ function handoffView(t) {
         if (a.options?.length) {
           const g = el('div', 'bl-ask-opts'); g.setAttribute('role', 'radiogroup'); g.setAttribute('aria-label', a.q);
           a.options.forEach(o => {
-            const b = el('button', 'bl-ask-opt', o); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', 'false');
+            const b = el('button', 'bl-ask-opt', o); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(answers[i].v === o));
             b.addEventListener('click', () => { const on = answers[i].v !== o; answers[i].v = on ? o : ''; for (const x of g.children) x.setAttribute('aria-checked', String(on && x === b)); });
             g.append(b);
           });
           f.append(g);
         } else {
-          const inp = el('input', 'bl-ask-text'); inp.type = 'text'; inp.placeholder = tr('Your answer');
-          inp.addEventListener('input', () => { answers[i].v = inp.value.trim(); });
+          const inp = el('input', 'bl-ask-text'); inp.type = 'text'; inp.placeholder = tr('Your answer'); inp.value = answers[i].raw ?? answers[i].v;
+          inp.addEventListener('input', () => { answers[i].raw = inp.value; answers[i].v = inp.value.trim(); });
           inp.addEventListener('keydown', e => e.stopPropagation());
           f.append(inp);
         }
         form.append(f);
       });
     }
-    const ta = el('textarea'); ta.rows = 4; ta.placeholder = asks.length ? tr('Anything else, in your own words (optional when the choices above say it all).') : tr('Your feedback, answers or "go". It goes to the handoff session, which files fixes and closes the ticket.');
+    const ta = el('textarea'); ta.rows = 4; ta.value = draft.text;
+    ta.addEventListener('input', () => { draft.text = ta.value; });
+    ta.placeholder = asks.length ? tr('Anything else, in your own words (optional when the choices above say it all).') : tr('Your feedback, answers or "go". It goes to the handoff session, which files fixes and closes the ticket.');
     const row = el('div', 'bl-ho-reply-row');
     const send = el('button', 'btn primary', tr('Send to the session')); send.type = 'submit';
     const term = el('button', 'btn', tr('Answer in terminal')); term.type = 'button';
@@ -2377,7 +2387,7 @@ function handoffView(t) {
         const r = await fetch(`/api/sessions/${sess.id}/send`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-chito': '1' }, body: JSON.stringify({ text: `[${t.key} handoff feedback] ${text}` }) });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || r.statusText);
-        ta.value = ''; for (const a of answers) a.v = '';
+        ta.value = ''; for (const a of answers) { a.v = ''; a.raw = ''; } delete ui.hoDraft[t.key];
         ctx.toast(j.action === 'typed' ? tr('Typed into the live session') : tr('Resumed the session in your terminal with your message'));
         act('ticket-handoff', t.key, 'discussing');
       } catch (err) { ctx.toast(tr('Not sent: {error}', { error: err.message })); }
