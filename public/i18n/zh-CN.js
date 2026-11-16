@@ -654,4 +654,5 @@ export default {
   "Hide dismissed": "隐藏已忽略",
   "Show {n} dismissed": "显示已忽略的 {n} 项",
   "Open in a new tab": "在新标签页中打开",
+  "Go to project {key}": "前往项目 {key}",
 };

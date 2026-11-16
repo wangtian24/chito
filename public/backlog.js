@@ -1625,7 +1625,14 @@ function drawDrawer(box, t) {
   box.dataset.key = t.key;
   box.textContent = '';
   const top = el('div', 'bl-d-top');
-  top.append(el('span', 'num bl-d-key', t.key), statePill(t.state), closeBtn());
+  // The project this ticket belongs to, one click away (unless the page already is that project).
+  const pr = bl.data.projects.find(x => x.key === t.project);
+  const onIt = ((parseBacklogPath(location.pathname) || {}).project || '').toUpperCase() === t.project;
+  const projLink = onIt ? null : linkTo(el('a', 'bl-d-proj'), projPath(t.project));
+  if (projLink) { projLink.append(el('span', 'num', t.project), el('span', 'bl-d-proj-name', pr?.name || '')); projLink.title = tr('Go to project {key}', { key: t.project }); }
+  top.append(el('span', 'num bl-d-key', t.key), statePill(t.state));
+  if (projLink) top.append(projLink);
+  top.append(closeBtn());
   box.append(top, el('h3', 'bl-d-title', t.title), ticketActions(t));
   if (t.meta?.tldr?.text) {
     const tb = el('section', 'bl-d-tldr');
