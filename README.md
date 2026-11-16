@@ -1,24 +1,51 @@
 # chito
 
-A fast local web UI for Claude Code, Pi, and Codex sessions: a session list on the left, the conversation on the right, a permalink for every session and message, and one key to reopen a session in your terminal. It also ships **backlog**, a local ticket DAG plus a background daemon that lets agents work through long-horizon projects together, with a board in chito.
+**A local home for your coding agents.** chito reads every Claude Code, Codex and Pi session on your Mac and shows
+them as clean conversations you can search, link to and pick up again. It also ships **backlog**: tickets, a
+dependency graph and a background daemon, so a fleet of agents can work through long projects while you look on
+from a board, answer what only you can, and accept their demos.
 
-## Install
+Everything runs on your machine. It reads the transcripts already on disk and serves http://localhost:8791.
 
-```bash
-git clone https://github.com/wangtian24/chito && cd chito
-scripts/install.sh       # chito + backlog CLI, skills, hooks and daemon
+![The Projects board: every project's tickets as lanes, with what needs you outlined in red](docs/screenshots/projects-board.webp)
+
+## Set it up
+
+The easy way is to ask your coding agent. Paste this into Claude Code, Codex or Pi:
+
+```text
+Set up chito on this Mac by following https://github.com/wangtian24/chito/blob/main/SETUP.md
 ```
 
-That's everything on macOS. The script is idempotent; re-run it after `git pull`. Options:
+[SETUP.md](SETUP.md) is written for agents. It checks the machine (`scripts/doctor.sh`), installs, verifies, and
+asks you the few questions only you can answer.
+
+By hand, it's two commands:
+
+```bash
+git clone https://github.com/wangtian24/chito ~/chito && cd ~/chito
+scripts/install.sh && scripts/doctor.sh
+```
+
+You need macOS, Node 22.5+, and python3 3.11+ with SQLite 3.35+. The `claude` CLI runs backlog workers, and `gh` is
+optional, for live PR state. `scripts/doctor.sh --pre` checks all of these before you install.
+
+## A quick tour
+
+| | |
+|---|---|
+| ![Overview](docs/screenshots/overview-waiting-on-you.webp) **Overview.** The daemon, what's waiting on you (decisions, handoffs, demos to accept), and what's running. | ![Collapsed projects](docs/screenshots/projects-collapsed.webp) **Projects, collapsed.** One line per project, with the tickets in flight and the ones that need you under it. |
+| ![Roadmap](docs/screenshots/project-roadmap-showcases.webp) **Roadmap and showcases.** Each milestone ends in a showcase (screenshots, a demo, a live link) that you accept or reopen. | ![Dependency graph](docs/screenshots/dependency-graph.webp) **Dependency graph.** Tickets wait on their blockers; workers only pick up what's ready. |
+| ![Tickets](docs/screenshots/project-tickets.webp) **A project's tickets** as a tree, with blockers, tries, milestones, cost and who's on it. | ![Ticket panel](docs/screenshots/ticket-panel.webp) **A ticket's panel.** Its spec, sessions, lease, usage, and every event. |
+| ![Finished](docs/screenshots/tickets-finished.webp) **Finished work.** What landed, with the PR, turns, tokens and cost of each ticket. | ![Factory](docs/screenshots/factory.webp) **Factory.** The factory floor: every worker slot, tokens and dollars per minute, and the last 24 hours of shipped tickets. |
+
+## Install options
+
+`scripts/install.sh` is idempotent, so re-run it after `git pull`. Options:
+
 - `--no-backlog`: chito only.
 - `--no-daemon`: backlog without the background daemon.
 - `--no-launchagent`: don't start chito at login; run `npm start` yourself.
-
-Requirements:
-- **Node 22.5+.** The Backlog view uses `node:sqlite`; Sessions and Artifacts work on Node 20.
-- **python3 3.11+ with SQLite 3.35+**, for `bl`.
-- **The `claude` CLI**, for Claude workers and orchestrator and briefing sessions. **Codex CLI** or **Pi** is needed only for projects using that harness.
-- **`gh`** (optional), for live PR state.
 
 Just chito, by hand:
 
@@ -96,14 +123,16 @@ For Pi or Codex projects in Auto mode, the daemon starts a `bl run` coordinator 
 - **Caps:** at most 6 tickets in flight across everything; adjustable.
 - **Per-ticket usage:** turns, tokens and nominal cost, read from the transcripts.
 
-**The board** (`g p` or `B`, `/projects`; old `/backlog` links redirect):
+**The board** (chito opens on it; `g p` or `B`, `/projects`; old `/backlog` links redirect). Tabs: Overview, Projects, Tickets and Factory. It shows:
 - the daemon's status, with pause and resume, and a usage-limit banner;
 - every ticket in flight, with who runs it and a link to its session;
 - a swim lane per project, collapsible to one compact row;
 - per project: the roadmap with showcases, a dependency graph (click to expand), and a tree table of tickets with PRs and cost;
-- a side panel per ticket, with its spec, result, sessions and activity.
+- a side panel per ticket, with its spec, result, sessions and activity;
+- a project area per project: memory and messages every worker sees (`bl area`, `bl memo`, `bl say`) and what each running ticket is touching;
+- **Factory**, a just-for-fun dashboard: one block per worker slot (with a hamster on a wheel), tokens and dollars per minute, and a chart of the last 24 hours of shipped tickets, full screen if you like.
 
-Controls (start, pause, mode, evergreen, reopen, approve, cancel, priority, model, milestone) run `bl` on the server from a fixed allowlist.
+Controls (start, pause, mode, evergreen, reopen, approve, cancel, priority, model, milestone) run `bl` on the server from a fixed allowlist. Pausing a project stops its running sessions at once, so it asks first; when the project resumes, each ticket continues its saved session.
 
 **Quick start**, from any Claude Code session:
 
@@ -125,56 +154,8 @@ Machine-specific conventions go in `~/.backlog/LOCAL.md`, which the skills read 
 
 ## Setting it up with an AI agent
 
-If you're an AI agent asked to install chito and the backlog on this machine, do the following, in order, and check each result.
-
-1. **Check prerequisites.**
-   - `node -v`: needs 22.5+. If it's older, install `node@22` (Homebrew: `brew install node@22`) and pass `CHITO_NODE=$(brew --prefix node@22)/bin/node`.
-   - `python3 -c 'import sys,sqlite3;print(sys.version_info[:2], sqlite3.sqlite_version)'`: needs 3.11+ and SQLite 3.35+. Otherwise install a newer python3 and pass `BL_PYTHON=/path/to/python3`.
-   - `command -v claude`: the backlog workers need it.
-   - `command -v gh`: optional.
-2. **Install.** From the repo root, run `scripts/install.sh`. This:
-   - runs `npm install` and installs the `com.chito.server` LaunchAgent;
-   - writes `~/.local/bin/bl`, a wrapper that pins the checked python;
-   - symlinks `~/.claude/skills/{backlog,backlog-run,backlog-worker}` to the repo;
-   - merges three hooks into `~/.claude/settings.json` (SessionStart, Stop, PostToolUse → `bl hook …`), leaving any other hooks alone;
-   - creates `~/.backlog/backlog.db`;
-   - installs the `com.chito.backlog-daemon` LaunchAgent.
-
-   It only touches those paths. An existing non-symlink skill with the same name is moved to `~/.backlog/skill-backups/`.
-3. **Make sure `~/.local/bin` is on PATH** for both the shell and Claude Code. Without it, `bl` won't resolve in sessions.
-4. **Verify.**
-   - `bl status`: the first line should read `daemon: running`.
-   - `curl -s localhost:8791/api/backlog | head -c 80`: should contain `"available":true`.
-   - Open http://localhost:8791/projects.
-   - In a new Claude Code session, `/backlog` should load.
-5. **Smoke test (optional; spends a few cents).** Create a DQ project with a tiny ticket, and archive it afterwards:
-
-   ```bash
-   bl project add SMOKE "Smoke" --executor daemon --review self
-   bl add SMOKE "Create hello.txt containing hi" --model sonnet
-   bl project start SMOKE
-   # wait about 30 s
-   bl ls SMOKE --all
-   bl project archive SMOKE
-   ```
-
-   The ticket should be `done`, with its output in `~/.backlog/work/SMOKE-1/`.
-6. **Personalize.** Ask the user where design docs should go and which repos may self-merge, then write those answers to `~/.backlog/LOCAL.md`. Set review policies with `bl config PROJ review self|pr|ask`.
-
-**Updating:** `git pull && scripts/install.sh`. Then restart with:
-
-```bash
-launchctl kickstart -k gui/$(id -u)/com.chito.server
-launchctl kickstart -k gui/$(id -u)/com.chito.backlog-daemon
-```
-
-**Removing:**
-- `bl daemon uninstall`
-- `launchctl bootout gui/$(id -u)/com.chito.server`
-- delete `~/.local/bin/bl` and the three skill symlinks
-- remove the `bl hook` entries from `~/.claude/settings.json`
-
-The data in `~/.backlog` stays until you delete it.
+See [SETUP.md](SETUP.md): step-by-step instructions written for agents (check, install, verify, personalize,
+update, remove), with `scripts/doctor.sh` to confirm each step.
 
 ## Sessions list
 
