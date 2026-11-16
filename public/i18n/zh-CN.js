@@ -559,7 +559,6 @@ export default {
   "Next / previous prompt": "下一条 / 上一条提示",
   "Top / bottom of conversation": "跳到对话顶部 / 底部",
   "Page down / up": "向下 / 向上翻页",
-  "Collapse sidebar": "收起侧栏",
   "Artifacts (pull requests) or back to sessions": "产出（PR），或返回会话",
   "Projects (the backlog board)": "项目（待办看板）",
   "Projects or back to sessions": "项目，或返回会话",
@@ -639,4 +638,10 @@ export default {
   "Language": "语言",
   "Menus and labels only": "仅菜单和标签",
   "Confirm: deploy main": "确认：部署 main",
+  "TL;DR": "要点",
+  "No TL;DR yet; this is the full summary": "还没有要点；这是完整摘要",
+  "Hide the sidebar ([)": "隐藏侧边栏 ([)",
+  "Hide the sidebar": "隐藏侧边栏",
+  "Show the sidebar ([)": "显示侧边栏 ([)",
+  "Hide or show the sidebar (a strip of icons stays)": "隐藏或显示侧边栏（保留一列图标）",
 };

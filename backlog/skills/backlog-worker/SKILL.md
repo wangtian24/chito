@@ -18,8 +18,9 @@ You hold a lease on one ticket in the shared backlog (`bl`, SQLite). You may hav
    - Review policy `self`: test it yourself (actually run it) and merge as the repo allows.
    - `pr` or `ask`: open the PR, get its checks green, and stop. Don't merge.
 6. **Finish with exactly one** of:
-   - `bl done $BL_TICKET -m "<what changed; PR url; how verified; what downstream should know>"`
-   - `bl fail $BL_TICKET -m "<what broke; what you tried; what to try next>"`. This counts as an attempt; the ticket is retried or marked failed.
+   - `bl done $BL_TICKET -m "<what changed; PR url; how verified; what downstream should know>" --tldr "<for the human>"`
+   - `bl fail $BL_TICKET -m "<what broke; what you tried; what to try next>" --tldr "<for the human>"`. This counts as an attempt; the ticket is retried or marked failed.
+   - `-m` is for the next agent and can be long. `--tldr` is what the human sees on "Waiting on you" if this lands on them: at most 3 short sentences of plain words, or `- ` bullets (at most 6) when it needs more. Lead with what they must do or decide. Anything longer belongs in a screenshot or mock, not prose.
    - `bl release $BL_TICKET --reason "…"`. This hands the ticket back without counting an attempt.
    The `-m` text is injected into every downstream ticket's prompt, so write it for the next agent.
 7. **Hard limits**: never deploy, spend money, push to main, or touch secrets unless the spec says so and the ticket isn't assigned to `human`. Don't change other tickets' state except to add new ones or comment on them.

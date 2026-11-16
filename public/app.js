@@ -1427,7 +1427,7 @@ document.addEventListener('keydown', e => {
     g: () => convo.scrollTo({ top: 0 }),
     G: () => convo.scrollTo({ top: convo.scrollHeight }),
     ' ': () => convo.scrollBy({ top: (e.shiftKey ? -1 : 1) * convo.clientHeight * 0.85 }),
-    '[': () => document.querySelector('.app').classList.toggle('collapsed'),
+    '[': () => setCollapsed(!document.querySelector('.app').classList.contains('collapsed')),
   };
   const seq = chord(e.key);
   if (seq) { e.preventDefault(); seq(); return; }
@@ -1455,6 +1455,23 @@ $('#f-source').value = state.source;
 $('#f-source').addEventListener('change', e => { state.source = e.target.value; store.set('source', state.source); applyFilter(); });
 $('#help-btn').addEventListener('click', () => openSettings('keyboard'));
 $('#b-settings').addEventListener('click', () => openSettings());
+// The sidebar folds to a strip: the logo, one icon per view with its count in the corner, and settings.
+// A click on a view icon goes there; a click anywhere else on the strip opens the sidebar again.
+function setCollapsed(on) {
+  document.querySelector('.app').classList.toggle('collapsed', on);
+  store.set('sidebarCollapsed', on);
+  $('#sidebar').title = on ? t('Show the sidebar ([)') : '';
+  // Folded, each icon names its view (the label is hidden); open, the label says it.
+  document.querySelectorAll('.views .view-tab').forEach(v => { if (on) v.title = v.querySelector('span:not(.view-count)')?.textContent || ''; else v.removeAttribute('title'); });
+}
+setCollapsed(store.get('sidebarCollapsed', false));
+$('#b-collapse').addEventListener('click', e => { e.stopPropagation(); setCollapsed(true); });
+$('#sidebar').addEventListener('click', e => {
+  if (!document.querySelector('.app').classList.contains('collapsed')) return;
+  if (e.target.closest('.view-tab, #b-settings')) return;
+  e.preventDefault(); e.stopPropagation();
+  setCollapsed(false);
+}, true);
 $('#home').addEventListener('click', e => {
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
