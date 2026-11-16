@@ -1890,6 +1890,36 @@ def cmd_milestone(a):
 
 
 # ---------------------------------------------------------------- workers (shared by bl run and the daemon)
+def previous_session(c, t, cwd):
+    """The Claude session of this ticket's last interrupted attempt, to resume instead of starting over: the
+    session that wrote events for the previous claim (not one that finished the ticket), whose transcript still
+    exists for this worktree. Returns (session_id, why it stopped) or (None, None)."""
+    claims = c.execute("SELECT id, actor FROM events WHERE ticket=? AND kind='claim' ORDER BY id DESC LIMIT 2", (t["key"],)).fetchall()
+    if len(claims) < 2:
+        return None, None
+    prev, cur = claims[1], claims[0]
+    r = c.execute("SELECT session_id FROM events WHERE ticket=? AND actor=? AND session_id IS NOT NULL AND id>? AND id<? "
+                  "ORDER BY id DESC LIMIT 1", (t["key"], prev["actor"], prev["id"], cur["id"])).fetchone()
+    if not r:
+        return None, None
+    why = c.execute("SELECT body FROM events WHERE ticket=? AND kind='state' AND id>? AND id<? ORDER BY id DESC LIMIT 1",
+                    (t["key"], prev["id"], cur["id"])).fetchone()
+    why = why["body"] if why else "interrupted"
+    if "→ done" in why or "→ canceled" in why:
+        return None, None
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(Path(cwd).resolve()))
+    if not (Path.home() / ".claude" / "projects" / slug / f"{r['session_id']}.jsonl").exists():
+        return None, None
+    return r["session_id"], why
+
+def resume_prompt(t, why):
+    k, p = t["key"], t["project"]
+    return (f"You are resuming backlog ticket {k} in project {p} after an interruption ({why[:200]}). Your earlier work "
+            f"in this session and in this worktree is still here. You hold the ticket again. Before continuing: run "
+            f"`git status` and `git log --oneline -5` to see where you stopped, `bl show {k}` for new notes, and "
+            f"`bl area {p}` and `bl main` for what changed meanwhile (other merges, main health). Then carry on from where "
+            f"you stopped (don't redo finished steps) and finish with exactly one of bl done, bl fail or bl release.")
+
 def spawn_worker(c, t, ag, actor):
     """Start worker_cmd for a claimed ticket. Returns (Popen, logfile) or None (ticket released)."""
     try:
@@ -1909,7 +1939,12 @@ def spawn_worker(c, t, ag, actor):
         scopes = [f"label:{x}" for x in json.loads(t["labels"])] + [f"project:{t['project']}", "global"]
         custom = next((r for scope in scopes if (r := c.execute(
             "SELECT value FROM settings WHERE scope=? AND key='worker_cmd'", (scope,)).fetchone())), None)
-        cmd = json.loads(custom["value"]) if custom else worker_command(c, t, model, build_prompt(c, t))
+        sid, why = (None, None) if custom or harness != "claude" else previous_session(c, t, cwd)
+        if sid:
+            cmd = worker_command(c, t, model, resume_prompt(t, why))
+            cmd[1:1] = ["--resume", sid]      # claude --resume <sid> -p <prompt> …
+        else:
+            cmd = json.loads(custom["value"]) if custom else worker_command(c, t, model, build_prompt(c, t))
         pr = subprocess.Popen(cmd, shell=isinstance(cmd, str), cwd=cwd, env=env, stdout=lf,
                               stderr=subprocess.STDOUT, start_new_session=True)
     except (ValueError, OSError) as e:
@@ -1918,8 +1953,8 @@ def spawn_worker(c, t, ag, actor):
             release_ticket(c, ticket(c, t["key"]), f"worker could not start: {e}", count_failure=True, actor=actor)
         return None
     with tx(c):
-        event(c, "spawn", t["key"], body=f"{harness} worker started in {cwd} (model {model or 'default'})", actor=ag,
-              data={"cwd": cwd, "log": lf.name, "pid": pr.pid, "model": model, "harness": harness})
+        event(c, "spawn", t["key"], body=f"{harness} worker {'resumed session ' + sid[:8] if sid else 'started'} in {cwd} (model {model or 'default'})",
+              actor=ag, data={"cwd": cwd, "log": lf.name, "pid": pr.pid, "model": model, "harness": harness, "resumed": sid})
     return pr, lf
 
 def collect_children(c, children, actor, project=None):
