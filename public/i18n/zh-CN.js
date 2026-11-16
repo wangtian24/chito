@@ -268,7 +268,7 @@ export default {
   "Start": "开始",
   "Move to executing so its executor picks up ready tickets": "切换到执行中，让执行方接手就绪的工单",
   "Pause": "暂停",
-  "Running work finishes; nothing new is claimed": "正在进行的工作会做完，不再认领新工单",
+  "Stops everything in this project now (orchestrators, workers, their dev servers); in-flight tickets go back to todo": "立即停止本项目的一切（编排会话、工作进程及其开发服务器）；进行中的工单回到待办",
   "Resume": "继续",
   "Back to planning": "退回规划",
   "Orchestration: who runs this project": "编排方式：由谁来跑这个项目",

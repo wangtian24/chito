@@ -105,6 +105,8 @@ Switches: `bl daemon pause|resume` (or the button in chito), `bl daemon status`,
 
 **Worker prompt** (`bl prompt KEY`): the spec, the design docs to read, each upstream ticket's `result`, recent comments, the review policy, the size hint, and the worker protocol.
 
+**Pause stops now** (2026-11-16): `bl project pause` (also `plan` and `archive`) kills the project's orchestrator sessions, its workers and whatever they started (found by the prompt's first line and by `BL_ORCH_PROJECT` / `BL_TICKET` in a process's environment), then releases their tickets to todo without using an attempt. Tickets held by an interactive session are left to it. `--soft` keeps the old behavior (running work finishes). Switching a project to Simple (`executor=daemon`) stops only its orchestrators and releases their tickets, which the daemon then runs as plain workers.
+
 **Daemon self-reload**: the daemon notices when `bl` changes on disk (a merge into the chito checkout), stops starting new work, lets every worker, orchestrator, briefing and TL;DR job it started finish, then re-executes itself in place (same pid, same launchd job). New prompt and protocol code thus takes effect without killing running workers; a plain restart (`launchctl kickstart -k`) terminates its children and releases their tickets.
 
 ## 5b2. Human tickets get a briefing session

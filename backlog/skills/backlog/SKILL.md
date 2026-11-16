@@ -84,7 +84,7 @@ Act straight away on the obvious ones (approve a merged PR, reap a stale lease).
 5. Show `bl graph PROJ` and `bl run PROJ --dry-run`. The project stays in **planning**. End with "Start it?". Starting means `bl project start PROJ`, and then `/backlog-run` for session projects, or nothing more for daemon projects.
 
 ## 5. Lifecycle and executor
-- `bl project start KEY` (planning → executing), `pause` (running work finishes, nothing new is claimed), `resume`, `plan` (back to planning to edit the graph), `archive`.
+- `bl project start KEY` (planning → executing), `pause` (stops the project now: kills its orchestrators, workers and anything they started, such as dev servers, and puts their tickets back to todo without using an attempt; `--soft` lets running work finish instead), `resume`, `plan` (back to planning to edit the graph), `archive`.
 - **Choosing the mode**:
   - **DQ** (`daemon`) when the tickets are independent and self-contained: a queue of chores, batch processing, or standing work anyone can add to. Consider `--evergreen` too.
   - **DSO** (`auto`) for DAG work that should run without anyone starting it.
