@@ -1939,13 +1939,17 @@ def waiting_without_tldr(c):
     for t in rows:
         meta = json.loads(t["meta"])
         pk = (meta.get("handoff") or {}).get("packet")
-        if meta.get("tldr") or (meta.get("tldr_try") or {}).get("updated") == t["updated"]:
+        tr_ = meta.get("tldr_try") or {}
+        if meta.get("tldr") or (tr_.get("updated") == t["updated"] and tr_.get("tries", 1) >= 2):
             continue
         if t["result"] or pk:
             out.append((t, pk))
     return out
 
 def tldr_prompt(t, pk):
+    tr_ = json.loads(t["meta"]).get("tldr_try") or {}
+    retry = (f"\n\nYour last TL;DR for this was rejected ({tr_['error']}). Write a shorter one."
+             if tr_.get("updated") == t["updated"] and tr_.get("error") else "")
     src = []
     if pk:
         src += [f"Handoff summary: {pk.get('summary', '')}", f"Handoff body:\n{pk.get('body', '')}"]
@@ -1958,7 +1962,7 @@ def tldr_prompt(t, pk):
     return (f"Backlog ticket {t['key']}: {t['title']}. It is waiting on the human because {why}.\n\n"
             + "\n\n".join(src)[:8000] +
             f"\n\nWrite the TL;DR the human reads on the board: {TLDR_RULE} "
-            "Plain words, no headings, no preamble, no quotes around it. Reply with the TL;DR only.")
+            "Plain words, no headings, no preamble, no quotes around it. Reply with the TL;DR only." + retry)
 
 def tldr_backfill(c, jobs):
     """Write a TL;DR (with a small model) for each waiting ticket that has none."""
@@ -1977,7 +1981,9 @@ def tldr_backfill(c, jobs):
                 meta["tldr"] = {"text": text, "at": now(), "by": "daemon"}
                 meta.pop("tldr_try", None)
             elif not meta.get("tldr"):
-                meta["tldr_try"] = {"at": now(), "updated": upd, "error": tldr_problem(text) or f"exit {pr.returncode}"}
+                prev = meta.get("tldr_try") or {}
+                tries = prev.get("tries", 1) + 1 if prev.get("updated") == upd else 1
+                meta["tldr_try"] = {"at": now(), "updated": upd, "tries": tries, "error": tldr_problem(text) or f"exit {pr.returncode}"}
             c.execute("UPDATE tickets SET meta=? WHERE key=?", (json.dumps(meta), k))
     if jobs or not setting(c, "tldr_backfill") or not setting(c, "daemon_enabled") or quota_until(c):
         return
