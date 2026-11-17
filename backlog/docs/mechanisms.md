@@ -51,3 +51,4 @@ at `in_review` and none of this is involved.
 - **chito**: Projects (Overview, Projects, Tickets, Factory), a ticket's side panel, and the project page (project
   area, roadmap, graph, tickets).
 - `bl status`, `bl daemon status`, `bl main`, `bl area P`, `bl log P`.
+- **Wrap-up report**: when a project finishes, the daemon has Sonnet write a one-screen report (`bl project report P`); chito shows it on the project page and under Recently finished for 7 days.

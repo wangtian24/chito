@@ -31,6 +31,9 @@ DEFAULTS = {
     "brief_model": "opus",
     "tldr_model": "haiku",      # writes the TL;DR for a waiting ticket that has none (old tickets, agents that skipped it)
     "tldr_backfill": True,
+    "wrapup_reports": True,     # a finished project gets a wrap-up report written by a small model (bl project report)
+    "wrapup_model": "sonnet",
+    "wrapup_window_days": 7,    # only finishes this recent get one automatically (and show under Recently finished)
     "notify_human_cmd": "",     # how to tell the human a handoff is ready; empty = a macOS notification ($BL_MSG, $BL_TICKET, $BL_URL)
     "board_url": "http://localhost:8791/projects",
     "quota_backoff_minutes": 30, # when a worker hits a usage limit and no reset time is given
@@ -735,6 +738,10 @@ def cmd_init(a):
     print(f"ok {DB}")
 
 def cmd_project(a):
+    if a.action == "report":
+        if not a.key:
+            die("usage: bl project report KEY [--set FILE|-|--generate|--request|--prompt|--json]")
+        return cmd_report(a)
     c = connect()
     if a.action == "add":
         key = a.key.upper()
@@ -2308,6 +2315,7 @@ def cmd_daemon(a):
     orchs = {}   # project -> (Popen, agent, t0, logfile) for orchestrator sessions
     briefs = {}  # ticket -> (Popen, agent, t0, logfile) for briefing sessions
     tldrs = {}   # ticket -> (Popen, t0, outfile, ticket.updated) writing a TL;DR
+    wraps = {}   # project -> (Popen, t0) writing a wrap-up report
     with tx(c):
         for t in c.execute("SELECT key, meta FROM tickets WHERE meta LIKE '%\"pending\": true%'").fetchall():
             m = json.loads(t["meta"]); m.pop("brief", None)
@@ -2339,7 +2347,7 @@ def cmd_daemon(a):
                 with tx(c):
                     event(c, "daemon", body="bl changed on disk: reloading (workers are re-adopted; waiting only for orchestrators, briefings, TL;DR jobs)", actor=me)
                 print(f"[{now()}] bl changed on disk: reloading", flush=True)
-            if DRAIN["draining"] and not (orchs or briefs or tldrs):
+            if DRAIN["draining"] and not (orchs or briefs or tldrs or wraps):
                 with tx(c):
                     c.execute("UPDATE runs SET ended=?, status='reloaded' WHERE id=?", (now(), run_id))
                     event(c, "daemon", body="daemon reloading with the new bl", actor=me)
@@ -2388,6 +2396,7 @@ def cmd_daemon(a):
             if probe is None:
                 brief_humans(c, briefs, me)
                 tldr_backfill(c, tldrs)
+                wrapup_reports(c, wraps, me)
             beat_children(c, children)
             with tx(c):
                 for pk, (pr, ag, t0, lf) in orchs.items():
@@ -2627,6 +2636,293 @@ def tldr_backfill(c, jobs):
             return
         jobs[t["key"]] = (pr, time.monotonic(), str(out), t["updated"])
 
+# ---------------------------------------------------------------- project wrap-up report
+# When a project finishes (status done, or nothing runnable left: every ticket final, or only parked backlog and
+# human tickets remain), the daemon runs ONE small `claude -p --model sonnet` session that turns what bl collected
+# (tickets, results, PRs, memory, milestones, links, deploy state, leftovers) into a one-screen Markdown report.
+# Stored in projects.meta.report; chito shows it on the project page and in "Recently finished". A finish is
+# identified by its signature (ticket count + the last finish time), so adding tickets and finishing again regenerates it.
+WRAPUP_SECTIONS = ["TL;DR", "Before → After", "What shipped", "Key artifacts", "Decisions and dropped work", "Left over", "Live?"]
+ARTI_URL = re.compile(r"https://arti\.voltcouch\.com/s/[\w./%-]+")
+RUNNABLE = ("todo", "in_progress", "in_review", "failed")
+
+def project_finish(c, p):
+    """(signature, finished_at) when the project counts as finished, else None."""
+    if p["status"] not in ("executing", "paused", "done"):
+        return None
+    tks = c.execute("SELECT state, assignee, finished, updated FROM tickets WHERE project=?", (p["key"],)).fetchall()
+    if not any(t["state"] == "done" for t in tks):
+        return None
+    if p["status"] != "done":
+        if p["evergreen"]:
+            return None
+        if any(t["state"] in RUNNABLE and not (t["assignee"] == "human" and t["state"] == "todo") for t in tks):
+            return None
+    last = max((t["finished"] or t["updated"] or "") for t in tks if t["state"] in FINAL)
+    return f"{len(tks)}:{last}", last
+
+def _clip(x, n):
+    x = (x or "").strip()
+    return x if len(x) <= n else x[:n - 1] + "…"
+
+def _last_reason(c, key):
+    r = c.execute("SELECT body FROM events WHERE ticket=? AND kind IN ('state','comment') AND body<>'' ORDER BY id DESC LIMIT 1", (key,)).fetchone()
+    return r["body"] if r else ""
+
+def _pr_info(repo, num):
+    try:
+        r = subprocess.run(["gh", "pr", "view", num, "-R", repo, "--json", "title,state,mergedAt,mergeCommit"],
+                           capture_output=True, text=True, timeout=8)
+        return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+    except Exception:
+        return None
+
+def _deploy_state(p, prs):
+    """For repos that tag their deploys (prod/*): the earliest prod tag that contains the last merge."""
+    repo = p["repo"]
+    merged = sorted((x for x in prs if x.get("mergedAt") and (x.get("mergeCommit") or {}).get("oid")), key=lambda x: x["mergedAt"])
+    if not repo or not Path(repo, ".git").exists():
+        return "No local repo: deploy state unknown."
+    if not merged:
+        return "No merged PR found: nothing to deploy."
+    last = merged[-1]
+    sha = last["mergeCommit"]["oid"]
+    try:
+        subprocess.run(["git", "-C", repo, "fetch", "--tags", "--quiet"], capture_output=True, timeout=30)
+        tags = subprocess.run(["git", "-C", repo, "tag", "--list", "prod/*"], capture_output=True, text=True, timeout=10).stdout.split()
+        if not tags:
+            return f"Last merge {sha[:9]} (PR #{last['num']}, {last['mergedAt']}); this repo has no prod/* deploy tags, so deploy state is unknown."
+        has = subprocess.run(["git", "-C", repo, "tag", "--contains", sha, "--list", "prod/*", "--sort=creatordate"],
+                             capture_output=True, text=True, timeout=10).stdout.split()
+    except Exception as e:
+        return f"Could not read deploy tags: {e}"
+    if has:
+        return f"DEPLOYED: the last merge {sha[:9]} (PR #{last['num']}) is in prod tag {has[0]} (newest prod tag: {sorted(tags)[-1]})."
+    return f"NOT DEPLOYED: the last merge {sha[:9]} (PR #{last['num']}, {last['mergedAt']}) is in no prod tag yet (newest prod tag: {sorted(tags)[-1]})."
+
+def wrapup_inputs(c, key, gh=True, limit=24000):
+    """Everything the wrap-up session summarizes, collected here so the session only writes."""
+    p = project_row(c, key)
+    fin = project_finish(c, p)
+    tks = c.execute("SELECT * FROM tickets WHERE project=? ORDER BY id", (p["key"],)).fetchall()
+    L = [f"# Project {p['key']}: {p['name']}", f"Status: {p['status']}{' (evergreen)' if p['evergreen'] else ''}. "
+         f"Finished: {fin[1] if fin else 'not yet'}. Created {p['created']}. Repo: {p['repo'] or '-'}."]
+    if p["doc_slug"]:
+        L.append(f"Design doc: https://arti.voltcouch.com/s/{p['doc_slug']}")
+    if (p["instructions"] or "").strip():
+        L += ["", "## Description and standing instructions", _clip(p["instructions"], 2000)]
+    mem = area_notes(c, p["key"], "memory", limit=30)
+    if mem:
+        L += ["", "## Project memory (facts and decisions)"] + [f"- {n['created'][:10]}{' ' + n['ticket'] if n['ticket'] else ''}: {_clip(n['body'], 300)}" for n in mem]
+    ms = c.execute("SELECT * FROM milestones WHERE project=? ORDER BY seq", (p["key"],)).fetchall()
+    if ms:
+        L += ["", "## Milestones and showcases"]
+        for m in ms:
+            L.append(f"- {m['key']} [{m['status']}] {m['title']}" + (f" (reached {m['reached']})" if m["reached"] else ""))
+            for sc in json.loads(m["showcases"] or "[]"):
+                L.append(f"  - {sc.get('kind')}: {sc.get('url') or sc.get('file') or ''} {_clip(sc.get('note'), 200)}")
+    # PRs named in results, with their titles and merge state from GitHub (bounded).
+    pr_by_ticket, seen, prs = {}, {}, []
+    for t in tks:
+        for repo, num in PR_URL.findall(f"{t['result'] or ''}"):
+            pr_by_ticket.setdefault(t["key"], []).append((repo, num))
+            if (repo, num) not in seen and len(seen) < 30:
+                info = (_pr_info(repo, num) if gh else None) or {}
+                info.update(repo=repo, num=num, ticket=t["key"])
+                seen[(repo, num)] = info; prs.append(info)
+    per_result = max(300, min(900, (limit // 2) // max(1, len(tks))))
+    L += ["", f"## Tickets ({len(tks)})"]
+    for t in tks:
+        head = f"- {t['key']} [{t['state']}]{' (human)' if t['assignee'] == 'human' else ''} {t['title']}"
+        if t["finished"]:
+            head += f" (finished {t['finished'][:16]})"
+        L.append(head)
+        for repo, num in pr_by_ticket.get(t["key"], []):
+            i = seen.get((repo, num)) or {}
+            L.append(f"  PR https://github.com/{repo}/pull/{num}: {i.get('state', '?')} {i.get('title', '')}".rstrip())
+        if t["state"] in ("done", "in_review") and t["result"]:
+            L.append("  Result: " + _clip(t["result"], per_result).replace("\n", " "))
+        elif t["state"] in ("canceled", "failed"):
+            L.append("  Last reason: " + _clip(t["result"] or _last_reason(c, t["key"]), 400).replace("\n", " "))
+        elif t["state"] == "backlog" or (t["assignee"] == "human" and t["state"] not in FINAL):
+            L.append("  Parked, waiting on: " + _clip(_last_reason(c, t["key"]) or t["body"] or "(no reason given)", 300).replace("\n", " "))
+    links = set()
+    for t in tks:
+        links.update(ARTI_URL.findall(f"{t['body']} {t['result'] or ''}"))
+        if t["doc_slug"]:
+            links.add(f"https://arti.voltcouch.com/s/{t['doc_slug']}")
+    if links:
+        L += ["", "## Arti docs and links found in tickets"] + [f"- {u.rstrip('.,);')}" for u in sorted(links)][:40]
+    L += ["", "## Deploy state", _deploy_state(p, prs) if gh else "(not checked)"]
+    text = "\n".join(L)
+    return text if len(text) <= limit else text[:limit - 40] + "\n…(truncated)"
+
+def wrapup_prompt(c, key, gh=True):
+    return (
+        "You write the wrap-up report of a finished backlog project, for its owner to read at a glance. Use ONLY the facts below; "
+        "never invent numbers, PRs or links. Reply with the Markdown report only (no preamble, no code fence), about one screen, "
+        "with exactly these sections as `## ` headings, in this order:\n"
+        "## TL;DR: at most 3 short sentences, plain words, what the project achieved.\n"
+        "## Before → After: what users or the system could do before vs now; use the before/after numbers the results give (timings, sizes, counts).\n"
+        "## What shipped: bullets `KEY title → [#N](PR url)`, merged work only, grouped or trimmed to the ones that matter (at most ~12).\n"
+        "## Key artifacts: arti docs, showcase pages, screenshots and other links, as Markdown links; 'None' if there are none.\n"
+        "## Decisions and dropped work: key decisions from project memory, and canceled or failed tickets with their reasons.\n"
+        "## Left over: parked tickets still in backlog or with the human, and what each waits for; 'Nothing' if none.\n"
+        "## Live?: deployed (name the prod tag), merged but not deployed, or unknown, from the deploy state below.\n\n"
+        + wrapup_inputs(c, key, gh))
+
+def report_tldr(md):
+    m = re.search(r"^#+\s*TL;?DR\s*:?\s*\n(.*?)(?=^#+\s|\Z)", md, flags=re.S | re.M | re.I)
+    text = (m.group(1) if m else md).strip()
+    return _clip(re.sub(r"\s+", " ", text), 600)
+
+def store_report(c, key, md, by, model=None, sig=None):
+    p = project_row(c, key)
+    meta = json.loads(p["meta"] or "{}")
+    fin = project_finish(c, p)
+    meta["report"] = {"md": md.strip(), "tldr": report_tldr(md), "at": now(), "by": by, "model": model,
+                      "sig": sig or (fin[0] if fin else None), "finished_at": fin[1] if fin else None}
+    w = meta.pop("wrapup", None) or {}
+    if w.get("requested") and w["requested"] > (w.get("started") or ""):
+        meta["wrapup"] = {"requested": w["requested"]}   # a Regenerate that came in while this one ran
+    c.execute("UPDATE projects SET meta=? WHERE key=?", (json.dumps(meta), p["key"]))
+    event(c, "report", project=p["key"], body=f"wrap-up report stored ({by}): {meta['report']['tldr'][:200]}", actor=by)
+
+def set_wrapup(c, key, **kw):
+    p = project_row(c, key)
+    meta = json.loads(p["meta"] or "{}")
+    w = {**(meta.get("wrapup") or {}), **kw}
+    meta["wrapup"] = {k: v for k, v in w.items() if v is not None}
+    c.execute("UPDATE projects SET meta=? WHERE key=?", (json.dumps(meta), p["key"]))
+
+def generate_report(c, key, by):
+    """Run the wrap-up session now (blocking) and store its report. Returns the Markdown."""
+    with tx(c):
+        p = project_row(c, key)
+        prev = json.loads(p["meta"] or "{}").get("wrapup") or {}
+        if prev.get("pid") and prev["pid"] != os.getpid() and alive(prev["pid"]):
+            die(f"a wrap-up session for {p['key']} is already running (pid {prev['pid']})")
+        fin = project_finish(c, p)
+        sig = fin[0] if fin else None
+        model = str(setting(c, "wrapup_model", p["key"]))
+        tries = prev.get("tries", 0) + 1 if prev.get("sig") == sig else 1
+        set_wrapup(c, p["key"], pid=os.getpid(), started=now(), sig=sig, tries=tries, error=None, failed=None)
+        event(c, "report", project=p["key"], body=f"wrap-up session started ({model}, by {by})", actor=by)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("BL_") and k != "CLAUDE_CODE_SESSION_ID"}
+    env["BL_DB"] = str(DB)   # it doesn't need bl, but if it looks, it sees the same DB
+    err, md = None, ""
+    try:
+        prompt = wrapup_prompt(c, p["key"])
+        r = subprocess.run(["claude", "-p", prompt, "--model", model], cwd=str(Path.home()), env=env,
+                           capture_output=True, text=True, timeout=60 * 10)
+        md = re.sub(r"^```(?:markdown|md)?\s*\n(.*?)\n```\s*$", r"\1", r.stdout.strip(), flags=re.S)
+        if r.returncode != 0 or not md:
+            err = f"exit {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
+        elif "tl;dr" not in md.lower():
+            err = f"no TL;DR section in the reply: {md[:200]}"
+    except Exception as e:   # anything: record it, so the board says why and the pid doesn't linger
+        err = f"{type(e).__name__}: {str(e)[:300]}"
+    with tx(c):
+        if err:
+            q, until = detect_quota(err)
+            set_wrapup(c, p["key"], pid=None, error=err, failed=now(), quota_until=until if q else None)
+            event(c, "report", project=p["key"], body=f"wrap-up failed: {err}", actor=by)
+        else:
+            store_report(c, p["key"], md, by, model=model, sig=sig)
+    if err:
+        die(f"wrap-up failed: {err}")
+    return md
+
+WRAPUP_BACKOFF_MINUTES = 30   # after a failed wrap-up, wait this long before the second (last automatic) try
+
+def wrapup_due(c):
+    """Finished projects whose current finish has no report yet (within the window, not running, not given up)."""
+    days = setting(c, "wrapup_window_days")
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = []
+    rows = c.execute("SELECT * FROM projects WHERE status IN ('executing','paused','done') OR meta LIKE '%\"requested\"%' ORDER BY key").fetchall()
+    backoff = (datetime.now(timezone.utc) - timedelta(minutes=WRAPUP_BACKOFF_MINUTES)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for p in rows:
+        meta = json.loads(p["meta"] or "{}")
+        w = meta.get("wrapup") or {}
+        if w.get("pid") and alive(w["pid"]):
+            continue
+        requested = bool(w.get("requested"))
+        fin = project_finish(c, p)
+        if not requested and (not fin or fin[1] < since or (meta.get("report") or {}).get("sig") == fin[0]):
+            continue
+        if not requested and w.get("sig") == (fin and fin[0]) and w.get("tries", 0) >= 2:
+            continue   # gave up on this finish; Regenerate (requested) tries again
+        if not requested and (w.get("failed") or "") > backoff:
+            continue   # failed just now (maybe a usage limit): try again later, not on the next poll
+        if (w.get("quota_until") or "") > now():
+            continue
+        out.append(p)
+    return out
+
+def wrapup_reports(c, jobs, me):
+    """Daemon: one wrap-up session at a time, each a detached `bl project report KEY --generate`."""
+    for k, (pr, t0) in list(jobs.items()):
+        if pr.poll() is None:
+            if time.monotonic() - t0 > 60 * 20:
+                try: os.killpg(pr.pid, signal.SIGTERM)
+                except Exception: pr.kill()
+                pr.wait(timeout=10)
+                with tx(c):
+                    if c.execute("SELECT 1 FROM projects WHERE key=?", (k,)).fetchone():
+                        set_wrapup(c, k, pid=None, error="timed out after 20 minutes", failed=now())
+                del jobs[k]
+            continue
+        del jobs[k]
+    if jobs or not setting(c, "wrapup_reports") or not spawning(c) or quota_until(c):
+        return
+    try:
+        due = wrapup_due(c)[:1]
+    except Exception as e:   # never take the daemon down over a report
+        print(f"[{now()}] wrap-up check failed: {e}", flush=True); return
+    for p in due:
+        LOGS.mkdir(parents=True, exist_ok=True)
+        with tx(c):
+            set_wrapup(c, p["key"], requested=None, pid=None)
+        try:
+            with open(LOGS / f"wrapup-{p['key']}.log", "w") as f:
+                pr = subprocess.Popen([sys.executable, str(SELF), "project", "report", p["key"], "--generate", "--by", me],
+                                      cwd=str(HOME), stdout=f, stderr=subprocess.STDOUT, start_new_session=True)
+        except OSError as e:
+            with tx(c):
+                set_wrapup(c, p["key"], error=str(e)[:200], failed=now())
+            return
+        jobs[p["key"]] = (pr, time.monotonic())
+        notify(c, p["key"], f"{p['key']} finished: writing its wrap-up report ({setting(c, 'wrapup_model', p['key'])})")
+
+def cmd_report(a):
+    c = connect()
+    p = project_row(c, a.key)
+    if a.prompt:
+        print(wrapup_prompt(c, p["key"], gh=not a.no_gh)); return
+    if a.set is not None:
+        md = sys.stdin.read() if a.set == "-" else Path(a.set).read_text()
+        if not md.strip():
+            die("empty report")
+        with tx(c):
+            store_report(c, p["key"], md, a.by or agent_id())
+        print("ok"); return
+    if a.request:   # chito's Regenerate: the daemon picks it up on its next pass (or start it now with --generate)
+        with tx(c):
+            set_wrapup(c, p["key"], requested=now(), tries=0, error=None)
+            event(c, "report", project=p["key"], body="wrap-up report requested", actor=a.by or agent_id())
+        print("requested: the daemon writes the report on its next pass"); return
+    if a.generate:
+        md = generate_report(c, p["key"], a.by or agent_id())
+        print(md); return
+    rep = json.loads(p["meta"] or "{}").get("report")
+    if a.json:
+        print(json.dumps({"report": rep, "wrapup": json.loads(p["meta"] or "{}").get("wrapup"),
+                          "finish": project_finish(c, p)}, indent=1)); return
+    if not rep:
+        die(f"{p['key']} has no wrap-up report yet (bl project report {p['key']} --generate)", 0)
+    print(f"<!-- {p['key']} wrap-up, {rep['at']} by {rep['by']}{' (' + rep['model'] + ')' if rep.get('model') else ''} -->\n{rep['md']}")
+
 ORCH_QUICK_SECONDS = 60   # an orchestrator that fails faster than this did not get to work (login, flags, API errors)
 ORCH_BACKOFF = {}          # project -> (crashes in a row, monotonic time before which no new orchestrator starts)
 
@@ -2797,10 +3093,16 @@ def main():
 
     P("init", cmd_init)
     p = P("project", cmd_project)
-    p.add_argument("action", choices=["add", "ls", "set", "start", "pause", "resume", "plan", "archive", "done"]); p.add_argument("key", nargs="?")
+    p.add_argument("action", choices=["add", "ls", "set", "start", "pause", "resume", "plan", "archive", "done", "report"]); p.add_argument("key", nargs="?")
     p.add_argument("--executor", choices=["daemon", "session", "auto"]); p.add_argument("--evergreen", action="store_true")
     p.add_argument("name", nargs="?"); p.add_argument("--repo"); p.add_argument("--doc"); p.add_argument("--review", choices=["self", "pr", "ask"])
     p.add_argument("--soft", action="store_true", help="pause/plan/archive: let running work finish instead of stopping it now")
+    p.add_argument("--set", help="report: store this Markdown file (- for stdin) as the report")
+    p.add_argument("--generate", action="store_true", help="report: run the wrap-up session now and store its report")
+    p.add_argument("--request", action="store_true", help="report: ask the daemon to (re)write the report on its next pass")
+    p.add_argument("--prompt", action="store_true", help="report: print the wrap-up prompt (the collected inputs) instead")
+    p.add_argument("--no-gh", dest="no_gh", action="store_true", help="report --prompt: skip GitHub and git lookups")
+    p.add_argument("--by", help="report: who wrote it (default: this agent)")
     p.add_argument("fields", nargs="*")
     p = P("add", cmd_add); p.add_argument("project"); p.add_argument("title"); p.add_argument("-b", "--body"); p.add_argument("-f", "--file")
     p.add_argument("--after", help="blockers, comma-separated"); p.add_argument("--blocks", help="tickets that wait on this one")

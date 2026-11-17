@@ -857,9 +857,102 @@ function showcaseItems(m, big) {
   }
   return box;
 }
+// ---- wrap-up report: what a finished project achieved (bl project report; the daemon writes one per finish) ----
+const RUNNABLE = new Set(['todo', 'in_progress', 'in_review', 'failed']);
+// When the project finished (the last ticket that went final), or null while it still has runnable work. Mirrors bl's project_finish.
+function projFinish(p, tks = bl.data.tickets.filter(t => t.project === p.key)) {
+  if (!['executing', 'paused', 'done'].includes(p.status) || !tks.some(t => t.state === 'done')) return null;
+  if (p.status !== 'done' && (p.evergreen || tks.some(t => RUNNABLE.has(t.state) && !(t.assignee === 'human' && t.state === 'todo')))) return null;
+  return tks.filter(t => FINAL.has(t.state)).map(t => t.finished || t.updated || '').sort().pop() || null;
+}
+const reportOf = p => p.meta?.report || null;
+// Running or requested in the last 15 minutes (a crashed session's pid would otherwise read as busy forever).
+const wrapupBusy = p => { const w = p.meta?.wrapup; const at = w?.pid ? w.started : w?.requested; return !!at && Date.now() - Date.parse(at) < 15 * 6e4; };
+function regenBtn(p) {
+  const has = !!reportOf(p);
+  const b = actBtn(wrapupBusy(p) ? tr('Writing…') : has ? tr('Regenerate') : tr('Write report'), 'project-report', p.key, null,
+    { title: tr('A Sonnet session (re)writes the wrap-up report from the tickets; the daemon starts it within a few seconds') });
+  if (wrapupBusy(p)) b.disabled = true;
+  return b;
+}
+function reportMd(text) {
+  const d = md(text);
+  d.classList.add('bl-report-md');
+  for (const a of d.querySelectorAll('a[href]')) { a.target = '_blank'; a.rel = 'noopener'; }
+  return d;
+}
+function reportStatus(p) {
+  const r = reportOf(p), w = p.meta?.wrapup;
+  if (wrapupBusy(p)) return tr('Writing the wrap-up report…');
+  if (w?.error && !r) return tr('The wrap-up report failed: {err}', { err: w.error.slice(0, 160) });
+  return r ? '' : tr('No wrap-up report yet.');
+}
+// The full report at the top of the project page.
+function reportBox(p) {
+  const r = reportOf(p);
+  if (!r && !projFinish(p) && !wrapupBusy(p)) return null;
+  const box = el('details', 'bl-sec bl-report'); box.id = 'report'; box.open = store.get('reportOpen', true);
+  box.addEventListener('toggle', () => store.set('reportOpen', box.open));
+  const sum = el('summary'); sum.append(el('h2', 'bl-h2', tr('Wrap-up report')));
+  const meta = el('span', 'bl-report-meta');
+  if (r?.at) { const t = el('span', null, tr('written {ago}', { ago: ctx.fmtRelAgo(r.at) })); t.title = `${ctx.fmtDateTime(r.at)}${r.model ? ' · ' + r.model : ''}${r.by ? ' · ' + r.by : ''}`; meta.append(t); }
+  const fin = projFinish(p);
+  if (r?.sig && fin && r.finished_at && r.finished_at < fin) meta.append(el('span', 'bad', tr('older than the last finish')));
+  sum.append(meta, regenBtn(p));
+  box.append(sum);
+  const st = reportStatus(p); if (st) box.append(el('div', 'bl-report-status', st));
+  if (r?.md) box.append(reportMd(r.md));
+  return box;
+}
+// Projects that finished in the last 7 days, as cards with the TL;DR; each opens the full report.
+function recentlyFinished(projects, all) {
+  const days = Number(setting(null, 'wrapup_window_days', 7)) || 7;
+  const since = new Date(Date.now() - days * 864e5).toISOString().replace(/\.\d+Z$/, 'Z');
+  const list = projects.map(p => ({ p, at: projFinish(p, all.filter(t => t.project === p.key)) }))
+    .filter(x => x.at && x.at >= since).sort((a, b) => (a.at < b.at ? 1 : -1));
+  if (!list.length) return null;
+  const sec = el('section', 'bl-recent');
+  sec.append(el('h2', 'bl-h2', tr('Recently finished')));
+  const grid = el('div', 'bl-recent-grid');
+  for (const { p, at } of list) {
+    const r = reportOf(p);
+    const c = el('div', 'bl-recent-card');
+    const top = el('div', 'bl-recent-top');
+    const name = linkTo(el('a', 'bl-recent-name'), projPath(p.key) + '#report');
+    name.append(el('span', 'bl-lane-key num', p.key), el('span', null, p.name));
+    const when = el('span', 'bl-recent-when', tr('finished {ago}', { ago: ctx.fmtRelAgo(at) })); when.title = ctx.fmtDateTime(at);
+    top.append(name, when);
+    c.append(top);
+    if (r?.tldr) c.append(el('p', 'bl-recent-tldr', r.tldr));
+    else c.append(el('p', 'bl-recent-tldr none', reportStatus(p)));
+    const acts = el('div', 'bl-recent-acts');
+    if (r) acts.append(linkTo(el('a', 'btn bl-act', tr('Open report')), projPath(p.key) + '#report'));
+    acts.append(regenBtn(p));
+    c.append(acts);
+    grid.append(c);
+  }
+  sec.append(grid);
+  return sec;
+}
+// The roadmap's default last card: a finished project with no end showcase ends with its report.
+function finishedCard(p) {
+  const at = projFinish(p), r = reportOf(p);
+  if (!at && !r) return null;
+  const ms = (bl.data.milestones || []).filter(m => m.project === p.key && m.status !== 'canceled').sort((a, b) => a.seq - b.seq);
+  const last = ms[ms.length - 1];
+  if (last && last.showcases?.length && ['showcased', 'accepted'].includes(last.status)) return null;
+  const card = el('a', 'bl-ms ms-showcased bl-ms-finished'); card.href = '#report';
+  card.addEventListener('click', e => { e.preventDefault(); const b = document.getElementById('report'); if (b) { b.open = true; b.scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
+  const top = el('div', 'bl-ms-top'); top.append(el('span', 'bl-ms-state ms-showcased', tr('Finished')));
+  if (at) { const d = el('span', 'bl-ms-due', ctx.fmtRelAgo(at)); d.title = ctx.fmtDateTime(at); top.append(d); }
+  card.append(top, el('div', 'bl-ms-title', tr('Wrap-up report')));
+  card.append(el('div', 'bl-show-note', r?.tldr || reportStatus(p)));
+  return card;
+}
 function roadmap(p) {
   const ms = (bl.data.milestones || []).filter(m => m.project === p.key && (ui.closed === 'all' || m.status !== 'canceled'));
-  if (!ms.length) return null;
+  const fin = finishedCard(p);
+  if (!ms.length && !fin) return null;
   const wrap = el('div', 'bl-roadmap');
   // Dismissed milestones fold into small chips at the start of the strip (remembered in this browser); a chip
   // click brings the card back.
@@ -914,6 +1007,7 @@ function roadmap(p) {
     c.addEventListener('click', () => { ui.milestone = ui.milestone === '-' ? null : '-'; renderBacklog(); });
     wrap.append(c);
   }
+  if (fin) wrap.append(fin);
   const sc = el('div', 'bl-roadmap-scroll'); sc.append(wrap);
   return sc;
 }
@@ -1204,6 +1298,7 @@ function renderLanes(root) {
     const q = daemonQuota(); if (q) root.append(q);
     const ny = needsYouPanel(all); if (ny) root.append(ny);
     root.append(el('h2', 'bl-h2', tr('Open projects')), openProjects(projects, all));
+    const rf = recentlyFinished(projects, all); if (rf) root.append(rf);
     return;
   }
   if (finishedMode()) setClosed('none');   // the Projects tab has no Finished view (it lives on the Tickets tab)
@@ -1224,6 +1319,7 @@ function renderLanes(root) {
     root.append(table(visibleTickets(all).filter(t => live.has(t.project) && matches(t))));
     return;
   }
+  if (!ui.q.trim()) { const rf = recentlyFinished(projects, all); if (rf) root.append(rf); }
   const cols = LANE_COLS.filter(st => (showsClosed() || st !== 'done') && (st === 'todo' || st === 'in_progress' || all.some(t => t.state === st)));
   const grid = el('div', 'bl-lanes');
   grid.style.setProperty('--cols', String(cols.length));
@@ -1415,6 +1511,7 @@ function renderProject(root, p) {
   const ctl = el('div', 'bl-proj-ctl'); ctl.append(projState(p), lifecycleButtons(p, false));
   root.append(ctl);
   const exl = execLine(p, false); if (exl) root.append(exl);
+  const rep = reportBox(p); if (rep) root.append(rep);
   if (p.quota?.until) {
     const q = el('div', 'bl-quota');
     q.append(el('b', null, tr('Usage limit hit.')), tr(' New tickets in this project wait until {until}. Running work can finish.', { until: ctx.fmtDateTime(p.quota.until) }));
