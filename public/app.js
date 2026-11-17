@@ -3,7 +3,7 @@ import DOMPurify from '/vendor/purify.js';
 import { makeChords } from '/keys.js';
 import { t, tp, lang, LOCALE, setLang, applyStatic } from '/i18n.js';
 import { initDeploy, renderDeploy, startDeployPolling, stopDeployPolling } from '/deploy.js';
-import { initBacklog, renderBacklog, parseBacklogPath, startBacklogPolling, stopBacklogPolling, closeDrawer, stateIcon } from '/backlog.js';
+import { initBacklog, renderBacklog, parseBacklogPath, startBacklogPolling, stopBacklogPolling, closeDrawer, stateIcon, syncTicketPanel } from '/backlog.js';
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -1265,11 +1265,11 @@ function setView(view) {
   document.body.classList.toggle('view-deploy', view === 'deploy');
   $('#board').hidden = view !== 'artifacts';
   $('#backlog').hidden = view !== 'backlog';
-  // A ticket's side panel belongs to the board; leaving the board (say, through one of its session links) closes it.
-  if (view !== 'backlog') $('#bl-drawer').hidden = true;
+  // A ticket's side panel belongs to the board (and opens over Deployment); leaving them, say through one of its session links, closes it.
+  if (view !== 'backlog' && view !== 'deploy') $('#bl-drawer').hidden = true;
   $('#deploy').hidden = view !== 'deploy';
   if (view === 'backlog') { renderBacklog(); startBacklogPolling(); } else stopBacklogPolling();
-  if (view === 'deploy') { document.title = `${t('Deployment')} · chito`; renderDeploy(); startDeployPolling(); } else stopDeployPolling();
+  if (view === 'deploy') { document.title = `${t('Deployment')} · chito`; renderDeploy(); startDeployPolling(); syncTicketPanel(); } else stopDeployPolling();
   document.querySelectorAll('.views .view-tab').forEach(t => {
     if (t.dataset.view === view) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
   });
@@ -1372,7 +1372,7 @@ document.addEventListener('keydown', e => {
   const settingsOpen = !$('#settings').hidden;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#q').focus(); $('#q').select(); return; }
   if (e.key === 'Escape') {
-    if (state.view === 'backlog' && !settingsOpen && closeDrawer()) return;
+    if ((state.view === 'backlog' || state.view === 'deploy') && !settingsOpen && closeDrawer()) return;
     if (document.querySelector('.lightbox')) { document.querySelector('.lightbox').remove(); return; }
     if (settingsOpen) { closeSettings(); return; }
     if (state.infoOpen) { toggleInfo(false); return; }
@@ -1510,7 +1510,7 @@ updateWorkButton();
 $('#b-open').addEventListener('click', reopen);
 $('#b-pin').addEventListener('click', () => togglePin());
 initDeploy({ toast, fmtRelAgo, fmtDateTime, navigate: p => { history.pushState({}, '', p); route(); } });
-initBacklog({ openSession: id => openSession(id), toast, fmtRel: fmtRelShow, fmtRelAgo, fmtDateTime, getPr: url => state.prMap.get(url)?.gh || null });
+initBacklog({ navigate: p => { history.pushState({}, '', p); route(); }, openSession: id => openSession(id), toast, fmtRel: fmtRelShow, fmtRelAgo, fmtDateTime, getPr: url => state.prMap.get(url)?.gh || null });
 $('#b-copy').addEventListener('click', () => state.active && copy(state.active.meta.resumeCommand, t('resume command')));
 $('#b-link').addEventListener('click', () => copy(`${location.origin}/s/${state.activeId}`, t('permalink')));
 document.addEventListener('click', e => {

@@ -137,7 +137,8 @@ function stats() {
 function ticketChip(tk) {
   const label = tk.key;
   const cls = 'dp-ticket bl-st-' + (tk.state || 'unknown');
-  const a = tk.project ? inner(`/projects/${encodeURIComponent(tk.project)}/${encodeURIComponent(tk.key)}`, label, cls) : el('span', cls, label);
+  // The ticket opens in the side panel over this page (?ticket=KEY), as on Projects.
+  const a = tk.project ? inner(`/deploy?ticket=${encodeURIComponent(tk.key)}`, label, cls) : el('span', cls, label);
   if (tk.title) a.title = `${tk.title}${tk.state ? ` (${tk.state.replace('_', ' ')})` : ''}`;
   return a;
 }
