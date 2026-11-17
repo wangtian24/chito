@@ -199,8 +199,17 @@ export function parseBacklogPath(pathname) {
 }
 
 function go(path) {
+  // Off the Projects pages (the panel open over Deployment), a link inside the panel goes through the app's router.
+  if ($('#backlog')?.hidden && ctx.navigate) { ctx.navigate(path); return; }
   if (location.pathname + location.search !== path) history.pushState({}, '', path);
   renderBacklog();
+}
+// The panel over another page (Deployment): ?ticket=KEY opens it, its absence closes it.
+export async function syncTicketPanel() {
+  const key = (queryTicket() || '').toUpperCase() || null;
+  if (key && !bl.data) await loadBacklog();
+  if (!$('#backlog')?.hidden) return;   // the Projects pages manage their own panel
+  renderDrawer(key);
 }
 
 function linkTo(a, path) {
@@ -2181,6 +2190,7 @@ export function closeDrawer() {
   const r = parseBacklogPath(location.pathname);
   if (r?.ticket) { go(projPath(r.project)); return true; }
   if (r && queryTicket()) { const u = new URL(location.href); u.searchParams.delete('ticket'); go(u.pathname + u.search); return true; }
+  if (queryTicket()) { const u = new URL(location.href); u.searchParams.delete('ticket'); history.pushState({}, '', u.pathname + u.search); renderDrawer(null); return true; }
   return false;
 }
 
@@ -2345,7 +2355,7 @@ export function initBacklog(c) {
   document.addEventListener('click', e => {
     const d = $('#bl-drawer');
     if (!d || d.hidden || !e.isTrusted) return;
-    if (e.target.closest('#bl-drawer, .bl-card, .bl-node, .bl-table tbody tr, .bl-chip, .bl-flight-row, .bl-compact-row, .bl-row-toggles, .toast, .modal, a[href^="/projects/"]')) return;
+    if (e.target.closest('#bl-drawer, .bl-card, .bl-node, .bl-table tbody tr, .bl-chip, .bl-flight-row, .bl-compact-row, .bl-row-toggles, .dp-ticket, .toast, .modal, a[href^="/projects/"]')) return;
     if (!document.body.contains(e.target)) return; // re-rendered under the click
     closeDrawer();
   });
