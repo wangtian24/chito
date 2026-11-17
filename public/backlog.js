@@ -904,34 +904,70 @@ function reportBox(p) {
   if (r?.md) box.append(reportMd(r.md));
   return box;
 }
-// Projects that finished in the last 7 days, as cards with the TL;DR; each opens the full report.
+// A finished project's wrap-up report as one ticket-like row, "Execution Summary", with when the report was written;
+// a click pops the report up in a modal (cmd/ctrl-click still opens the project page at #report).
+const hasSummary = p => !!(reportOf(p) || wrapupBusy(p) || projFinish(p));
+const SUMMARY_IC = '<svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/></svg>';
+function summaryRow(p) {
+  const r = reportOf(p);
+  const row = linkTo(el('a', 'bl-compact-row bl-compact-summary'), projPath(p.key) + '#report');
+  row.addEventListener('click', e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; e.preventDefault(); e.stopPropagation(); openReportModal(p); }, true);
+  const ic = el('span', 'bl-summary-ic'); ic.innerHTML = SUMMARY_IC;
+  const at = r?.at;
+  const ago = el('span', 'num bl-compact-since', at ? ctx.fmtRel(at) : ''); ago.title = at ? tr('Written {when}', { when: ctx.fmtDateTime(at) }) : '';
+  row.append(ic, el('span', 'num', ''), el('span', 'bl-compact-title', tr('Execution Summary')),
+    el('span', 'bl-compact-why', r ? '' : reportStatus(p)), el('span', 'bl-compact-exec', wrapupBusy(p) ? tr('Writing…') : ''), ago, el('span'));
+  return row;
+}
+function openReportModal(p) {
+  const m = el('div', 'bl-modal');
+  const card = el('div', 'bl-modal-card bl-report-modal');
+  const head = el('div', 'bl-modal-head');
+  const r = reportOf(p);
+  head.append(el('b', null, tr('Execution Summary')), el('span', 'num', p.key), el('span', null, p.name));
+  if (r?.at) { const t = el('span', null, tr('written {ago}', { ago: ctx.fmtRelAgo(r.at) })); t.title = `${ctx.fmtDateTime(r.at)}${r.model ? ' · ' + r.model : ''}`; head.append(t); }
+  const regen = regenBtn(p); regen.classList.add('bl-report-regen');
+  const close = el('button', 'btn icon'); close.title = tr('Close (Esc)');
+  close.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  head.append(regen, close);
+  const body = el('div', 'bl-report-body');
+  const st = reportStatus(p); if (st) body.append(el('div', 'bl-report-status', st));
+  if (r?.md) body.append(reportMd(r.md));
+  card.append(head, body);
+  m.append(card);
+  const done = () => { m.remove(); document.removeEventListener('keydown', esc, true); };
+  const esc = e => { if (e.key === 'Escape') { e.stopPropagation(); done(); } };
+  close.addEventListener('click', done);
+  m.addEventListener('click', e => { if (e.target === m) done(); });
+  document.addEventListener('keydown', esc, true);
+  document.body.append(m);
+}
+// Finished within the wrap-up window (7 days by default): such projects stay listed with their Execution Summary row.
+function finishedRecently(p, tks) {
+  const days = Number(setting(null, 'wrapup_window_days', 7)) || 7;
+  const at = projFinish(p, tks);
+  return !!at && Date.parse(at) >= Date.now() - days * 864e5;
+}
+// Overview: projects that finished in the last 7 days, folded by default; each is a collapsed project row with its
+// Execution Summary row under it.
 function recentlyFinished(projects, all) {
   const days = Number(setting(null, 'wrapup_window_days', 7)) || 7;
   const since = new Date(Date.now() - days * 864e5).toISOString().replace(/\.\d+Z$/, 'Z');
   const list = projects.map(p => ({ p, at: projFinish(p, all.filter(t => t.project === p.key)) }))
     .filter(x => x.at && x.at >= since).sort((a, b) => (a.at < b.at ? 1 : -1));
   if (!list.length) return null;
-  const sec = el('section', 'bl-recent');
-  sec.append(el('h2', 'bl-h2', tr('Recently finished')));
-  const grid = el('div', 'bl-recent-grid');
-  for (const { p, at } of list) {
-    const r = reportOf(p);
-    const c = el('div', 'bl-recent-card');
-    const top = el('div', 'bl-recent-top');
-    const name = linkTo(el('a', 'bl-recent-name'), projPath(p.key) + '#report');
-    name.append(el('span', 'bl-lane-key num', p.key), el('span', null, p.name));
-    const when = el('span', 'bl-recent-when', tr('finished {ago}', { ago: ctx.fmtRelAgo(at) })); when.title = ctx.fmtDateTime(at);
-    top.append(name, when);
-    c.append(top);
-    if (r?.tldr) c.append(el('p', 'bl-recent-tldr', r.tldr));
-    else c.append(el('p', 'bl-recent-tldr none', reportStatus(p)));
-    const acts = el('div', 'bl-recent-acts');
-    if (r) acts.append(linkTo(el('a', 'btn bl-act', tr('Open report')), projPath(p.key) + '#report'));
-    acts.append(regenBtn(p));
-    c.append(acts);
-    grid.append(c);
+  const sec = el('details', 'bl-recent'); sec.open = store.get('recentOpen', false);
+  sec.addEventListener('toggle', () => store.set('recentOpen', sec.open));
+  const sum = el('summary'); sum.append(el('h2', 'bl-h2', tr('Recently finished')), el('span', 'num bl-recent-n', String(list.length)));
+  sec.append(sum);
+  const wrap = el('div', 'bl-lanes bl-open-projects'); wrap.style.setProperty('--cols', '1');
+  for (const { p } of list) {
+    const name = linkTo(el('a', 'bl-lane-name'), projPath(p.key));
+    name.append(el('span', 'bl-lane-key num', p.key), el('span', 'bl-lane-title', p.name));
+    const nameRow = el('div', 'bl-lane-namerow'); nameRow.append(name);
+    wrap.append(compactLane(p, all.filter(t => t.project === p.key), [], nameRow));
   }
-  sec.append(grid);
+  sec.append(wrap);
   return sec;
 }
 // The roadmap's default last card: a finished project with no end showcase ends with its report.
@@ -1319,7 +1355,6 @@ function renderLanes(root) {
     root.append(table(visibleTickets(all).filter(t => live.has(t.project) && matches(t))));
     return;
   }
-  if (!ui.q.trim()) { const rf = recentlyFinished(projects, all); if (rf) root.append(rf); }
   const cols = LANE_COLS.filter(st => (showsClosed() || st !== 'done') && (st === 'todo' || st === 'in_progress' || all.some(t => t.state === st)));
   const grid = el('div', 'bl-lanes');
   grid.style.setProperty('--cols', String(cols.length));
@@ -1336,7 +1371,7 @@ function renderLanes(root) {
     const tks = all.filter(t => t.project === p.key);
     const shown = visibleTickets(tks).filter(matches);
     if (ui.q.trim() && !shown.length) continue;
-    if (tks.length && !visibleTickets(tks).length) continue;
+    if (tks.length && !visibleTickets(tks).length && !(finishedRecently(p, tks) && !ui.q.trim())) continue;
     const lane = el('div', 'bl-lane');
     const side = el('div', 'bl-lane-side');
     const collapsed = ui.collapsed.has(p.key);
@@ -1359,6 +1394,7 @@ function renderLanes(root) {
       side.append(l);
     }
     const exl = execLine(p, true); if (exl) side.append(exl);
+    if (hasSummary(p)) { const sr = el('div', 'bl-compact-run bl-lane-summary'); sr.append(summaryRow(p)); side.append(sr); }
     side.append(lifecycleButtons(p, true));
     const facts = el('div', 'bl-lane-facts');
     const you = tks.filter(needsYou).length; if (you) facts.append(el('span', 'bad', trp(you, '{n} needs you', '{n} need you')));
@@ -1404,7 +1440,11 @@ function compactLane(p, tks, shown, nameRow, inPlace = false) {
   row.append(head);
   const run = shown.filter(t => t.state === 'in_progress').sort((a, b) => (a.started || '') < (b.started || '') ? -1 : 1);
   if (!inPlace) {   // Overview: in flight only, as before
-    if (run.length) { const list = el('div', 'bl-compact-run'); for (const t of run) list.append(flightRow(t, p)); row.append(list); }
+    if (run.length || hasSummary(p)) {
+      const list = el('div', 'bl-compact-run'); for (const t of run) list.append(flightRow(t, p));
+      if (hasSummary(p)) list.append(summaryRow(p));
+      row.append(list);
+    }
     lane.append(row);
     return lane;
   }
@@ -1416,9 +1456,10 @@ function compactLane(p, tks, shown, nameRow, inPlace = false) {
     ['you', q.filter(t => needsYou(t) && t.state !== 'failed').sort(byTime)],
     ['failed', q.filter(t => t.state === 'failed').sort(byTime)],
   ].filter(([k, list]) => ui.rows.has(k) && list.length);
-  if (groups.length) {
+  if (groups.length || hasSummary(p)) {
     const list = el('div', 'bl-compact-run');
     for (const [k, ts] of groups) for (const t of ts) list.append(k === 'flight' ? flightRow(t, p, true) : waitRow(t, p, k));
+    if (hasSummary(p)) list.append(summaryRow(p));
     row.append(list);
   }
   lane.append(row);

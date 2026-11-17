@@ -741,6 +741,8 @@ export default {
   "written {ago}": "{ago}写成",
   "older than the last finish": "早于最近一次完成",
   "Recently finished": "最近完成",
+  "Execution Summary": "执行总结",
+  "Written {when}": "写于 {when}",
   "finished {ago}": "{ago}完成",
   "Open report": "打开总结",
 };
