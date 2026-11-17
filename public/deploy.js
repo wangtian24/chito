@@ -179,12 +179,12 @@ function releaseKnot(rel, count, isLive) {
   return li;
 }
 
-// chito backs up GitHub's schedule: what it does, and what it did last.
-function backupLine() {
-  const b = data.backup || {};
+// chito runs the schedule itself: what it does, and what it did last.
+function scheduleLine() {
+  const b = data.auto || {};
   const p = el('p', 'dp-backup');
-  if (!b.enabled) { p.textContent = t('Backup off: chito does not start missed scheduled deploys (CHITO_DEPLOY_BACKUP=0).'); return p; }
-  p.append(t('Backup: GitHub sometimes skips scheduled runs, so {n} minutes after each one chito checks; if it never started and main has something new, chito starts the deploy.', { n: b.afterMinutes || 30 }));
+  if (!b.enabled) { p.textContent = t('No schedule: deploys run only when you press Deploy (CHITO_DEPLOY_CRON=off).'); return p; }
+  p.append(t('Schedule: chito checks {when} ({tz}); if main has something new and nothing is running, it deploys main. A commit whose deploy failed waits for the next merge.', { when: data.schedule.text, tz: data.schedule.tz }));
   if (b.lastAt) {
     const last = el('span', 'dp-backup-last');
     last.append(' ', b.lastAction === 'started' ? t('Last check {ago}: started one.', { ago: ctx.fmtRelAgo(b.lastAt) }) : t('Last check {ago}: nothing to do ({why}).', { ago: ctx.fmtRelAgo(b.lastAt), why: String(b.lastAction || '').replace(/^skipped: /, '') }));
@@ -259,6 +259,6 @@ export function renderDeploy() {
   if (!data) { root.append(el('div', 'board-status', t('Loading…'))); return; }
   root.append(head(), stats());
   if (data.runsError) root.append(el('div', 'board-status', t('GitHub run status unavailable: {err}', { err: data.runsError })));
-  if (data.schedule?.crons?.length) root.append(backupLine());
+  root.append(scheduleLine());
   root.append(chain());
 }
