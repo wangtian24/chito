@@ -11,6 +11,7 @@ import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, sessionMes
 import { workerModel } from './lib/worker-models.js';
 import { statsSummary } from './lib/stats.js';
 import { deploySummary, triggerDeploy, startDeploySchedule, runLog } from './lib/deploy.js';
+import { workOrdersStatus, saveSettings as saveWorkOrders, checkNow as checkWorkOrders, startWorkOrders } from './lib/work-orders.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // Started by launchd, chito gets a bare PATH (/usr/bin:/bin:…) without the folders where claude, gh, codex and pi
@@ -89,6 +90,7 @@ const STATIC = {
   '/style.css': ['public/style.css', 'text/css'],
   '/backlog.js': ['public/backlog.js', 'text/javascript'],
   '/deploy.js': ['public/deploy.js', 'text/javascript'],
+  '/work-orders.js': ['public/work-orders.js', 'text/javascript'],
   '/stats.js': ['public/stats.js', 'text/javascript'],
   '/stats-model.js': ['public/stats-model.js', 'text/javascript'],
   '/stats-insights.js': ['public/stats-insights.js', 'text/javascript'],
@@ -352,6 +354,13 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
       try { return send(res, 200, { ok: true, ...(await triggerDeploy({ target: url.searchParams.get('target') || 'main' })) }); } catch (e) { return send(res, 409, { error: e.message }); }
     }
+    if (p === '/api/work-orders' && req.method === 'GET') return send(res, 200, workOrdersStatus());
+    if (p === '/api/work-orders/settings' || p === '/api/work-orders/run') {
+      if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
+      if (p.endsWith('/run')) { checkWorkOrders(); return send(res, 202, { ok: true, ...workOrdersStatus(), running: true }); }
+      let body; try { body = JSON.parse(await readBody(req)); } catch { return send(res, 400, { error: 'bad body' }); }
+      try { saveWorkOrders(body || {}); return send(res, 200, { ok: true, ...workOrdersStatus() }); } catch (e) { return send(res, 400, { error: e.message }); }
+    }
     if (p === '/api/stats' && req.method === 'GET') return send(res, 200, await statsSummary({ refresh: url.searchParams.get('refresh') === '1' }));
     if (p === '/api/backlog' && req.method === 'GET') return send(res, 200, { ...(await backlogSummary()), artiBase: ARTI_BASE });
     if (p === '/api/backlog/search' && req.method === 'GET') return send(res, 200, { tickets: await searchTickets(url.searchParams.get('q') || '') });
@@ -458,3 +467,11 @@ console.log(`[chito] indexed ${n} sessions in ${Date.now() - t0}ms from ${PROJEC
 server.listen(PORT, HOST, () => console.log(`[chito] http://localhost:${PORT}`));
 // Only the long-running instance on the default port runs the deploy schedule (not test servers on other ports).
 if (PORT === 8791 || process.env.CHITO_DEPLOY_SCHEDULE === '1') startDeploySchedule();
+// Same for the Slack work-orders check (Settings → Work orders).
+if (PORT === 8791 || process.env.CHITO_WORK_ORDERS === '1') startWorkOrders({
+  // Live interactive sessions for ?sessions / ?ask: newest first, not daemon workers or other headless runs.
+  sessions: () => [...liveSessions()].map(([id, v]) => ({ id, v, meta: getMeta(id) }))
+    .filter(x => x.meta && x.meta.entrypoint === 'cli')
+    .sort((a, b) => (b.v.updatedAt || 0) - (a.v.updatedAt || 0))
+    .map(x => ({ id: x.id, title: x.meta.title, project: x.meta.project || (x.meta.cwd ? path.basename(x.meta.cwd) : '') })),
+});

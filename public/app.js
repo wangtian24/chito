@@ -3,6 +3,7 @@ import DOMPurify from '/vendor/purify.js';
 import { makeChords } from '/keys.js';
 import { t, tp, lang, LOCALE, setLang, applyStatic } from '/i18n.js';
 import { initDeploy, renderDeploy, startDeployPolling, stopDeployPolling } from '/deploy.js';
+import { load as loadWorkOrders } from '/work-orders.js';
 import { initBacklog, renderBacklog, parseBacklogPath, startBacklogPolling, stopBacklogPolling, closeDrawer, stateIcon, syncTicketPanel } from '/backlog.js';
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -1386,6 +1387,7 @@ function showTab(name) {
   document.querySelectorAll('#settings .tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
   document.querySelectorAll('#settings .tabpanel').forEach(p => { p.hidden = p.dataset.panel !== name; });
   store.set('settingsTab', name);
+  if (name === 'work-orders') loadWorkOrders();
 }
 
 function openSettings(tab) {
@@ -1415,8 +1417,8 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (settingsOpen) {
-    const tabs = ['appearance', 'conversation', 'keyboard', 'about'];
-    if (['1', '2', '3', '4'].includes(e.key)) { e.preventDefault(); showTab(tabs[Number(e.key) - 1]); }
+    const tabs = ['appearance', 'conversation', 'work-orders', 'keyboard', 'about'];
+    if (['1', '2', '3', '4', '5'].includes(e.key)) { e.preventDefault(); showTab(tabs[Number(e.key) - 1]); }
     return;
   }
   if (inSearch) {
