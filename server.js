@@ -9,6 +9,7 @@ import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
 import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, sessionMessages, searchTickets } from './lib/backlog.js';
 import { workerModel } from './lib/worker-models.js';
+import { statsSummary } from './lib/stats.js';
 import { deploySummary, triggerDeploy, startDeploySchedule, runLog } from './lib/deploy.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -88,6 +89,11 @@ const STATIC = {
   '/style.css': ['public/style.css', 'text/css'],
   '/backlog.js': ['public/backlog.js', 'text/javascript'],
   '/deploy.js': ['public/deploy.js', 'text/javascript'],
+  '/stats.js': ['public/stats.js', 'text/javascript'],
+  '/stats-model.js': ['public/stats-model.js', 'text/javascript'],
+  '/stats-insights.js': ['public/stats-insights.js', 'text/javascript'],
+  '/stats-charts.js': ['public/stats-charts.js', 'text/javascript'],
+  '/stats.css': ['public/stats.css', 'text/css'],
   '/i18n.js': ['public/i18n.js', 'text/javascript'],
   '/i18n/zh-CN.js': ['public/i18n/zh-CN.js', 'text/javascript'],
   '/keys.js': ['public/keys.js', 'text/javascript'],
@@ -346,6 +352,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
       try { return send(res, 200, { ok: true, ...(await triggerDeploy({ target: url.searchParams.get('target') || 'main' })) }); } catch (e) { return send(res, 409, { error: e.message }); }
     }
+    if (p === '/api/stats' && req.method === 'GET') return send(res, 200, await statsSummary({ refresh: url.searchParams.get('refresh') === '1' }));
     if (p === '/api/backlog' && req.method === 'GET') return send(res, 200, { ...(await backlogSummary()), artiBase: ARTI_BASE });
     if (p === '/api/backlog/search' && req.method === 'GET') return send(res, 200, { tickets: await searchTickets(url.searchParams.get('q') || '') });
     if (p === '/api/backlog/showcase' && req.method === 'GET') {
