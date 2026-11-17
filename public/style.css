@@ -1751,3 +1751,24 @@ body.fx-full .fx-chart { height: 220px; }
 .bl-ms-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--color-muted); }
 .bl-ms-dot.ms-accepted, .bl-ms-dot.ms-reached, .bl-ms-dot.ms-showcased { background: var(--bl-done, #2e7d32); }
 .bl-ms-dot.ms-active { background: var(--bl-in_progress); }
+/* wrap-up report (CHITO-12): the project page's report box and the Recently finished cards */
+.bl-report summary { display: flex; align-items: center; gap: var(--space-sm); }
+.bl-report-meta { display: inline-flex; gap: var(--space-sm); font: 400 12px var(--font-body); color: var(--color-muted); margin-right: auto; }
+.bl-report-meta .bad { color: var(--bl-failed); }
+.bl-report-status { font: 400 13px var(--font-body); color: var(--color-muted); margin: var(--space-xs) 0; }
+.bl-report-md { max-width: 860px; padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-rule-sheet); border-radius: var(--radius-ctl); background: var(--color-sheet); font: 400 13.5px/1.5 var(--font-body); margin-bottom: var(--space-md); }
+.bl-report-md h2 { font: 600 14px var(--font-display); margin: var(--space-sm) 0 4px; }
+.bl-report-md ul { margin: 2px 0; padding-left: 20px; }
+.bl-report-md p { margin: 4px 0; }
+.bl-recent { margin: var(--space-md) 0; }
+.bl-recent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--space-sm); }
+.bl-recent-card { display: flex; flex-direction: column; gap: 6px; padding: 10px var(--space-md); border: 1px solid var(--color-rule-sheet); border-radius: var(--radius-ctl); background: color-mix(in oklch, var(--bl-done-wash) 25%, var(--color-sheet)); }
+.bl-recent-top { display: flex; align-items: baseline; gap: var(--space-sm); }
+.bl-recent-name { display: inline-flex; gap: 6px; font: 600 14px var(--font-display); color: var(--color-ink); text-decoration: none; min-width: 0; }
+.bl-recent-name:hover { text-decoration: underline; }
+.bl-recent-when { margin-left: auto; font: 400 12px var(--font-body); color: var(--color-muted); white-space: nowrap; }
+.bl-recent-tldr { margin: 0; font: 400 13px/1.45 var(--font-body); color: var(--color-ink-2); }
+.bl-recent-tldr.none { color: var(--color-muted); font-style: var(--meta-style); }
+.bl-recent-acts { display: flex; gap: var(--space-sm); margin-top: auto; }
+.bl-recent-acts .btn { text-decoration: none; }
+.bl-ms-finished { text-decoration: none; }
