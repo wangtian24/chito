@@ -301,15 +301,73 @@ function head(title, sub, extra) {
   return h;
 }
 
-function controls(withSearch = true, withFinished = true) {
+// Project typeahead inside a search field: typing lists the projects whose key or name match; ↑↓ and Enter (or a
+// click) pick one, which filters the page to it and shows as a chip in the field (× or Backspace on an empty field clears it).
+ui.taIdx = 0; ui.taOpen = false;
+function projectTypeahead(box, inp, projects, current, pick, clearText) {
+  box.classList.add('bl-ta-box');
+  const choose = key => { clearText(); ui.taOpen = false; ui.taIdx = 0; pick(key); const n = $(`#${inp.id}`); n?.focus(); };
+  if (current) {
+    const p = projects.find(x => x.key === current);
+    const chip = el('span', 'bl-ta-chip');
+    chip.append(el('span', 'num', current));
+    if (p?.name) chip.title = p.name;
+    const x = el('button', 'bl-ta-x'); x.type = 'button'; x.title = tr('All projects'); x.setAttribute('aria-label', tr('All projects'));
+    x.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+    x.addEventListener('click', e => { e.preventDefault(); choose(null); });
+    chip.append(x);
+    box.append(chip);
+    box.classList.add('has-chip');
+    requestAnimationFrame(() => box.style.setProperty('--chip-w', `${chip.offsetWidth}px`));
+  }
+  const q = inp.value.trim().toLowerCase();
+  const hits = !q ? [] : projects.filter(p => p.key !== current && `${p.key} ${p.name || ''}`.toLowerCase().includes(q))
+    .sort((a, b) => (b.key.toLowerCase().startsWith(q) - a.key.toLowerCase().startsWith(q)) || a.key.localeCompare(b.key)).slice(0, 8);
+  const list = el('div', 'bl-ta'); list.setAttribute('role', 'listbox');
+  list.hidden = !(hits.length && ui.taOpen);
+  ui.taIdx = Math.min(ui.taIdx, Math.max(0, hits.length - 1));
+  hits.forEach((p, i) => {
+    const o = el('div', `bl-ta-opt${i === ui.taIdx ? ' on' : ''}`); o.setAttribute('role', 'option');
+    o.append(el('span', 'num', p.key), el('span', 'bl-ta-name', p.name || ''));
+    o.addEventListener('mousedown', e => { e.preventDefault(); choose(p.key); });
+    list.append(o);
+  });
+  if (hits.length) list.prepend(el('div', 'bl-ta-cap', tr('Filter to project')));
+  box.append(list);
+  inp.addEventListener('blur', () => { list.hidden = true; });
+  inp.addEventListener('focus', () => { if (hits.length && ui.taOpen) list.hidden = false; });
+  inp.addEventListener('keydown', e => {
+    const open = !list.hidden && hits.length;
+    if (e.key === 'Backspace' && current && !inp.value) { e.preventDefault(); choose(null); return; }
+    if (!open) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      ui.taIdx = (ui.taIdx + (e.key === 'ArrowDown' ? 1 : -1) + hits.length) % hits.length;
+      list.querySelectorAll('.bl-ta-opt').forEach((o, i) => o.classList.toggle('on', i === ui.taIdx));
+    } else if (e.key === 'Enter') { e.preventDefault(); choose(hits[ui.taIdx].key); }
+    else if (e.key === 'Escape') { e.preventDefault(); ui.taOpen = false; list.hidden = true; }
+  });
+}
+// The Projects tab's project filter lives in the URL (?project=KEY), so Back and a reload keep it.
+const laneProject = () => (new URLSearchParams(location.search).get('project') || '').toUpperCase() || null;
+function setLaneProject(key) {
+  const u = new URL(location.href);
+  if (key) u.searchParams.set('project', key); else u.searchParams.delete('project');
+  history.pushState(history.state, '', u.pathname + u.search + u.hash);
+  renderBacklog();
+}
+
+function controls(withSearch = true, withFinished = true, suggest = null) {
   const row = el('div', 'board-controls');
   if (withSearch) {
     const box = el('div', 'search board-search');
     box.innerHTML = '<svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
-    const inp = el('input'); inp.type = 'search'; inp.placeholder = tr('Search key, title or label'); inp.id = 'blq'; inp.value = ui.q; inp.autocomplete = 'off'; inp.spellcheck = false;
-    inp.addEventListener('input', () => { ui.q = inp.value; const pos = inp.selectionStart; renderBacklog(); const n = $('#blq'); n.focus(); n.setSelectionRange(pos, pos); });
-    inp.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); if (inp.value) { ui.q = ''; renderBacklog(); } else inp.blur(); } });
+    const inp = el('input'); inp.type = 'search'; inp.placeholder = suggest ? tr('Search project, key, title or label') : tr('Search key, title or label'); inp.id = 'blq'; inp.value = ui.q; inp.autocomplete = 'off'; inp.spellcheck = false;
+    inp.addEventListener('input', () => { ui.q = inp.value; ui.taIdx = 0; ui.taOpen = true; const pos = inp.selectionStart; renderBacklog(); const n = $('#blq'); n.focus(); n.setSelectionRange(pos, pos); });
+    if (suggest) projectTypeahead(box, inp, suggest.projects, suggest.current, suggest.pick, () => { ui.q = ''; });
+    inp.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); if (inp.value) { ui.q = ''; renderBacklog(); } else inp.blur(); } });
     box.append(inp);
+    if (suggest) box.append(...box.querySelectorAll('.bl-ta'));   // the list after the field
     row.append(box);
   }
   const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup');
@@ -1333,7 +1391,7 @@ function tabBar(cur, counts) {
 function renderLanes(root) {
   const d = bl.data;
   let projects = d.projects.filter(p => p.status !== 'archived');
-  const all = d.tickets;
+  let all = d.tickets;
   const running = all.filter(t => t.state === 'in_progress').length;
   const dis = dismissedMap();
   const you = all.filter(t => needsYou(t) && dis[t.key] !== needSig(t)).length;   // dismissed ones don't count
@@ -1354,8 +1412,10 @@ function renderLanes(root) {
     return;
   }
   if (finishedMode()) setClosed('none');   // the Projects tab has no Finished view (it lives on the Tickets tab)
-  const ctl = controls(true, false);
+  const pf = laneProject() && projects.some(p => p.key === laneProject()) ? laneProject() : null;
+  const ctl = controls(true, false, { projects, current: pf, pick: setLaneProject });
   projects = sortProjects(projects, all);
+  if (pf) { projects = projects.filter(p => p.key === pf); all = all.filter(t => t.project === pf); }
   if (!finishedMode()) ctl.append(projSortControl());
   const visible = projects.map(p => p.key);
   const allCollapsed = visible.length && visible.every(k => ui.collapsed.has(k));
@@ -1388,7 +1448,8 @@ function renderLanes(root) {
     const shown = visibleTickets(tks).filter(matches);
     if (ui.q.trim() && !shown.length) continue;
     const done = doneAt(p, tks);
-    if (done && !ui.q.trim()) { if (!doneInWindow(done)) continue; }
+    if (pf) { /* the one project asked for shows whatever its state */ }
+    else if (done && !ui.q.trim()) { if (!doneInWindow(done)) continue; }
     else if (tks.length && !visibleTickets(tks).length) continue;
     const lane = el('div', 'bl-lane');
     const side = el('div', 'bl-lane-side');
@@ -1814,7 +1875,9 @@ function table(tks, all = false) {
   }
   // Tree gutter: each title has a node dot; lines run between dots, left of the text, so they never cross it.
   const STEP = 18, PAD = 8, DOT = 5, TEXT = 16, MAXD = 8;
-  for (const t of rows) {
+  // The Tickets tab shows one page of the sorted rows (TK_PER per page).
+  const pageRows = all ? rows.slice(ui.tkPage * TK_PER, (ui.tkPage + 1) * TK_PER) : rows;
+  for (const t of pageRows) {
     const r = el('tr', `bl-${t.state}${openKey === t.key ? ' sel' : ''}${needsCls(t)}`); r.dataset.key = t.key;
     r.addEventListener('click', e => { if (e.target.closest('a')) return; go(openPath(t)); });
     bl.rowOrder.push(t);
@@ -2112,6 +2175,34 @@ function renderFactoryTab(root, all) {
   }, 10000);
 }
 
+const TK_PER = 100;
+ui.tkPage = 0; ui.tkPageSig = null;
+// "‹ Prev 1 2 3 4 5 … N Next ›". Always the same number of equal-width slots (7 once there are more than 7 pages:
+// the first and last pages, the current one with its neighbours, "…" for gaps), so Prev and Next never move.
+function pageSlots(cur, pages) {
+  if (pages <= 7) return [...Array(pages).keys()];
+  if (cur <= 3) return [0, 1, 2, 3, 4, null, pages - 1];
+  if (cur >= pages - 4) return [0, null, pages - 5, pages - 4, pages - 3, pages - 2, pages - 1];
+  return [0, null, cur - 1, cur, cur + 1, null, pages - 1];
+}
+function pager(cur, pages, goTo) {
+  const nav = el('nav', 'bl-pager'); nav.setAttribute('aria-label', tr('Pages'));
+  const step = (label, n) => {
+    const b = el('button', 'bl-pg bl-pg-step', label); b.type = 'button';
+    if (n < 0 || n >= pages) b.disabled = true; else b.addEventListener('click', () => goTo(n));
+    return b;
+  };
+  nav.append(step(tr('‹ Prev'), cur - 1));
+  for (const n of pageSlots(cur, pages)) {
+    if (n == null) { nav.append(el('span', 'bl-pg bl-pg-gap', '…')); continue; }
+    const b = el('button', 'bl-pg num', String(n + 1)); b.type = 'button';
+    if (n === cur) b.setAttribute('aria-current', 'page'); else b.addEventListener('click', () => goTo(n));
+    nav.append(b);
+  }
+  nav.append(step(tr('Next ›'), cur + 1));
+  return nav;
+}
+
 function renderTicketsTab(root, all, projects) {
   const f = ui.tk;
   const live = new Set(projects.map(p => p.key));
@@ -2126,9 +2217,10 @@ function renderTicketsTab(root, all, projects) {
   const box = el('div', 'search board-search');
   box.innerHTML = '<svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
   const inp = el('input'); inp.type = 'search'; inp.id = 'bltq'; inp.placeholder = tr('Search key, title, label or project'); inp.value = f.q; inp.autocomplete = 'off'; inp.spellcheck = false;
-  inp.addEventListener('input', () => { f.q = inp.value; const pos = inp.selectionStart; renderBacklog(); const n = $('#bltq'); n.focus(); n.setSelectionRange(pos, pos); });
-  inp.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); if (inp.value) { f.q = ''; renderBacklog(); } else inp.blur(); } });
-  box.append(inp); ctl.append(box);
+  inp.addEventListener('input', () => { f.q = inp.value; ui.taIdx = 0; ui.taOpen = true; const pos = inp.selectionStart; renderBacklog(); const n = $('#bltq'); n.focus(); n.setSelectionRange(pos, pos); });
+  projectTypeahead(box, inp, projects, f.project || null, key => { f.project = key || ''; saveTk(); renderBacklog(); }, () => { f.q = ''; });
+  inp.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); if (inp.value) { f.q = ''; renderBacklog(); } else inp.blur(); } });
+  box.append(inp, ...box.querySelectorAll('.bl-ta')); ctl.append(box);
   const sel = (label, cur, opts, set) => {
     const w = el('label', 'bl-sel'); w.append(el('span', null, label));
     const s = el('select'); for (const [v, txt] of opts) { const o = el('option', null, txt); o.value = v; if (v === cur) o.selected = true; s.append(o); }
@@ -2153,9 +2245,19 @@ function renderTicketsTab(root, all, projects) {
   }
   const allB = el('button', 'bl-tk-all', f.states.length ? tr('All states') : tr('Showing all states')); allB.type = 'button'; allB.disabled = !f.states.length;
   allB.addEventListener('click', () => { f.states = []; saveTk(); renderBacklog(); });
-  chips.append(allB, el('span', 'bl-tk-count num', tr('{n} of {total} tickets', { n: shown.length, total: base.length })));
+  chips.append(allB);
+  const pbar = el('div', 'bl-tk-pagebar');   // the count and the pager stay together, at the right
+  pbar.append(el('span', 'bl-tk-count num', tr('{n} of {total} tickets', { n: shown.length, total: base.length })));
+  chips.append(pbar);
+  // Pages of TK_PER; any change of filter or sort goes back to page 1.
+  const sig = JSON.stringify([f.q, f.project, f.who, f.states, ui.tkSort]);
+  if (sig !== ui.tkPageSig) { ui.tkPageSig = sig; ui.tkPage = 0; }
+  const pages = Math.max(1, Math.ceil(shown.length / TK_PER));
+  ui.tkPage = Math.min(ui.tkPage, pages - 1);
+  if (pages > 1) pbar.append(pager(ui.tkPage, pages, n => { ui.tkPage = n; renderBacklog(); $('#backlog').scrollTop = 0; }));
   root.append(chips);
   root.append(table(shown, true));
+  if (pages > 1) { const bottom = el('div', 'bl-pager-bottom'); bottom.append(pager(ui.tkPage, pages, n => { ui.tkPage = n; renderBacklog(); $('#backlog').scrollTop = 0; })); root.append(bottom); }
 }
 
 // ---- ticket drawer ----
