@@ -942,11 +942,18 @@ function openReportModal(p) {
   document.addEventListener('keydown', esc, true);
   document.body.append(m);
 }
-// Finished within the wrap-up window (7 days by default): such projects stay listed with their Execution Summary row.
-function finishedRecently(p, tks) {
-  const days = Number(setting(null, 'wrapup_window_days', 7)) || 7;
-  const at = projFinish(p, tks);
-  return !!at && Date.parse(at) >= Date.now() - days * 864e5;
+// When a project is actually done (marked done, or every ticket closed), or null. Projects with open work, even
+// tickets only a human can pick up, don't count.
+function doneAt(p, tks) {
+  if (p.status !== 'done' && !(tks.length && tks.every(t => FINAL.has(t.state)))) return null;
+  return projFinish(p, tks);
+}
+// Projects tab: a done project shows only when it finished inside the Tickets window (Open hides it, + N h keeps the
+// last N hours, All keeps every one). Searching shows it regardless.
+function doneInWindow(at) {
+  if (ui.closed === 'all') return true;
+  if (ui.closed !== 'recent') return false;
+  return Date.now() - Date.parse(at) < ui.recentHours * 36e5;
 }
 // Overview: projects that finished in the last 7 days, folded by default; each is a collapsed project row with its
 // Execution Summary row under it.
@@ -1371,7 +1378,9 @@ function renderLanes(root) {
     const tks = all.filter(t => t.project === p.key);
     const shown = visibleTickets(tks).filter(matches);
     if (ui.q.trim() && !shown.length) continue;
-    if (tks.length && !visibleTickets(tks).length && !(finishedRecently(p, tks) && !ui.q.trim())) continue;
+    const done = doneAt(p, tks);
+    if (done && !ui.q.trim()) { if (!doneInWindow(done)) continue; }
+    else if (tks.length && !visibleTickets(tks).length) continue;
     const lane = el('div', 'bl-lane');
     const side = el('div', 'bl-lane-side');
     const collapsed = ui.collapsed.has(p.key);
