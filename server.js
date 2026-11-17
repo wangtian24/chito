@@ -9,7 +9,7 @@ import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
 import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, searchTickets } from './lib/backlog.js';
 import { workerModel } from './lib/worker-models.js';
-import { deploySummary, triggerDeploy, startDeployBackup } from './lib/deploy.js';
+import { deploySummary, triggerDeploy, startDeployBackup, runLog } from './lib/deploy.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // Started by launchd, chito gets a bare PATH (/usr/bin:/bin:…) without the folders where claude, gh, codex and pi
@@ -320,9 +320,14 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { prs, github: { ok: !error, error } });
     }
     if (p === '/api/deploy' && req.method === 'GET') return send(res, 200, await deploySummary({ refresh: url.searchParams.get('refresh') === '1' }));
+    if (p === '/api/deploy/log' && req.method === 'GET') {
+      const text = runLog(url.searchParams.get('id'));
+      if (text == null) return send(res, 404, { error: 'no such run' });
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }); return res.end(text);
+    }
     if (p === '/api/deploy/run') {
       if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
-      try { return send(res, 200, { ok: true, ...(await triggerDeploy()) }); } catch (e) { return send(res, 409, { error: e.message }); }
+      try { return send(res, 200, { ok: true, ...(await triggerDeploy({ target: url.searchParams.get('target') || 'main' })) }); } catch (e) { return send(res, 409, { error: e.message }); }
     }
     if (p === '/api/backlog' && req.method === 'GET') return send(res, 200, { ...(await backlogSummary()), artiBase: ARTI_BASE });
     if (p === '/api/backlog/search' && req.method === 'GET') return send(res, 200, { tickets: await searchTickets(url.searchParams.get('q') || '') });

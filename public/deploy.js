@@ -69,7 +69,7 @@ function deployButton() {
   else if (armed && n == null) { label.textContent = t('Confirm: deploy main'); b.classList.add('armed'); }
   else if (armed) { label.textContent = tp(n, 'Confirm: ship {n} merge', 'Confirm: ship {n} merges'); b.classList.add('armed'); }
   else label.textContent = t('Deploy main');
-  b.title = t('Starts the deploy workflow for main: tests, ship, verify, release note to Slack');
+  b.title = t('Deploys main from this laptop: tests, ship, verify, release note to Slack');
   b.addEventListener('click', async () => {
     if (!armed) { armedAt = Date.now(); armed = setTimeout(() => { armed = null; renderDeploy(); }, 5000); renderDeploy(); return; }
     if (Date.now() - armedAt < 500) return;   // the second half of a double-click is not a confirm
@@ -79,7 +79,7 @@ function deployButton() {
       const r = await fetch('/api/deploy/run', { method: 'POST', headers: { 'x-chito': '1' } });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || r.statusText);
-      ctx.toast(t('Deploy started. Tests take about 10 minutes; the result posts to Slack.'));
+      ctx.toast(t('Deploy started on this laptop. Tests take about 10 minutes; the result posts to Slack.'));
     } catch (e) { ctx.toast(t('Could not start the deploy: {err}', { err: e.message })); }
     await load(true);
   });
@@ -119,7 +119,7 @@ function stats() {
     const started = data.run.createdAt;
     row.append(stat(t('Deploying now'), t('started {ago}', { ago: ctx.fmtRelAgo(started) }),
       ext(data.run.url, t('Watch the run')), 'is-running'));
-  } else {
+  } else if (data.next) {
     row.append(stat(t('Next deploy'), data.next ? clock(data.next) : '—',
       data.next ? (data.waiting ? t('{in}, ships what is waiting', { in: fmtIn(data.next) }) : t('{in}, skipped if nothing new', { in: fmtIn(data.next) })) : null));
   }
@@ -259,6 +259,6 @@ export function renderDeploy() {
   if (!data) { root.append(el('div', 'board-status', t('Loading…'))); return; }
   root.append(head(), stats());
   if (data.runsError) root.append(el('div', 'board-status', t('GitHub run status unavailable: {err}', { err: data.runsError })));
-  root.append(backupLine());
+  if (data.schedule?.crons?.length) root.append(backupLine());
   root.append(chain());
 }
