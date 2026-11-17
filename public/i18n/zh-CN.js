@@ -727,4 +727,7 @@ export default {
   "How many of this project's tickets run at once. Unlimited: only the overall cap ({n}) applies.": "这个项目同时运行的工单数。不限：只受总上限（{n}）约束。",
   "parallel": "并行",
   "unlimited": "不限",
+  "claimed": "已认领",
+  "Harness: {name}": "运行环境：{name}",
+  "Tickets done or canceled in the window picked under Tickets (+ N h); hidden on Open": "在“工单”下所选时间段（+ N 小时）内完成或取消的工单；选“未关闭”时隐藏",
 };

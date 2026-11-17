@@ -77,8 +77,9 @@ function projSortControl() {
   wrap.append(s);
   return wrap;
 }
-// What a collapsed lane lists under its project row: tickets in flight, ones that need you, failed ones. All on by default.
-const ROW_KINDS = ['flight', 'you', 'failed'];
+// What a collapsed lane lists under its project row: tickets in flight, ones finished in the Open | + N h window,
+// ones that need you, failed ones. All on by default.
+const ROW_KINDS = ['flight', 'done', 'you', 'failed'];
 const savedRows = () => { const v = store.get('blLanesRows', ROW_KINDS); return new Set(Array.isArray(v) ? v.filter(k => ROW_KINDS.includes(k)) : ROW_KINDS); };
 ui.rows = savedRows();
 const saveRows = () => store.set('blLanesRows', [...ui.rows]);
@@ -1315,6 +1316,7 @@ function compactLane(p, tks, shown, nameRow, inPlace = false) {
   const byTime = (a, b) => ((b.changed || b.updated || '') > (a.changed || a.updated || '') ? 1 : -1);
   const groups = [
     ['flight', run],
+    ['done', ui.closed === 'none' ? [] : q.filter(t => (t.state === 'done' || t.state === 'canceled') && closedRecently(t)).sort((a, b) => closedAt(b) - closedAt(a))],
     ['you', q.filter(t => needsYou(t) && t.state !== 'failed').sort(byTime)],
     ['failed', q.filter(t => t.state === 'failed').sort(byTime)],
   ].filter(([k, list]) => ui.rows.has(k) && list.length);
@@ -1329,7 +1331,7 @@ function compactLane(p, tks, shown, nameRow, inPlace = false) {
 // The three toggles for what a collapsed lane lists.
 function rowToggles() {
   const g = el('div', 'seg bl-row-toggles'); g.setAttribute('role', 'group'); g.setAttribute('aria-label', tr('Show under collapsed projects'));
-  for (const [k, label, tip] of [['flight', tr('In flight'), tr('Tickets running now')], ['you', tr('Needs me'), tr('Tickets waiting on you: reviews, decisions and handoffs')], ['failed', tr('Failed'), tr('Tickets that failed and need a retry, a fix or a cancel')]]) {
+  for (const [k, label, tip] of [['flight', tr('In flight'), tr('Tickets running now')], ['done', tr('Done'), tr('Tickets done or canceled in the window picked under Tickets (+ N h); hidden on Open')], ['you', tr('Needs me'), tr('Tickets waiting on you: reviews, decisions and handoffs')], ['failed', tr('Failed'), tr('Tickets that failed and need a retry, a fix or a cancel')]]) {
     const b = el('button', `bl-row-tog bl-row-${k}`, label); b.type = 'button'; b.title = tip;
     b.setAttribute('aria-pressed', String(ui.rows.has(k)));
     b.addEventListener('click', () => { if (ui.rows.has(k)) ui.rows.delete(k); else ui.rows.add(k); saveRows(); renderBacklog(); });
@@ -1337,13 +1339,16 @@ function rowToggles() {
   }
   return g;
 }
-// A ticket waiting on you or failed: key, title, what's asked, how long it has waited, and where to answer.
+// One line of what a finished ticket did: the first sentence of its result, without PR boilerplate.
+const doneLine = t => (String(t.result || '').split('\n').map(x => x.trim()).find(x => x && !BOILER_RE.test(x)) || '').replace(/^(done|result):\s*/i, '').slice(0, 160);
+// A ticket waiting on you, failed, or just finished: key, title, what's asked, how long it has waited, and where to answer.
 function waitRow(t, p, kind) {
   const r = linkTo(el('a', `bl-compact-row bl-compact-${kind}${kind === 'you' ? needsCls(t) : ''}${queryTicket() === t.key ? ' sel' : ''}`), inPlacePath(t));
   const kk = el('span', 'num', t.key.slice(p.key.length + 1)); kk.title = t.key;
-  const why = el('span', 'bl-compact-why', needReason(t));
-  const extra = el('span', 'bl-compact-exec', t.state === 'failed' ? trp(t.attempts, '{n} attempt', '{n} attempts') : t.assignee === 'human' ? tr('Human') : LABEL[t.state]);
-  const at = t.changed || t.updated;
+  const fin = kind === 'done';
+  const why = el('span', 'bl-compact-why', fin ? doneLine(t) : needReason(t));
+  const extra = el('span', 'bl-compact-exec', fin ? LABEL[t.state] : t.state === 'failed' ? trp(t.attempts, '{n} attempt', '{n} attempts') : t.assignee === 'human' ? tr('Human') : LABEL[t.state]);
+  const at = fin ? t.finished || t.updated : t.changed || t.updated;
   const ago = el('span', 'num bl-compact-since', at ? ctx.fmtRel(at) : ''); ago.title = at ? ctx.fmtDateTime(at) : '';
   r.append(stateIcon(t.state), kk, el('span', 'bl-compact-title', t.title), why, extra, ago);
   const s = t.assignee === 'human' ? answerSession(t) : workerSession(t);
@@ -1998,6 +2003,7 @@ function renderTicketsTab(root, all, projects) {
 }
 
 // ---- ticket drawer ----
+const HARNESS_NAMES = { claude: 'Claude Code', pi: 'Pi', codex: 'Codex' };
 async function renderDrawer(key) {
   const box = $('#bl-drawer');
   bl.ticketKey = key;
@@ -2036,14 +2042,11 @@ function drawDrawer(box, t) {
   box.dataset.key = t.key;
   box.textContent = '';
   const top = el('div', 'bl-d-top');
-  // The project this ticket belongs to, one click away (unless the page already is that project).
+  // "KEY [state]"; the key opens the project page.
   const pr = bl.data.projects.find(x => x.key === t.project);
-  const onIt = ((parseBacklogPath(location.pathname) || {}).project || '').toUpperCase() === t.project;
-  const projLink = onIt ? null : linkTo(el('a', 'bl-d-proj'), projPath(t.project));
-  if (projLink) { projLink.append(el('span', 'num', t.project), el('span', 'bl-d-proj-name', pr?.name || '')); projLink.title = tr('Go to project {key}', { key: t.project }); }
-  top.append(el('span', 'num bl-d-key', t.key), statePill(t.state));
-  if (projLink) top.append(projLink);
-  top.append(closeBtn());
+  const keyLink = linkTo(el('a', 'num bl-d-key', t.key), projPath(t.project));
+  keyLink.title = tr('Go to project {key}', { key: pr?.name ? `${t.project} · ${pr.name}` : t.project });
+  top.append(keyLink, statePill(t.state), closeBtn());
   box.append(top, el('h3', 'bl-d-title', t.title), ticketActions(t));
   if (ui.notesFor === t.key && t.state === 'in_review') box.append(approveNotesForm(t));
   if (t.meta?.tldr?.text) {
@@ -2054,10 +2057,21 @@ function drawDrawer(box, t) {
   const ho = handoffView(t);
   if (ho) box.append(ho);
 
+  const more = el('details', 'bl-d-more');
+  more.open = ui.detailsOpen === t.key;
+  more.addEventListener('toggle', () => { ui.detailsOpen = more.open ? t.key : null; });
   const dl = el('dl', 'bl-d-meta');
   const row = (k, ...v) => { if (!v.length || v.every(x => x == null || x === '')) return; dl.append(el('dt', null, k)); const dd = el('dd'); dd.append(...v.filter(x => x != null)); dl.append(dd); };
   const prio = PRIO[t.priority] ?? String(t.priority);
   row(tr('Priority'), `${prio} (${t.priority})`);
+  const pms = (bl.data?.milestones || []).filter(m => m.project === t.project && m.status !== 'canceled');
+  const msOf = pms.find(m => m.key === t.milestone);
+  if (pms.length && !t.meta?.showcase_for) {
+    const s = el('select', 'bl-d-ms');
+    for (const [v, txt] of [['', tr('None')], ...pms.map(m => [m.key, `${m.key.slice(t.project.length + 1)} ${m.title}`])]) { const o = el('option', null, txt); o.value = v; if (v === (t.milestone || '')) o.selected = true; s.append(o); }
+    s.addEventListener('change', () => act('ticket-milestone', t.key, s.value));
+    row(tr('Milestone'), s);
+  } else if (t.milestone) row(tr('Milestone'), msOf ? `${t.milestone} ${msOf.title}` : t.milestone);
   if (t.state === 'todo') row(tr('Status'), isBlocked(bl.byKey.get(t.key) || t) ? tr('Blocked by open tickets') : t.assignee === 'human' ? tr('Ready, waiting on you') : tr('Ready to run'));
   row(tr('Assignee'), t.assignee === 'human' ? tr('human') : t.assignee || null);
   row(tr('Claimed by'), t.claimed_by || null);
@@ -2065,7 +2079,7 @@ function drawDrawer(box, t) {
   row(tr('Attempts'), t.attempts ? (t.max_attempts ? tr('{n} of {max}', { n: t.attempts, max: t.max_attempts }) : String(t.attempts)) : null);
   row(tr('Labels'), t.labels?.length ? t.labels.join(', ') : null);
   row(tr('Locks'), t.locks?.length ? t.locks.join(', ') : null);
-  const meta = { ...t.meta }; for (const k of ['sessions', 'brief', 'handoff', 'showcase_for']) delete meta[k];
+  const meta = { ...t.meta }; for (const k of ['sessions', 'brief', 'handoff', 'showcase_for', 'tldr']) delete meta[k];
   if (meta.review) { row(tr('Review'), meta.review); delete meta.review; }
   if (meta.size) { row(tr('Size'), meta.size); delete meta.size; }
   for (const [k, v] of Object.entries(meta)) row(k, typeof v === 'string' ? v : JSON.stringify(v));
@@ -2075,11 +2089,17 @@ function drawDrawer(box, t) {
     else row(tr('Design doc'), t.doc_slug);
   }
   const tu = bl.byKey.get(t.key)?.usage;
-  if (tu) { const x = factRow('', fmtCost(tu), tr('{n} turns', { n: tu.turns }), tr('{n} tokens', { n: fmtTok(tu.tokens) })); x.title = usageTitle(tu); row(tr('Usage'), x); }
+  if (tu) { const x = factRow('', fmtTimeCost(tu), tr('{n} turns', { n: tu.turns }), tr('{n} tokens', { n: fmtTok(tu.tokens) })); x.title = usageTitle(tu); row(tr('Usage'), x); }
   row(tr('Created'), ctx.fmtDateTime(t.created));
   if (t.started) row(tr('Started'), ctx.fmtDateTime(t.started));
   if (t.finished) row(tr('Finished'), ctx.fmtDateTime(t.finished));
-  box.append(dl);
+  const brief = [prio, t.claimed_by && t.state === 'in_progress' ? tr('claimed') : null,
+    t.attempts ? tr('try {n}', { n: t.attempts }) : null, tu ? fmtTimeCost(tu) : null,
+    msOf ? msOf.key.slice(t.project.length + 1) : null, t.finished ? fmtAgo(t.finished) : t.started ? fmtAgo(t.started) : fmtAgo(t.created)].filter(Boolean);
+  const sm = el('summary', 'bl-d-more-sum');
+  sm.append(el('span', 'bl-d-more-h', tr('Details')), el('span', 'bl-d-more-brief', brief.join(' · ')));
+  more.append(sm, dl);
+  box.append(more);
 
   if (t.blockers.length || t.dependents.length) {
     const deps = el('div', 'bl-d-deps');
@@ -2109,7 +2129,10 @@ function drawDrawer(box, t) {
       a.href = `/s/${s.id}`;
       a.addEventListener('click', e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); ctx.openSession(s.id); });
       a.innerHTML = SESSION_ICON;
-      a.append(el('span', 'bl-d-sess-title', s.title || (s.missing ? tr('Transcript not found') : s.id.slice(0, 8))), factRow('bl-d-sess-meta', ROLE[s.role] || s.role, s.lastTime ? ctx.fmtRelAgo(s.lastTime) : ''));
+      const hn = HARNESS_NAMES[s.source || 'claude'] || s.source;
+      const hc = s.missing ? null : el('span', `harness-chip hc-${s.source || 'claude'}`, hn);
+      if (hc) hc.title = tr('Harness: {name}', { name: hn });
+      a.append(el('span', 'bl-d-sess-title', s.title || (s.missing ? tr('Transcript not found') : s.id.slice(0, 8))), ...(hc ? [hc] : []), factRow('bl-d-sess-meta', ROLE[s.role] || s.role, s.lastTime ? ctx.fmtRelAgo(s.lastTime) : ''));
       list.append(a);
     }
     box.append(list);
@@ -2295,8 +2318,6 @@ function ticketActions(t) {
   box.append(sel(tr('Priority'), 'ticket-priority', PRIO.map((x, i) => [i, x]), t.priority));
   box.append(workerPicker(t.key, 'ticket-worker', t.meta?.harness || '', t.meta?.model || '', true));
   box.append(sel(tr('Assignee'), 'ticket-assignee', [['', tr('Agents')], ['human', tr('Human')]], t.assignee === 'human' ? 'human' : ''));
-  const pms = (bl.data?.milestones || []).filter(m => m.project === t.project && m.status !== 'canceled');
-  if (pms.length && !t.meta?.showcase_for) box.append(sel(tr('Milestone'), 'ticket-milestone', [['', tr('None')], ...pms.map(m => [m.key, `${m.key.slice(t.project.length + 1)} ${m.title}`])], t.milestone || ''));
   return box;
 }
 
