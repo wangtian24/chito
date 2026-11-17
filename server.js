@@ -9,11 +9,11 @@ import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
 import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, searchTickets } from './lib/backlog.js';
 import { workerModel } from './lib/worker-models.js';
-import { deploySummary, triggerDeploy, startDeployBackup, runLog } from './lib/deploy.js';
+import { deploySummary, triggerDeploy, startDeploySchedule, runLog } from './lib/deploy.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // Started by launchd, chito gets a bare PATH (/usr/bin:/bin:…) without the folders where claude, gh, codex and pi
-// live. Add the usual ones that exist, so background sends, Approve and the deploy backup can find their tools.
+// live. Add the usual ones that exist, so background sends, Approve and scheduled deploys can find their tools.
 {
   const home = process.env.HOME || HOME;
   const extra = [path.join(home, '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.pi/agent/bin'), path.join(home, '.claude/local')]
@@ -421,5 +421,5 @@ const t0 = Date.now();
 const n = scan(true).length;
 console.log(`[chito] indexed ${n} sessions in ${Date.now() - t0}ms from ${PROJECTS_DIR}`);
 server.listen(PORT, HOST, () => console.log(`[chito] http://localhost:${PORT}`));
-// Only the long-running instance on the default port backs up the deploy schedule (not test servers on other ports).
-if (PORT === 8791 || process.env.CHITO_DEPLOY_BACKUP === '1') startDeployBackup();
+// Only the long-running instance on the default port runs the deploy schedule (not test servers on other ports).
+if (PORT === 8791 || process.env.CHITO_DEPLOY_SCHEDULE === '1') startDeploySchedule();
