@@ -70,6 +70,35 @@ class HarnessTest(unittest.TestCase):
         spawn = self.c.execute("SELECT data FROM events WHERE ticket='A-1' AND kind='spawn'").fetchone()
         self.assertEqual(json.loads(spawn[0])["harness"], "pi")
 
+    def test_session_messages_reach_hooks_once_with_key(self):
+        import io, contextlib
+        from types import SimpleNamespace as NS
+        sid = "11111111-2222-3333-4444-555555555555"
+        def run(**kw):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "", "BL_TICKET": ""}):
+                self.bl["cmd_msg"](NS(json=False, ticket=None, limit=50, **kw))
+        run(action="send", target=sid, text=["use", "red"])
+        def hook(ev):
+            buf = io.StringIO()
+            with patch("sys.stdin", io.StringIO(json.dumps({"session_id": sid}))), contextlib.redirect_stdout(buf):
+                self.bl["cmd_hook"](NS(event=ev))
+            return buf.getvalue()
+        key = self.bl["msg_key"](sid)
+        self.assertIn(key, hook("session-start"))
+        first = json.loads(hook("beat"))["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("use red", first); self.assertIn(f"key {key}", first); self.assertIn("bl msg reply 1", first)
+        self.assertEqual(hook("beat").strip(), "")          # delivered once
+        run(action="send", target=sid, text=["sub"])
+        buf = io.StringIO()
+        with patch("sys.stdin", io.StringIO(json.dumps({"session_id": sid, "agent_id": "x"}))), contextlib.redirect_stdout(buf):
+            self.bl["cmd_hook"](NS(event="beat"))
+        self.assertEqual(buf.getvalue().strip(), "")       # a subagent's tool call doesn't take it
+        self.assertNotEqual(key, self.bl["msg_key"]("99999999-2222-3333-4444-555555555555"))
+        self.assertEqual(json.loads(hook("stop"))["decision"], "block")  # the main thread still gets it  # a stopping session still gets it
+        run(action="reply", target="1", text=["done"])
+        rows = self.c.execute("SELECT dir, reply_to, body FROM messages ORDER BY id").fetchall()
+        self.assertEqual([tuple(r) for r in rows][-1], ("out", 1, "done"))
 
 if __name__ == "__main__":
     unittest.main()

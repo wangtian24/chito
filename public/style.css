@@ -342,6 +342,15 @@ code { font-size: .86em; }
 .composer .send:hover:not(:disabled) { background: var(--color-accent-2); }
 .composer .send:disabled { background: var(--color-paper-3); color: var(--color-muted); cursor: default; }
 .composer .send svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: square; }
+.msg-thread { max-width: 796px; margin: 0 auto var(--space-sm); max-height: 34vh; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-sm); }
+.msg-thread[hidden] { display: none; }
+.msg-pair { border-left: 2px solid var(--color-accent); padding: 2px 0 2px var(--space-md); display: flex; flex-direction: column; gap: 3px; }
+.msg-q, .msg-a { display: flex; gap: var(--space-sm); align-items: baseline; font: 400 14px/1.45 var(--font-body); color: var(--color-ink); }
+.msg-who { flex-shrink: 0; font: 600 12.5px/1.45 var(--font-body); color: var(--color-muted); min-width: 40px; }
+.msg-a .msg-who { color: var(--color-accent); }
+.msg-body { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-time { flex-shrink: 0; font-size: 12px; color: var(--color-muted); }
+.msg-state { font: var(--meta-style) 400 12.5px/1.4 var(--font-body); color: var(--color-muted); padding-left: calc(40px + var(--space-sm)); }
 .composer-foot { max-width: 796px; margin: var(--space-xs) auto 0; display: flex; gap: var(--space-md); align-items: baseline; }
 .composer-hint { flex: 1; font: 400 12.5px/1.4 var(--font-body); color: var(--color-muted); }
 .compose-bg { flex-shrink: 0; display: inline-flex; gap: 4px; align-items: center; font: 500 12.5px/1.4 var(--font-body); color: var(--color-ink-2, var(--color-muted)); cursor: pointer; user-select: none; }
