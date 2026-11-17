@@ -617,6 +617,9 @@ code { font-size: .86em; }
 .seg { display: inline-flex; background: var(--color-well); border-radius: var(--radius-ctl); padding: 3px; gap: var(--space-2xs); width: fit-content; }
 .seg button { border: 0; background: none; cursor: pointer; padding: 6px var(--space-md); border-radius: var(--radius-ctl); font: 500 13px/1 var(--font-display); color: var(--color-muted); }
 .seg button:hover { color: var(--color-ink); }
+.seg .seg-select { border: 0; background: none; cursor: pointer; padding: 6px var(--space-sm); border-radius: var(--radius-ctl); font: 500 13px/1 var(--font-display); color: var(--color-muted); }
+.seg .seg-select:hover { color: var(--color-ink); }
+.seg .seg-select[aria-checked="true"] { background: var(--color-sheet); color: var(--color-ink); box-shadow: var(--shadow-raised); }
 .seg button[aria-checked="true"] { background: var(--color-sheet); color: var(--color-ink); box-shadow: var(--shadow-raised); }
 
 .about p { margin: 0 0 var(--space-md); font: 400 15px/1.6 var(--font-body); color: var(--color-ink-2); max-width: 60ch; }
