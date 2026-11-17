@@ -5,6 +5,7 @@ import DOMPurify from '/vendor/purify.js';
 // `t` is a ticket everywhere in this file, so the translator is tr / trp.
 import { t as tr, tp as trp, lang, LOCALE } from '/i18n.js';
 import { WORKER_MODELS } from '/worker-models.js';
+import { renderStatsTab } from '/stats.js';
 
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -1353,7 +1354,7 @@ function card(t, inPlace = false) {
 
 // ---- main page tabs: Overview (daemon, waiting on you, open projects) and Projects (lanes + the tickets toggle) ----
 // The tab lives in ?tab=; with none in the URL, the last one picked is used, else Overview.
-const TABS = [['overview', tr('Overview')], ['projects', tr('Projects')], ['tickets', tr('Tickets')], ['factory', tr('Factory')]];
+const TABS = [['overview', tr('Overview')], ['projects', tr('Projects')], ['tickets', tr('Tickets')], ['factory', tr('Factory')], ['stats', tr('Stats')]];
 function currentTab() {
   const q = new URLSearchParams(location.search).get('tab');
   if (TABS.some(([k]) => k === q)) return q;
@@ -1404,6 +1405,11 @@ function renderLanes(root) {
   root.append(tabBar(tab, { overview: you, projects: projects.length, tickets: all.filter(t => projects.some(p => p.key === t.project)).length }));
   if (tab === 'tickets') { renderTicketsTab(root, all, projects); return; }
   if (tab === 'factory') { renderFactoryTab(root, all); return; }
+  if (tab === 'stats') {
+    renderStatsTab(root, { data: bl.data, cap: Number(setting(null, 'global_max_parallel', 8)) || 8, go, openPath,
+      openSession: id => ctx.openSession(id), rerender: () => { if (currentTab() === 'stats' && !midEdit()) renderBacklog(); } });
+    return;
+  }
   if (tab === 'overview') {
     const q = daemonQuota(); if (q) root.append(q);
     const ny = needsYouPanel(all); if (ny) root.append(ny);
