@@ -740,7 +740,7 @@ def cmd_init(a):
 def cmd_project(a):
     if a.action == "report":
         if not a.key:
-            die("usage: bl project report KEY [--show|--set FILE|-|--generate|--request|--prompt]")
+            die("usage: bl project report KEY [--set FILE|-|--generate|--request|--prompt|--json]")
         return cmd_report(a)
     c = connect()
     if a.action == "add":
@@ -2347,7 +2347,7 @@ def cmd_daemon(a):
                 with tx(c):
                     event(c, "daemon", body="bl changed on disk: reloading (workers are re-adopted; waiting only for orchestrators, briefings, TL;DR jobs)", actor=me)
                 print(f"[{now()}] bl changed on disk: reloading", flush=True)
-            if DRAIN["draining"] and not (orchs or briefs or tldrs):
+            if DRAIN["draining"] and not (orchs or briefs or tldrs or wraps):
                 with tx(c):
                     c.execute("UPDATE runs SET ended=?, status='reloaded' WHERE id=?", (now(), run_id))
                     event(c, "daemon", body="daemon reloading with the new bl", actor=me)
@@ -2672,7 +2672,7 @@ def _last_reason(c, key):
 def _pr_info(repo, num):
     try:
         r = subprocess.run(["gh", "pr", "view", num, "-R", repo, "--json", "title,state,mergedAt,mergeCommit"],
-                           capture_output=True, text=True, timeout=12)
+                           capture_output=True, text=True, timeout=8)
         return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
     except Exception:
         return None
@@ -2726,7 +2726,7 @@ def wrapup_inputs(c, key, gh=True, limit=24000):
     for t in tks:
         for repo, num in PR_URL.findall(f"{t['result'] or ''}"):
             pr_by_ticket.setdefault(t["key"], []).append((repo, num))
-            if (repo, num) not in seen and len(seen) < 40:
+            if (repo, num) not in seen and len(seen) < 30:
                 info = (_pr_info(repo, num) if gh else None) or {}
                 info.update(repo=repo, num=num, ticket=t["key"])
                 seen[(repo, num)] = info; prs.append(info)
@@ -2782,7 +2782,9 @@ def store_report(c, key, md, by, model=None, sig=None):
     fin = project_finish(c, p)
     meta["report"] = {"md": md.strip(), "tldr": report_tldr(md), "at": now(), "by": by, "model": model,
                       "sig": sig or (fin[0] if fin else None), "finished_at": fin[1] if fin else None}
-    meta.pop("wrapup", None)
+    w = meta.pop("wrapup", None) or {}
+    if w.get("requested") and w["requested"] > (w.get("started") or ""):
+        meta["wrapup"] = {"requested": w["requested"]}   # a Regenerate that came in while this one ran
     c.execute("UPDATE projects SET meta=? WHERE key=?", (json.dumps(meta), p["key"]))
     event(c, "report", project=p["key"], body=f"wrap-up report stored ({by}): {meta['report']['tldr'][:200]}", actor=by)
 
@@ -2795,32 +2797,35 @@ def set_wrapup(c, key, **kw):
 
 def generate_report(c, key, by):
     """Run the wrap-up session now (blocking) and store its report. Returns the Markdown."""
-    p = project_row(c, key)
-    fin = project_finish(c, p)
-    sig = fin[0] if fin else None
-    model = str(setting(c, "wrapup_model", p["key"]))
     with tx(c):
-        prev = (json.loads(p["meta"] or "{}").get("wrapup") or {})
+        p = project_row(c, key)
+        prev = json.loads(p["meta"] or "{}").get("wrapup") or {}
+        if prev.get("pid") and prev["pid"] != os.getpid() and alive(prev["pid"]):
+            die(f"a wrap-up session for {p['key']} is already running (pid {prev['pid']})")
+        fin = project_finish(c, p)
+        sig = fin[0] if fin else None
+        model = str(setting(c, "wrapup_model", p["key"]))
         tries = prev.get("tries", 0) + 1 if prev.get("sig") == sig else 1
-        set_wrapup(c, p["key"], pid=os.getpid(), started=now(), sig=sig, tries=tries, error=None)
+        set_wrapup(c, p["key"], pid=os.getpid(), started=now(), sig=sig, tries=tries, error=None, failed=None)
         event(c, "report", project=p["key"], body=f"wrap-up session started ({model}, by {by})", actor=by)
     env = {k: v for k, v in os.environ.items() if not k.startswith("BL_") and k != "CLAUDE_CODE_SESSION_ID"}
     env["BL_DB"] = str(DB)   # it doesn't need bl, but if it looks, it sees the same DB
-    err = None
+    err, md = None, ""
     try:
-        r = subprocess.run(["claude", "-p", wrapup_prompt(c, p["key"]), "--model", model], cwd=str(Path.home()), env=env,
+        prompt = wrapup_prompt(c, p["key"])
+        r = subprocess.run(["claude", "-p", prompt, "--model", model], cwd=str(Path.home()), env=env,
                            capture_output=True, text=True, timeout=60 * 10)
-        md = r.stdout.strip()
-        md = re.sub(r"^```(?:markdown|md)?\s*\n(.*?)\n```\s*$", r"\1", md, flags=re.S)
+        md = re.sub(r"^```(?:markdown|md)?\s*\n(.*?)\n```\s*$", r"\1", r.stdout.strip(), flags=re.S)
         if r.returncode != 0 or not md:
             err = f"exit {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
         elif "tl;dr" not in md.lower():
             err = f"no TL;DR section in the reply: {md[:200]}"
-    except (OSError, subprocess.TimeoutExpired) as e:
-        err = str(e)[:300]
+    except Exception as e:   # anything: record it, so the board says why and the pid doesn't linger
+        err = f"{type(e).__name__}: {str(e)[:300]}"
     with tx(c):
         if err:
-            set_wrapup(c, p["key"], pid=None, error=err, failed=now())
+            q, until = detect_quota(err)
+            set_wrapup(c, p["key"], pid=None, error=err, failed=now(), quota_until=until if q else None)
             event(c, "report", project=p["key"], body=f"wrap-up failed: {err}", actor=by)
         else:
             store_report(c, p["key"], md, by, model=model, sig=sig)
@@ -2828,12 +2833,16 @@ def generate_report(c, key, by):
         die(f"wrap-up failed: {err}")
     return md
 
+WRAPUP_BACKOFF_MINUTES = 30   # after a failed wrap-up, wait this long before the second (last automatic) try
+
 def wrapup_due(c):
     """Finished projects whose current finish has no report yet (within the window, not running, not given up)."""
     days = setting(c, "wrapup_window_days")
     since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     out = []
-    for p in c.execute("SELECT * FROM projects WHERE status IN ('executing','paused','done') ORDER BY key").fetchall():
+    rows = c.execute("SELECT * FROM projects WHERE status IN ('executing','paused','done') OR meta LIKE '%\"requested\"%' ORDER BY key").fetchall()
+    backoff = (datetime.now(timezone.utc) - timedelta(minutes=WRAPUP_BACKOFF_MINUTES)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for p in rows:
         meta = json.loads(p["meta"] or "{}")
         w = meta.get("wrapup") or {}
         if w.get("pid") and alive(w["pid"]):
@@ -2844,6 +2853,10 @@ def wrapup_due(c):
             continue
         if not requested and w.get("sig") == (fin and fin[0]) and w.get("tries", 0) >= 2:
             continue   # gave up on this finish; Regenerate (requested) tries again
+        if not requested and (w.get("failed") or "") > backoff:
+            continue   # failed just now (maybe a usage limit): try again later, not on the next poll
+        if (w.get("quota_until") or "") > now():
+            continue
         out.append(p)
     return out
 
@@ -2851,14 +2864,23 @@ def wrapup_reports(c, jobs, me):
     """Daemon: one wrap-up session at a time, each a detached `bl project report KEY --generate`."""
     for k, (pr, t0) in list(jobs.items()):
         if pr.poll() is None:
-            if time.monotonic() - t0 > 60 * 12:
+            if time.monotonic() - t0 > 60 * 20:
                 try: os.killpg(pr.pid, signal.SIGTERM)
                 except Exception: pr.kill()
+                pr.wait(timeout=10)
+                with tx(c):
+                    if c.execute("SELECT 1 FROM projects WHERE key=?", (k,)).fetchone():
+                        set_wrapup(c, k, pid=None, error="timed out after 20 minutes", failed=now())
+                del jobs[k]
             continue
         del jobs[k]
     if jobs or not setting(c, "wrapup_reports") or not spawning(c) or quota_until(c):
         return
-    for p in wrapup_due(c)[:1]:
+    try:
+        due = wrapup_due(c)[:1]
+    except Exception as e:   # never take the daemon down over a report
+        print(f"[{now()}] wrap-up check failed: {e}", flush=True); return
+    for p in due:
         LOGS.mkdir(parents=True, exist_ok=True)
         with tx(c):
             set_wrapup(c, p["key"], requested=None, pid=None)
