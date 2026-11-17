@@ -463,9 +463,37 @@ async function openSession(id, { push = true, hash = '' } = {}) {
   renderThread(data.items, token, (location.hash || '').slice(1), { land: landingTarget(data.items) });
 }
 
+// Messages sent to a running session from here (`bl msg`), each with its reply once the session answers.
+function renderMessages(meta) {
+  const box = $('#msg-thread');
+  const msgs = meta?.messages || [];
+  const sig = JSON.stringify(msgs);
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.textContent = '';
+  box.hidden = !msgs.length;
+  const replies = new Map();
+  for (const m of msgs) if (m.dir === 'out') replies.set(m.reply_to, [...(replies.get(m.reply_to) || []), m]);
+  for (const m of msgs.filter(x => x.dir === 'in').slice(-6)) {
+    const row = el('div', 'msg-pair');
+    const q = el('div', 'msg-q');
+    q.append(el('span', 'msg-who', t('You')), el('span', 'msg-body', m.body), el('span', 'msg-time num', fmtRel(m.created)));
+    row.append(q);
+    const rs = replies.get(m.id) || [];
+    for (const r of rs) {
+      const a = el('div', 'msg-a');
+      a.append(el('span', 'msg-who', t('Reply')), el('span', 'msg-body', r.body), el('span', 'msg-time num', fmtRel(r.created)));
+      row.append(a);
+    }
+    if (!rs.length) row.append(el('div', 'msg-state', m.delivered ? t('Delivered; waiting for its reply') : t('Queued; it gets this on its next tool call')));
+    box.append(row);
+  }
+}
+
 function setHeader(meta) {
   $('#actions').hidden = !meta;
   $('#composer').hidden = !meta;
+  renderMessages(meta);
   if (meta) updateComposerHint();
   if (!meta) { $('#title').textContent = t('Select a session'); $('#subtitle').textContent = ''; renderSessionTickets(null); return; }
   $('#title').textContent = meta.title;
@@ -771,6 +799,7 @@ async function refreshActive() {
   const bgChanged = !!state.active.meta?.bg !== !!data.meta?.bg;
   if (cur) cur.bg = data.meta?.bg || null;
   if (bgChanged) { state.active.meta = data.meta; updateComposerHint(); autosize(); if (!data.meta?.bg) loadList(); }
+  renderMessages(data.meta);
   if (last(old) === last(data.items) && busy(state.active) === busy(data)) { state.active.meta = data.meta; return; }
   const convo = $('#convo');
   const thread = $('#thread');
@@ -808,10 +837,14 @@ function updateComposerHint() {
   const hint = $('#compose-hint');
   const bg = meta?.bg;
   hint.classList.toggle('bg-running', !!bg);
-  // A live session is typed into whatever the toggle says, so the toggle only matters when it is not running.
-  $('#compose-bg').closest('label').hidden = !meta || !!live;
+  // A live Claude session: In background hands the message over through its hooks (no terminal) and its reply shows
+  // above; off types it into its terminal. Other harnesses can't take hook messages, so they are always typed.
+  const claude = !meta?.source;
+  $('#compose-bg').closest('label').hidden = !meta || (!!live && !claude);
   hint.textContent = !meta ? '' : bg
     ? t('Running in the background (pid {pid}); the reply appears here as it is written.', { pid: bg.pid })
+    : live && claude && $('#compose-bg').checked
+    ? t('Sent to the running session with no terminal: it gets this on its next tool call and replies above.')
     : live
     ? t('Typed into the running session in {app}. Enter sends, Shift+Enter adds a line (sent as spaces).', { app })
     : $('#compose-bg').checked
@@ -844,7 +877,9 @@ async function sendMessage(flip = false) {
       updateComposerHint();
       autosize();
     }
-    toast(j.action === 'typed' ? t('Sent to running session ({tty})', { tty: j.tty })
+    if (j.action === 'queued') refreshActive();
+    toast(j.action === 'queued' ? t('Queued for the running session; its reply shows above the message box')
+      : j.action === 'typed' ? t('Sent to running session ({tty})', { tty: j.tty })
       : j.action === 'background' ? t('Running in the background') : t('Resumed in a new terminal window'));
     setTimeout(() => loadList(), 2500);
   } catch (e) {

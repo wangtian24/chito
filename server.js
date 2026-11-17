@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { scan, getMeta, getOtherItems, HOME, PROJECTS_DIR } from './lib/index.js';
 import { loadTranscript } from './lib/transcript.js';
 import { prStates } from './lib/github.js';
-import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, searchTickets } from './lib/backlog.js';
+import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, sessionMessages, searchTickets } from './lib/backlog.js';
 import { workerModel } from './lib/worker-models.js';
 import { deploySummary, triggerDeploy, startDeploySchedule, runLog } from './lib/deploy.js';
 
@@ -196,6 +196,22 @@ function liveSessions() {
   return out;
 }
 
+// bl as chito (not as whatever session started chito), text on stdin.
+function blRun(args, input) {
+  return new Promise((resolve, reject) => {
+    const child = execFile(BL, args, { env: { ...process.env, BL_AGENT: 'chito', CLAUDE_CODE_SESSION_ID: '', BL_TICKET: '' }, timeout: 20000 },
+      (err, stdout, stderr) => err ? reject(new Error((stderr || err.message).trim().replace(/^bl: /, ''))) : resolve(stdout.trim()));
+    child.stdin.on('error', () => { });   // bl exited before reading: the callback reports it
+    if (input != null) child.stdin.end(input);
+  });
+}
+
+// The terminal a live session runs in, or null when it has none (a daemon's `claude -p`).
+async function liveTty(pid) {
+  const tty = await run('ps', ['-o', 'tty=', '-p', String(pid)]).catch(() => '');
+  return tty && tty !== '??' ? tty : null;
+}
+
 const run = (cmd, args) => new Promise((resolve, reject) =>
   execFile(cmd, args, (err, stdout, stderr) => err ? reject(new Error((stderr || err.message).trim())) : resolve(stdout.trim())));
 
@@ -378,6 +394,17 @@ const server = http.createServer(async (req, res) => {
         try { const b = JSON.parse(await readBody(req)); text = String(b.text || '').trim(); background = b.background === true; } catch { return send(res, 400, { error: 'bad body' }); }
         if (!text) return send(res, 400, { error: 'empty message' });
         if (bgRuns.has(id)) return send(res, 409, { error: `A background send is still running (pid ${bgRuns.get(id).pid}); wait for it to finish` });
+        // A live Claude session gets the message headlessly: its hooks hand it over on the next tool call and it answers
+        // with `bl msg reply`, shown in chito. A daemon's `claude -p` worker has no terminal, so this is the only way in.
+        const live = !meta.source && liveSessions().get(id);
+        if (live && (background || await liveTty(live.pid) == null)) {
+          const tickets = await sessionTickets(meta).catch(() => []);
+          const tk = tickets.find(x => x.role === 'worker')?.key;
+          try {
+            const outp = await blRun(['msg', 'send', id, '-', ...(tk ? ['--ticket', tk] : []), '--json'], text);
+            return send(res, 200, { ok: true, action: 'queued', id: JSON.parse(outp).id });
+          } catch (e) { return send(res, 500, { error: e.message }); }
+        }
         // A typed newline would submit early in the live TUI, so flatten for that path.
         const existing = meta.source ? null : await focusExisting(id, text.replace(/\s*\n\s*/g, ' '));
         if (existing?.state === 'focused') return send(res, 200, { ok: true, action: 'typed', terminal: TERMINAL, ...existing });
@@ -408,7 +435,8 @@ const server = http.createServer(async (req, res) => {
       const items = meta.source ? getOtherItems(id) : loadTranscript(meta.file);
       const live = meta.source ? null : liveSessions().get(id) || null;
       const tickets = await sessionTickets(meta).catch(() => []);
-      return send(res, 200, { meta: { ...meta, live, bg: bgInfo(id), tickets, resumeCommand: resumeCommand(meta), cwdExists: !!meta.cwd && fs.existsSync(meta.cwd) }, items });
+      const messages = meta.source ? [] : await sessionMessages(id).catch(() => []);
+      return send(res, 200, { meta: { ...meta, live, bg: bgInfo(id), tickets, messages, resumeCommand: resumeCommand(meta), cwdExists: !!meta.cwd && fs.existsSync(meta.cwd) }, items });
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {
