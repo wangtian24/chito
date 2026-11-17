@@ -740,6 +740,9 @@ function execLine(p, compact) {
 // ---- usage (nominal cost from transcripts) ----
 const fmtTok = n => n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0);
 const fmtCost = u => u ? `$${u.cost < 10 ? u.cost.toFixed(2) : Math.round(u.cost)}${u.unpriced ? '+' : ''}` : '';
+// Active time across a ticket's sessions: 24m, 1h 5m.
+const fmtSpent = ms => { const m = Math.round((ms || 0) / 60e3); return m < 1 ? '<1m' : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`; };
+const fmtTimeCost = u => u ? (u.ms != null ? `${fmtSpent(u.ms)} | ${fmtCost(u)}` : fmtCost(u)) : '';
 function usageTitle(u) {
   if (!u) return '';
   return `${tr('Nominal list-price cost (not billed on a subscription)')}\n${tr('{n} model turns', { n: u.turns })} · ${(u.models || []).join(', ')}\n` +
@@ -747,7 +750,7 @@ function usageTitle(u) {
 }
 function usageStat(label, u) {
   const s = el('span', 'bl-usage');
-  s.append(el('span', null, label), el('b', 'num', fmtCost(u)), factRow('num', tr('{n} turns', { n: u.turns }), tr('{n} tokens', { n: fmtTok(u.tokens) })));
+  s.append(el('span', null, label), el('b', 'num', fmtTimeCost(u)), factRow('num', tr('{n} turns', { n: u.turns }), tr('{n} tokens', { n: fmtTok(u.tokens) })));
   s.title = usageTitle(u);
   return s;
 }
@@ -1410,7 +1413,6 @@ function renderProject(root, p) {
     const us = el('div', 'bl-usage-row');
     us.append(usageStat(tr('Total'), p.usage));
     if (p.sharedUsage) us.append(usageStat(tr('Orchestration and shared sessions'), p.sharedUsage));
-    us.append(el('span', 'bl-usage-note', tr('Nominal list prices from transcripts; not billed on a subscription.')));
     root.append(us);
   }
 
@@ -1689,7 +1691,7 @@ function table(tks, all = false) {
     const ms = bl.milestones.get(t.milestone);
     if (on('ms')) { const mc = td('c-ms', ...(ms ? [el('span', `bl-ms-chip ms-${ms.status}`, ms.key.slice(t.project.length + 1))] : [])); if (ms) mc.title = ms.title; }
     if (on('prs')) td('c-prs', ...prChips(t, 3));
-    if (on('cost')) td('c-cost num', fmtCost(t.usage)).title = usageTitle(t.usage);
+    if (on('cost')) td('c-cost num', fmtTimeCost(t.usage)).title = usageTitle(t.usage);
     if (on('created')) td('c-created', all ? ctx.fmtRelAgo(t.created) : fmtAgo(t.created)).title = t.created ? tr('Created {when}', { when: ctx.fmtDateTime(t.created) }) : '';
     if (fin) { const at = t.finished || t.updated; td('c-updated c-finished', fmtAgo(at)).title = tr('Finished {when}', { when: ctx.fmtDateTime(at) }); }
     else {
@@ -1904,7 +1906,7 @@ function renderFactoryTab(root, all) {
       if (currentTab() === 'factory') renderBacklog();
     });
   }
-  tools.append(el('p', 'fx-note', tr('Nominal list prices from transcripts; not billed on a subscription. Rates fill in while this tab stays open.')), fsb);
+  tools.append(fsb);
   root.append(tools);
 
   const floor = el('div', 'fx-floor');
