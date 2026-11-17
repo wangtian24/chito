@@ -157,6 +157,7 @@
       <div class="tabs" role="tablist">
         <button class="tab" role="tab" data-tab="appearance" data-i18n>Appearance</button>
         <button class="tab" role="tab" data-tab="conversation" data-i18n>Conversation</button>
+        <button class="tab" role="tab" data-tab="work-orders" data-i18n>Work orders</button>
         <button class="tab" role="tab" data-tab="keyboard" data-i18n>Keyboard</button>
         <button class="tab" role="tab" data-tab="about" data-i18n>About</button>
       </div>
@@ -181,6 +182,10 @@
           <div class="opt-label"><b data-i18n>Headless runs</b><span data-i18n>Sessions that scripts, backlog workers and AHS agents ran with claude -p, in folders outside your home</span></div>
           <div class="seg" role="radiogroup" data-opt="agents"><button data-v="hide" data-i18n>Hidden</button><button data-v="show" data-i18n>Shown</button></div>
         </div>
+      </section>
+      <section class="tabpanel" data-panel="work-orders" role="tabpanel" hidden>
+        <p class="panel-note" data-i18n>Post a request in Slack and walk away: chito checks the channel, files tickets and notes, links them in the thread, and replies there as they move.</p>
+        <div id="wo-panel"></div>
       </section>
       <section class="tabpanel" data-panel="keyboard" role="tabpanel" hidden>
   <div class="keys">

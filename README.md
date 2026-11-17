@@ -162,6 +162,19 @@ health, and the local test gate and watchdog are all on one page: [backlog/docs/
 See [SETUP.md](SETUP.md): step-by-step instructions written for agents (check, install, verify, personalize,
 update, remove), with `scripts/doctor.sh` to confirm each step.
 
+## Work orders from Slack
+
+Post a request in a Slack channel and walk away. chito checks the channel in process (Settings → Work orders: channel,
+how often, warm checks, default project, and the Slack user IDs it answers; nobody else is read). For each new post it
+reacts 👀, runs a headless `claude -p` triage that may only use `bl`, `mem` and read tools, files tickets and notes,
+answers in the thread with chito links, and reacts ✅. A reply in the thread is a follow-up to the same order. The
+thread hears only what matters afterwards: a ticket done (with its PR), failed, canceled or waiting on you, and "All
+done". Messages starting with `?` are quick commands (`?help`, `?status`, `?projects`, `?handoff`, `?open`, `?orders`,
+`?ticket KEY`, `?retry`, `?cancel`, `?pause`, `?resume`), and `?ask <session> <text>` relays a message to a live
+session through `bl msg` and posts its answer back. The bot token comes from `CHITO_SLACK_TOKEN` (or the key named in
+`~/.config/chito/work-orders.json` inside `~/.extra_secrets`) and never reaches the browser; it needs
+`channels:history`, `chat:write` and `reactions:write`.
+
 ## Sessions list
 
 Sessions from the last 48 hours show first; scroll to the bottom (or click the divider) for older ones. Search always covers everything. **Pin** a session with the pin button in the header (`f`) or by dragging it into the Pinned area at the top; drag to reorder, or drag out to unpin. Pins are stored per browser.

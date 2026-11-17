@@ -1836,3 +1836,33 @@ body.fx-full .fx-chart { height: 220px; }
 .bl-ta-opt .num { font-size: 12px; color: var(--color-muted); min-width: 9em; }
 .bl-ta-opt.on, .bl-ta-opt:hover { background: color-mix(in srgb, var(--color-accent-text) 12%, transparent); }
 .bl-ta-opt.on .num { color: var(--color-accent-text); }
+
+/* Settings → Work orders */
+.wo-card { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: var(--space-md); padding: var(--space-md); margin-bottom: var(--space-md); background: var(--color-well); border-radius: var(--radius-ctl); }
+.wo-card-head { display: flex; align-items: center; gap: var(--space-sm); font: 500 15px/1.3 var(--font-display); color: var(--color-ink); }
+.wo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-muted); flex-shrink: 0; }
+.wo-dot.on { background: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-wash); }
+.wo-dot.bad { background: var(--color-danger, #c0392b); }
+.wo-sub { margin-top: 2px; font: 400 12.5px/1.4 var(--font-body); color: var(--color-muted); }
+.wo-counts { display: flex; gap: var(--space-lg); margin-top: var(--space-sm); }
+.wo-count { display: flex; align-items: baseline; gap: 5px; font: 400 12.5px/1.2 var(--font-body); color: var(--color-muted); }
+.wo-count b { font: 600 17px/1 var(--font-display); color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.wo-now { align-self: center; }
+.wo-card-err { grid-column: 1 / -1; font: 400 12.5px/1.4 var(--font-body); }
+.wo-err { color: var(--color-danger, #c0392b); }
+.wo-group { margin-top: var(--space-lg); }
+.wo-group .opt-row:first-of-type { border-top: 0; }
+.wo-caption { margin: 0 0 2px; font: 600 11.5px/1.3 var(--font-display); color: var(--color-muted); }
+.wo-input { font: 400 13.5px/1.3 var(--font-body); color: var(--color-ink); background: var(--color-sheet); border: var(--rule-hair) solid var(--color-rule-sheet); border-radius: var(--radius-ctl); padding: 6px var(--space-sm); width: min(100%, 280px); }
+.wo-input:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.wo-recent { list-style: none; margin: 0; padding: 0; }
+.wo-recent li { display: grid; gap: 6px; padding: var(--space-sm) 0; border-top: var(--rule-hair) solid var(--color-rule-sheet); }
+.wo-recent li:first-child { border-top: 0; }
+.wo-text { font: 400 13px/1.4 var(--font-body); color: var(--color-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wo-tickets { display: flex; flex-wrap: wrap; gap: 6px; }
+.wo-chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 2px 8px; border-radius: 999px; background: var(--color-well); font: 400 12px/1.5 var(--font-body); color: var(--color-muted); text-decoration: none; }
+.wo-chip b { font: 500 12px/1.5 var(--font-mono, var(--font-body)); color: var(--color-ink); }
+.wo-chip:hover b { color: var(--color-accent-text); }
+.wo-chip.st-done span { color: var(--color-accent-text); }
+.wo-chip.st-failed span, .wo-chip.st-needs_you span { color: var(--color-danger, #c0392b); }
+.wo-none { font: italic 400 12px/1.5 var(--font-body); color: var(--color-muted); }
