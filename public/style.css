@@ -915,7 +915,14 @@ body:not(.has-session) .topbar { display: none; }
 @keyframes bl-dim-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .main:has(> .bl-drawer:not([hidden]))::after { animation: none; } }
 .bl-d-top { display: flex; align-items: center; gap: var(--space-sm); }
-.bl-d-key { font-size: 12.5px; color: var(--color-muted); }
+.bl-d-key { font-size: 12.5px; color: var(--color-muted); white-space: nowrap; text-decoration: none; }
+a.bl-d-key:hover { color: var(--color-ink); text-decoration: underline; text-decoration-color: var(--color-accent); text-underline-offset: .15em; }
+.bl-d-more { margin: 0 0 var(--space-md); }
+.bl-d-more-sum { cursor: pointer; display: flex; gap: var(--space-sm); align-items: baseline; padding: var(--space-xs) 0; font: 400 13px/1.45 var(--font-body); color: var(--color-muted); list-style: revert; }
+.bl-d-more-h { color: var(--color-ink-2); font-weight: 500; }
+.bl-d-more-brief { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.bl-d-more[open] .bl-d-meta { margin-top: var(--space-xs); }
+.bl-d-ms { font: inherit; max-width: 100%; }
 .bl-close { margin-left: auto; }
 .bl-d-title { margin: var(--space-sm) 0 var(--space-md); font: 600 19px/1.3 var(--font-display); letter-spacing: -0.015em; color: var(--color-ink); }
 .bl-d-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0 var(--space-lg); margin: 0 0 var(--space-md); font: 400 13px/1.45 var(--font-body); }
@@ -930,7 +937,7 @@ body:not(.has-session) .topbar { display: none; }
 .bl-drawer .md { font-size: 14.5px; line-height: 1.55; color: var(--color-ink-2); overflow-wrap: anywhere; }
 .bl-d-empty { color: var(--color-muted); font: var(--meta-style) 400 13.5px var(--font-body); }
 .bl-d-sessions { display: flex; flex-direction: column; }
-.bl-d-sess { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-sm); padding: 6px var(--space-xs); border-top: 1px solid var(--color-rule-sheet); text-decoration: none; color: var(--color-ink); }
+.bl-d-sess { display: grid; grid-template-columns: auto minmax(0, 1fr) auto 8.5rem; align-items: center; gap: var(--space-sm); padding: 6px var(--space-xs); border-top: 1px solid var(--color-rule-sheet); text-decoration: none; color: var(--color-ink); }
 .bl-d-sess:hover { background: var(--color-well); }
 .bl-d-sess-title { font: 500 13.5px var(--font-display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bl-d-sess-meta { font: 400 12px var(--font-body); color: var(--color-muted); white-space: nowrap; }
@@ -1376,6 +1383,9 @@ html:lang(zh-CN) .msg.show-work .work-summary .ws-act::after { content: "收起"
 .bl-lanes.all-collapsed > .bl-lane:first-child .bl-lane-compact { border-top: 2px solid var(--color-rule-2); }
 .bl-compact-row.bl-compact-you { --c: var(--bl-in_review); }
 .bl-compact-row.bl-compact-failed { --c: var(--bl-failed); }
+.bl-compact-row.bl-compact-done { --c: var(--bl-done); }
+.bl-compact-row.bl-compact-done .bl-compact-title { color: var(--color-ink-2); }
+.bl-compact-row.bl-compact-done .bl-compact-why { color: var(--color-muted); }
 .bl-compact-why { font: 500 11.5px var(--font-body); color: var(--bl-failed); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 18rem; }
 .bl-compact-row.sel, .bl-card.sel { background: var(--color-well); box-shadow: inset 2px 0 0 var(--c, var(--color-accent)); }
 @media (max-width: 900px) { .bl-compact-why { display: none; } }
@@ -1751,6 +1761,20 @@ body.fx-full .fx-chart { height: 220px; }
 .bl-ms-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--color-muted); }
 .bl-ms-dot.ms-accepted, .bl-ms-dot.ms-reached, .bl-ms-dot.ms-showcased { background: var(--bl-done, #2e7d32); }
 .bl-ms-dot.ms-active { background: var(--bl-in_progress); }
+
+/* Ticket drawer: a little color. Section heads in the accent, harness chips tinted by harness, the details line marked. */
+#bl-drawer .bl-d-h { color: var(--color-accent-text); }
+#bl-drawer .bl-d-sess .harness-chip { margin-left: var(--space-xs); }
+.harness-chip.hc-claude { background: oklch(91% 0.045 50); color: oklch(42% 0.11 45); }
+.harness-chip.hc-codex { background: oklch(91% 0.04 190); color: oklch(38% 0.07 195); }
+.harness-chip.hc-pi { background: oklch(91% 0.04 300); color: oklch(40% 0.10 300); }
+#bl-drawer .bl-d-sess .ic { color: var(--bl-in_progress); }
+.bl-d-more { border-left: 3px solid var(--bl-in_progress-wash, var(--color-well)); padding-left: var(--space-sm); }
+.bl-d-more-h { color: var(--bl-in_progress); }
+[data-theme="console"] .harness-chip.hc-claude, [data-theme="midnight"] .harness-chip.hc-claude, [data-theme="plum"] .harness-chip.hc-claude { background: oklch(34% 0.06 50); color: oklch(85% 0.08 50); }
+[data-theme="console"] .harness-chip.hc-codex, [data-theme="midnight"] .harness-chip.hc-codex, [data-theme="plum"] .harness-chip.hc-codex { background: oklch(34% 0.05 190); color: oklch(85% 0.06 190); }
+[data-theme="console"] .harness-chip.hc-pi, [data-theme="midnight"] .harness-chip.hc-pi, [data-theme="plum"] .harness-chip.hc-pi { background: oklch(34% 0.06 300); color: oklch(85% 0.07 300); }
+#bl-drawer .bl-d-sess .bl-d-sess-meta { justify-self: end; }
 /* wrap-up report (CHITO-12): the project page's report box and the Recently finished cards */
 .bl-report summary { display: flex; align-items: center; gap: var(--space-sm); }
 .bl-report-meta { display: inline-flex; gap: var(--space-sm); font: 400 12px var(--font-body); color: var(--color-muted); margin-right: auto; }

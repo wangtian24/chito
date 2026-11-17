@@ -58,7 +58,7 @@ test('Overview has the open-projects list and no In flight section', { skip }, a
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'overview.png'), fullPage: true });
 });
 
-const checked = () => page.$eval('.board-controls .seg [aria-checked="true"]', b => b.textContent.trim());
+const checked = () => page.$eval('.board-controls .seg [aria-checked="true"]', b => (b.tagName === 'SELECT' ? b.selectedOptions[0].textContent : b.textContent).trim());
 const fresh = async () => { await page.goto(BASE + '/projects?tab=overview'); await page.evaluate(() => localStorage.clear()); };
 
 test('Projects tab defaults to every lane expanded and Open', { skip }, async () => {
@@ -84,7 +84,7 @@ test('Projects tab remembers collapse and filter; the project page and Overview 
   await page.goto(BASE + '/projects?tab=projects');
   await page.waitForSelector('.bl-collapse-all');
   await page.click('.bl-collapse-all');
-  await page.click('.board-controls .seg button:has-text("+ 24h")');
+  await page.selectOption('.board-controls select.seg-select', '24');
   await page.reload();
   await page.waitForSelector('.bl-lane-compact');
   assert.equal(await page.locator('.bl-lanes .bl-chev.open').count(), 0, 'lanes stay collapsed');
