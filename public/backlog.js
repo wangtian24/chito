@@ -43,6 +43,9 @@ const savedCollapsed = () => { const v = store.get('blLanesCollapsed', []); retu
 const ui = { page: 'lanes', closedBy: { project: savedClosed('project'), lanes: savedClosed('lanes') }, q: '', sort: savedSort(), milestone: null,
   collapsed: savedCollapsed(),
   get closed() { return this.closedBy[this.page] || 'none'; } };
+// The "past N hours" window of the Open | Past N h | All toggle (remembered per browser, default 6).
+const RECENT_HOURS = [0, 1, 2, 3, 6, 12, 24];
+ui.recentHours = RECENT_HOURS.includes(store.get('blRecentHours', 6)) ? store.get('blRecentHours', 6) : 6;
 function setClosed(v) { if (!VIEW_KEYS[ui.page]) return; ui.closedBy[ui.page] = v; store.set(VIEW_KEYS[ui.page][0], v); }
 const saveCollapsed = () => store.set('blLanesCollapsed', [...ui.collapsed]);
 // How the Projects tab orders its lanes; latest activity first unless picked otherwise (remembered per browser).
@@ -300,7 +303,8 @@ function controls(withSearch = true, withFinished = true) {
     row.append(box);
   }
   const seg = el('div', 'seg'); seg.setAttribute('role', 'radiogroup');
-  for (const [v, label, tip] of [['none', tr('Open|tickets'), tr('Open tickets only')], ['recent', tr('+ 24h'), tr('Open, plus tickets closed in the last 24 hours')], ['all', tr('All'), tr('Every ticket, however old')], ...(withFinished ? [['finished', tr('Finished'), tr('Only tickets finished (done, canceled or failed) in the last 7 days, across all projects, newest first')]] : [])]) {
+  for (const [v, label, tip] of [['none', tr('Open|tickets'), tr('Open tickets only')], ['recent', null, tr('Open, plus tickets done or canceled in this many past hours')], ['all', tr('All'), tr('Every ticket, however old')], ...(withFinished ? [['finished', tr('Finished'), tr('Only tickets finished (done, canceled or failed) in the last 7 days, across all projects, newest first')]] : [])]) {
+    if (v === 'recent') { seg.append(recentPicker(tip)); continue; }
     const b = el('button', null, label); b.setAttribute('aria-checked', String(ui.closed === v)); b.title = tip;
     b.addEventListener('click', () => { setClosed(v); renderBacklog(); });
     seg.append(b);
@@ -309,7 +313,18 @@ function controls(withSearch = true, withFinished = true) {
   return row;
 }
 
-// Closed tickets: shown by the Open / + 24h / All toggle; a search also digs up older ones (the newest few).
+// The middle segment: a dropdown of hours. Picking one (or opening it and leaving) switches to that view.
+function recentPicker(tip) {
+  const sel = el('select', 'seg-select'); sel.title = tip;
+  sel.setAttribute('aria-checked', String(ui.closed === 'recent'));
+  for (const h of RECENT_HOURS) { const o = el('option', null, tr('+ {n}h', { n: h })); o.value = String(h); sel.append(o); }
+  sel.value = String(ui.recentHours);
+  sel.addEventListener('change', () => { ui.recentHours = Number(sel.value); store.set('blRecentHours', ui.recentHours); setClosed('recent'); renderBacklog(); });
+  sel.addEventListener('blur', () => { if (ui.closed !== 'recent') { setClosed('recent'); renderBacklog(); } });
+  return sel;
+}
+
+// Closed tickets: shown by the Open / + N h / All toggle; a search also digs up older ones (the newest few).
 // Finished: only tickets that ended (done, canceled, failed) in the last 7 days, newest first.
 const DAY_MS = 864e5, WEEK_MS = 7 * DAY_MS, SEARCH_OLD_CAP = 30;
 const ENDED = new Set(['done', 'canceled', 'failed']);
@@ -333,7 +348,7 @@ export function fmtAgo(iso, now = new Date()) {
   if (lang === 'zh') return `${p.year === n.year ? '' : p.year + '年'}${p.month}月${p.day}日 ${clock}`;
   return `${p.month} ${p.day}${p.year === n.year ? '' : ' ' + p.year}, ${clock}`;
 }
-const closedRecently = t => Date.now() - closedAt(t) < DAY_MS;
+const closedRecently = t => Date.now() - closedAt(t) < ui.recentHours * 36e5;
 const showsClosed = () => ui.closed !== 'none' || !!ui.q.trim();
 const finishedMode = () => ui.closed === 'finished';
 function visibleTickets(list) {
@@ -544,7 +559,7 @@ function lifecycleButtons(p, compact) {
   if (!compact) {
     if (p.status !== 'planning') box.append(actBtn(tr('Back to planning'), 'project-plan', p.key));
     const seg = el('div', 'seg bl-seg'); seg.title = tr('Orchestration: who runs this project');
-    for (const ex of ['session', 'auto', 'daemon']) {
+    for (const ex of ['session', 'daemon']) {   // Auto (daemon-started orchestrator sessions) is retired: Manual or Simple only
       const b = el('button', null, MODES[ex].short); b.title = MODES[ex].title; b.setAttribute('aria-checked', String(p.executor === ex));
       b.addEventListener('click', () => { if (p.executor !== ex) act('project-executor', p.key, ex); });
       seg.append(b);
@@ -1701,7 +1716,7 @@ function table(tks, all = false) {
     for (const [id] of cols) { const c = cells[id] || (id === 'finished' ? cells.updated : null); r.append(c || el('td', `c-${id}`)); }
     tbody.append(r);
   }
-  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', fin ? (ui.q.trim() ? tr('No ticket finished in the last 7 days matches that search.') : tr('Nothing finished (done, canceled or failed) in the last 7 days.')) : ui.q ? tr('No tickets match that search.') : ui.closed === 'none' ? tr('No open tickets. Switch to + 24h or All to see finished ones.') : tr('Nothing open or closed in the last 24 hours. Switch to All, or search.')); c.colSpan = cols.length; r.append(c); tbody.append(r); }
+  if (!rows.length) { const r = el('tr'); const c = el('td', 'prs-empty', fin ? (ui.q.trim() ? tr('No ticket finished in the last 7 days matches that search.') : tr('Nothing finished (done, canceled or failed) in the last 7 days.')) : ui.q ? tr('No tickets match that search.') : ui.closed === 'none' ? tr('No open tickets. Pick a past-hours window or All to see finished ones.') : tr('Nothing open or closed in the last {n} hours. Pick a longer window or All, or search.', { n: ui.recentHours })); c.colSpan = cols.length; r.append(c); tbody.append(r); }
   tbl.append(tbody); wrap.append(tbl);
   return wrap;
 }
