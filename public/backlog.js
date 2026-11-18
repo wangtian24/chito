@@ -1065,17 +1065,17 @@ function roadmap(p) {
   const fin = finishedCard(p);
   if (!ms.length && !fin) return null;
   const wrap = el('div', 'bl-roadmap');
-  // Dismissed milestones fold into small chips at the start of the strip (remembered in this browser); a chip
-  // click brings the card back.
+  // Collapsed milestones fold into small chips at the start of the strip (remembered in this browser); a chip
+  // click expands the card again. The × on a card collapses it; Collapse all / Expand all sit by the Roadmap title.
   const dis = new Set(store.get('blMsDismissed', []));
   const setDis = (key, on) => { const d = new Set(store.get('blMsDismissed', [])); on ? d.add(key) : d.delete(key); store.set('blMsDismissed', [...d]); renderBacklog(); };
   const folded = ms.filter(m => dis.has(m.key));
   if (folded.length) {
     const tray = el('div', 'bl-ms-tray');
-    tray.append(el('span', 'bl-ms-tray-cap', trp(folded.length, '{n} dismissed', '{n} dismissed')));
+    tray.append(el('span', 'bl-ms-tray-cap', trp(folded.length, '{n} collapsed', '{n} collapsed')));
     for (const m of folded) {
       const chip = el('button', `bl-ms-fold ms-${m.status}`); chip.type = 'button';
-      chip.title = tr('{title}: show this milestone again', { title: m.title });
+      chip.title = tr('{title}: expand this milestone', { title: m.title });
       chip.append(el('span', 'num', m.key.slice(p.key.length + 1)), el('span', `bl-ms-dot ms-${m.status}`), el('span', 'bl-ms-fold-t', m.title));
       chip.addEventListener('click', () => setDis(m.key, false));
       tray.append(chip);
@@ -1094,7 +1094,7 @@ function roadmap(p) {
     top.append(el('span', 'num bl-ms-key', m.key.slice(p.key.length + 1)), el('span', `bl-ms-state ms-${m.status}`, MS_LABEL[m.status] || m.status));
     if (m.due) { const due = el('span', 'bl-ms-due', tr('due {date}', { date: m.due })); if (m.due < new Date().toISOString().slice(0, 10) && !['reached', 'showcased'].includes(m.status)) due.classList.add('late'); top.append(due); }
     const x = el('button', 'bl-ms-x', '×'); x.type = 'button';
-    x.title = tr('Dismiss: fold this milestone into a small chip'); x.setAttribute('aria-label', tr('Dismiss milestone'));
+    x.title = tr('Collapse: fold this milestone into a small chip'); x.setAttribute('aria-label', tr('Collapse milestone'));
     x.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (ui.milestone === m.key) ui.milestone = null; setDis(m.key, true); });
     top.append(x);
     card.append(top, el('div', 'bl-ms-title', m.title));
@@ -1120,6 +1120,7 @@ function roadmap(p) {
   }
   if (fin) wrap.append(fin);
   const sc = el('div', 'bl-roadmap-scroll'); sc.append(wrap);
+  sc.msKeys = ms.map(m => m.key); sc.collapsedN = folded.length;
   return sc;
 }
 function nextMilestone(p) {
@@ -1665,6 +1666,23 @@ function renderProject(root, p) {
   if (rm) {   // collapsible like the graph; the choice is remembered for every project
     const rsec = el('details', 'bl-sec'); rsec.open = store.get('roadmapOpen', true);
     const rsum = el('summary'); rsum.append(el('h2', 'bl-h2', tr('Roadmap')));
+    // Collapse all / Expand all: fold every milestone card into a chip, or open them all (the × does one).
+    if (rm.msKeys.length) {
+      const setAll = on => {
+        const d = new Set(store.get('blMsDismissed', []));
+        for (const k of rm.msKeys) on ? d.add(k) : d.delete(k);
+        store.set('blMsDismissed', [...d]);
+        if (on && rm.msKeys.includes(ui.milestone)) ui.milestone = null;
+        rsec.open = true; renderBacklog();
+      };
+      const ctl = el('span', 'bl-rm-ctl');
+      for (const [label, on, off] of [[tr('Collapse all'), true, rm.collapsedN === rm.msKeys.length], [tr('Expand all'), false, rm.collapsedN === 0]]) {
+        const b = el('button', 'bl-rm-btn', label); b.type = 'button'; b.disabled = off;
+        b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setAll(on); });
+        ctl.append(b);
+      }
+      rsum.append(ctl);
+    }
     rsec.append(rsum, rm);
     rsec.addEventListener('toggle', () => store.set('roadmapOpen', rsec.open));
     root.append(rsec);

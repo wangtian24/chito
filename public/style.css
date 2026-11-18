@@ -1354,6 +1354,10 @@ html { scrollbar-color: var(--color-rule-2) transparent; }
 /* Collapsible sections on the project page (the dependency graph) */
 .bl-sec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; margin: var(--space-xl) 0 var(--space-sm); width: fit-content; }
 .bl-sec > summary .bl-h2 { margin: 0; }
+.bl-rm-ctl { display: inline-flex; gap: 2px; margin-left: var(--space-sm); }
+.bl-rm-btn { height: 24px; padding: 0 8px; border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-ctl); background: var(--color-sheet); color: var(--color-ink-2); font: 500 12px var(--font-body); cursor: pointer; }
+.bl-rm-btn:hover:not([disabled]) { border-color: var(--color-accent); color: var(--color-accent-text); }
+.bl-rm-btn[disabled] { opacity: .45; cursor: default; }
 .bl-sec > summary::-webkit-details-marker { display: none; }
 .bl-sec > summary::before { content: ''; width: 7px; height: 7px; border-right: 1.5px solid var(--color-muted); border-bottom: 1.5px solid var(--color-muted); transform: rotate(45deg) translate(-2px, -2px); transition: transform .15s; }
 .bl-sec:not([open]) > summary::before { transform: rotate(-45deg); }
