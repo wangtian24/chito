@@ -171,9 +171,11 @@ answers in the thread with chito links, and reacts ✅. A reply in the thread is
 thread hears only what matters afterwards: a ticket done (with its PR), failed, canceled or waiting on you, and "All
 done". Messages starting with `?` are quick commands (`?help`, `?status`, `?projects`, `?handoff`, `?open`, `?orders`,
 `?ticket KEY`, `?retry`, `?cancel`, `?pause`, `?resume`), and `?ask <session> <text>` relays a message to a live
-session through `bl msg` and posts its answer back. The bot token comes from `CHITO_SLACK_TOKEN` (or the key named in
+session through `bl msg` and posts its answer back. Screenshots and other files on a post are downloaded to
+`~/.backlog/work-orders-files/<order ts>/` and handed to the triage, which Reads them and writes what they show (and
+their paths) into the ticket. The bot token comes from `CHITO_SLACK_TOKEN` (or the key named in
 `~/.config/chito/work-orders.json` inside `~/.extra_secrets`) and never reaches the browser; it needs
-`channels:history`, `chat:write` and `reactions:write`.
+`channels:history`, `chat:write`, `reactions:write` and `files:read`.
 
 ## Sessions list
 
