@@ -2720,12 +2720,12 @@ function handoffView(t) {
       const text = [...picked, free].filter(Boolean).join('\n'); if (!text) return;
       send.disabled = true;
       try {
-        const r = await fetch(`/api/sessions/${sess.id}/send`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-chito': '1' }, body: JSON.stringify({ text: `[${t.key} handoff feedback] ${text}` }) });
+        const r = await fetch(`/api/sessions/${sess.id}/send`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-chito': '1' }, body: JSON.stringify({ text: `[${t.key} handoff feedback] ${text}`, background: true }) });   // headless: no terminal window
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || r.statusText);
         ta.value = ''; for (const a of answers) { a.v = ''; a.raw = ''; } delete ui.hoDraft[t.key];
-        ctx.toast(j.action === 'typed' ? tr('Typed into the live session') : tr('Resumed the session in your terminal with your message'));
-        act('ticket-handoff', t.key, 'discussing');
+        await act('ticket-handoff', t.key, 'discussing');   // its own toast first, so the one saying where the message went stays up
+        ctx.toast(j.action === 'typed' ? tr('Typed into the live session') : j.action === 'queued' ? tr('Sent to the running session; it picks it up on its next step') : tr('Sent: the session is answering in the background (no window); its reply shows in the session'));
       } catch (err) { ctx.toast(tr('Not sent: {error}', { error: err.message })); }
       send.disabled = false;
     });
