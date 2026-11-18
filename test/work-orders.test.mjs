@@ -9,6 +9,7 @@ import path from 'node:path';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chito-wo-'));
 process.env.CHITO_WO_SETTINGS = path.join(dir, 'settings.json');
 process.env.CHITO_WO_STATE = path.join(dir, 'state.json');
+process.env.CHITO_WO_FILES = path.join(dir, 'files');
 const wo = await import('../lib/work-orders.js');
 const { runCommand, isCommand } = await import('../lib/work-orders-commands.js');
 
@@ -135,6 +136,46 @@ test('?commands answer in thread without triage; ?ask relays and brings the answ
   // The answer was already there, so it came back in the same pass.
   assert.match(slack.posts[2].text, /Work orders setup\> replied\*\nAll good &lt;here&gt;/);
   assert.equal(r.answers, 1); assert.equal(wo.loadState().asks.length, 0);
+});
+
+test('a screenshot on an order is downloaded, given to the triage by path, and noted in the reply', async () => {
+  const slack = fakeSlack(), got = [];
+  slack.download = async (f, d) => { got.push({ f, d }); if (f.id === 'FBAD') throw new Error('download 403'); const p = path.join(d, `${f.id}-${f.name}`); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(p, 'png'); return p; };
+  let args = null;
+  const ts = later(400);
+  // An image with no text at all is still an order.
+  slack.top.push({ ts, user: ME, text: '', files: [
+    { id: 'F1', name: 'shot.png', mimetype: 'image/png', mode: 'hosted', url_private_download: 'https://files.slack.com/x' },
+    { id: 'FBAD', name: 'log.txt', mimetype: 'text/plain', mode: 'hosted', url_private_download: 'https://files.slack.com/y' },
+    { id: 'F3', name: 'gone.png', mode: 'tombstone' }] });
+  const r = await wo.tick({ slack, states: async k => Object.fromEntries(k.map(x => [x, { state: 'todo', project: 'P' }])),
+    triage: async a => { args = a; return { tickets: [{ key: 'P-2', title: 'Crash' }], notes: [], links: [], summary: 'Filed.' }; } });
+  assert.equal(r.orders, 1);
+  assert.equal(got.length, 2); assert.equal(got[0].d, path.join(dir, 'files', ts));
+  assert.equal(args.files[0].path, path.join(dir, 'files', ts, 'F1-shot.png'));
+  assert.match(args.files[1].error, /403/); assert.match(args.files[2].error, /deleted/);
+  const prompt = wo.triagePrompt(args);
+  assert.match(prompt, new RegExp(`- ${args.files[0].path.replace(/[.\\]/g, '\\$&')}  \\(shot\\.png, image/png\\)`));
+  assert.match(prompt, /Read every attached image/); assert.match(prompt, /Attachments:/); assert.match(prompt, /only attachments/);
+  assert.match(slack.posts.at(-1).text, /_Read shot\.png; Couldn't fetch log\.txt: download 403; Couldn't fetch gone\.png: deleted\._/);
+  assert.deepEqual(wo.loadState().orders[ts].files, [args.files[0].path]);
+});
+
+test('slack download: bot token on the private url, saved under a safe name; a sign-in page is an error', async () => {
+  const real = globalThis.fetch, calls = [];
+  const d = path.join(dir, 'dl');
+  try {
+    globalThis.fetch = async (url, o) => { calls.push({ url, auth: o.headers.authorization });
+      return url.endsWith('login') ? new Response('<html>sign in</html>', { headers: { 'content-type': 'text/html' } })
+        : new Response(new Uint8Array([137, 80, 78, 71]), { headers: { 'content-type': 'image/png' } }); };
+    const c = wo.slackClient('xoxb-T');
+    const p = await c.download({ id: 'F9', name: '../Screen Shot 1.png', mimetype: 'image/png', url_private_download: 'https://files.slack.com/F9' }, d);
+    assert.equal(p, path.join(d, 'F9-Screen_Shot_1.png'));
+    assert.deepEqual([...fs.readFileSync(p)], [137, 80, 78, 71]);
+    assert.deepEqual(calls[0], { url: 'https://files.slack.com/F9', auth: 'Bearer xoxb-T' });
+    await assert.rejects(c.download({ id: 'F8', name: 'a.png', mimetype: 'image/png', url_private: 'https://slack.com/login' }, d), /files:read/);
+    await assert.rejects(c.download({ id: 'F7', name: 'big.png', size: 30e6, url_private: 'https://x' }, d), /too big/);
+  } finally { globalThis.fetch = real; }
 });
 
 test('command parsing and errors', async () => {
