@@ -2612,20 +2612,31 @@ function handoffView(t) {
   box.append(head);
   if (!h.packet) { box.append(el('p', 'bl-d-empty', tr('The AI is compiling what was done, how to see it and what to test. You will be notified.'))); return box; }
   const pk = h.packet;
-  const strip = pics(pk.pics, 'bl-ho-pics');
-  if (strip) box.append(strip);
-  box.append(el('p', 'bl-ho-summary', pk.summary));
+  // Order: (TL;DR above the panel) → the doc and preview links → the content (pictures, summary, body, lists) → what is asked of you.
+  // The packet's links, plus any arti doc named only in its text, so the handoff doc is always one click from the top.
+  const linkList = (pk.links || []).map(x0 => typeof x0 === 'string' ? { url: (x0.match(/https?:\/\/[^\s)]+/) || [])[0], label: x0 } : x0).filter(x => x.url);
+  const seen = new Set(linkList.map(x => x.url.replace(/[/.]+$/, '')));
+  for (const u0 of `${pk.summary || ''}\n${pk.body || ''}\n${t.meta?.tldr?.text || ''}`.match(URL_RE) || []) {
+    const u = u0.replace(/[.;:]+$/, '');
+    let host; try { host = new URL(u).host; } catch { continue; }
+    if (!/arti\./.test(host) || seen.has(u.replace(/[/.]+$/, ''))) continue;
+    seen.add(u.replace(/[/.]+$/, ''));
+    linkList.push({ url: u, label: tr('doc: {slug}', { slug: new URL(u).pathname.split('/')[2] || host }) });
+  }
+  if (linkList.length) {
+    const l = el('div', 'bl-ho-links');
+    for (const x of linkList) { const a = el('a', null, x.label || x.url); a.href = x.url; a.target = '_blank'; a.rel = 'noopener'; a.title = x.url; l.append(a); }
+    box.append(l);
+  }
   if (pk.see) {
     const see = el('div', 'bl-ho-see');
     if (pk.see.url) { const a = el('a', 'btn primary', tr('Open the preview')); a.href = pk.see.url; a.target = '_blank'; a.rel = 'noopener'; see.append(a, el('code', null, pk.see.url)); }
     if (pk.see.how) see.append(el('div', 'bl-ho-how', pk.see.how));
     box.append(see);
   }
-  if (pk.links?.length) {
-    const l = el('div', 'bl-ho-links');
-    for (const x0 of pk.links) { const x = typeof x0 === 'string' ? { url: (x0.match(/https?:\/\/[^\s)]+/) || [])[0], label: x0 } : x0; if (!x.url) continue; const a = el('a', null, x.label || x.url); a.href = x.url; a.target = '_blank'; a.rel = 'noopener'; l.append(a); }
-    box.append(l);
-  }
+  const strip = pics(pk.pics, 'bl-ho-pics');
+  if (strip) box.append(strip);
+  box.append(el('p', 'bl-ho-summary', pk.summary));
   if (pk.body) box.append(Object.assign(md(pk.body), { className: 'md bl-ho-body' }));
   if (pk.checklist?.length) box.append(el('h4', 'bl-d-h', pk.checklist_title || tr('Checklist')), tickList(`handoff.${t.key}.check`, pk.checklist.map(x => typeof x === 'string' ? { item: x } : x), x => [el('span', 'bl-ho-step', x.item), x.detail ? el('span', 'bl-ho-detail', x.detail) : null]));
   if (pk.done?.length) {
