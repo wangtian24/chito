@@ -10,7 +10,7 @@ import { prStates } from './lib/github.js';
 import { backlogSummary, backlogTicket, showcaseFile, sessionTickets, sessionMessages, searchTickets } from './lib/backlog.js';
 import { workerModel } from './lib/worker-models.js';
 import { statsSummary } from './lib/stats.js';
-import { deploySummary, triggerDeploy, startDeploySchedule, runLog } from './lib/deploy.js';
+import { deploySummary, triggerDeploy, startDeploySchedule, runLog, setSchedulePaused } from './lib/deploy.js';
 import { workOrdersStatus, saveSettings as saveWorkOrders, checkNow as checkWorkOrders, startWorkOrders } from './lib/work-orders.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -349,6 +349,12 @@ const server = http.createServer(async (req, res) => {
       const text = runLog(url.searchParams.get('id'));
       if (text == null) return send(res, 404, { error: 'no such run' });
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }); return res.end(text);
+    }
+    if (p === '/api/deploy/schedule') {
+      if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });
+      let body; try { body = JSON.parse(await readBody(req)); } catch { return send(res, 400, { error: 'bad body' }); }
+      if (typeof body?.paused !== 'boolean') return send(res, 400, { error: 'paused must be true or false' });
+      try { return send(res, 200, { ok: true, ...setSchedulePaused(body.paused) }); } catch (e) { return send(res, 500, { error: e.message }); }
     }
     if (p === '/api/deploy/run') {
       if (req.method !== 'POST' || req.headers['x-chito'] !== '1') return send(res, 405, { error: 'POST with x-chito header required' });

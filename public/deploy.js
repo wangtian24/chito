@@ -86,13 +86,36 @@ function deployButton() {
   return b;
 }
 
+// Pauses or resumes chito's deploy schedule; Deploy main still works while it is paused.
+function pauseButton() {
+  const paused = !!data.auto?.paused;
+  const b = el('button', 'btn');
+  b.innerHTML = paused
+    ? '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>'
+    : '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>';
+  b.append(el('span', null, paused ? t('Resume schedule') : t('Pause schedule')));
+  b.title = paused ? t('Let the schedule deploy main again at its next slot') : t('Stop scheduled deploys until you resume; Deploy main still works');
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    try {
+      const r = await fetch('/api/deploy/schedule', { method: 'POST', headers: { 'x-chito': '1', 'content-type': 'application/json' }, body: JSON.stringify({ paused: !paused }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.statusText);
+      ctx.toast(d.paused ? t('Schedule paused. No scheduled deploys until you resume.') : t('Schedule resumed.'));
+    } catch (e) { ctx.toast(t('Could not change the schedule: {err}', { err: e.message })); }
+    await load();
+  });
+  return b;
+}
+
 function head() {
   const h = el('div', 'board-head');
   const left = el('div');
   left.append(el('h1', null, t('Deployment')));
   const p = el('p');
   p.append(ext('https://mapcouch.com', 'mapcouch.com'), ' · ', ext(ghBase(), data.repo), ' · ',
-    data.schedule?.text === 'every hour' ? t('checks every hour and deploys only when main has something new; or press Deploy')
+    data.auto?.paused ? t('the schedule is paused; deploys run when you press Deploy')
+      : data.schedule?.text === 'every hour' ? t('checks every hour and deploys only when main has something new; or press Deploy')
       : data.schedule?.text ? t('checks on a schedule ({when}) and deploys only when main has something new; or press Deploy', { when: data.schedule.text })
       : t('deploys when you press Deploy'));
   left.append(p);
@@ -102,7 +125,9 @@ function head() {
   rf.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 5v4h4M4 13a8 8 0 0 0 14.9 3.9M20 19v-4h-4"/></svg>';
   rf.append(el('span', null, t('Refresh')));
   rf.addEventListener('click', async () => { rf.disabled = true; await load(true); ctx.toast(t('Up to date')); });
-  right.append(rf, deployButton());
+  right.append(rf);
+  if (data.auto?.enabled) right.append(pauseButton());
+  right.append(deployButton());
   h.append(left, right);
   return h;
 }
@@ -185,6 +210,11 @@ function scheduleLine() {
   const b = data.auto || {};
   const p = el('p', 'dp-backup');
   if (!b.enabled) { p.textContent = t('No schedule: deploys run only when you press Deploy (CHITO_DEPLOY_CRON=off).'); return p; }
+  if (b.paused) {
+    p.append(el('span', 'dp-backup-err', b.pausedAt ? t('Schedule paused {ago}.', { ago: ctx.fmtRelAgo(b.pausedAt) }) : t('Schedule paused.')),
+      ' ', t('chito skips its checks ({when}) until you press Resume schedule; Deploy main still works.', { when: data.schedule.text }));
+    return p;
+  }
   p.append(t('Schedule: chito checks {when} ({tz}); if main has something new and nothing is running, it deploys main. A commit whose deploy failed waits for the next merge.', { when: data.schedule.text, tz: data.schedule.tz }));
   if (b.lastAt) {
     const last = el('span', 'dp-backup-last');
