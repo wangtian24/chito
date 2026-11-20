@@ -952,4 +952,11 @@ export default {
   "Filing": "归档",
   "nothing filed": "没有建任务",
   "Recent orders": "最近的工单",
+  "deployed at {time}": "部署于 {time}",
+  "HEAD {sha}, merged at {time}": "HEAD {sha}，合并于 {time}",
+  "started at {time}": "开始于 {time}",
+  "shipped at {time}": "上线于 {time}",
+  "Schedule paused at {time}.": "计划已于 {time} 暂停。",
+  "Last check at {time}: started one.": "上次检查于 {time}：已启动部署。",
+  "Last check at {time}: nothing to do ({why}).": "上次检查于 {time}：无需操作（{why}）。",
 };

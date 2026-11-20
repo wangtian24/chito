@@ -1,7 +1,7 @@
 // Deployment: Mapcouch's merges on main as one chain, newest at the top. Two pointers ride it:
 // HEAD (the newest merge) and Live (the commit production runs). Merges above Live are waiting;
 // each prod/ release below it is a knot that says when it shipped and how many merges it carried.
-import { t, tp } from '/i18n.js';
+import { t, tp, LOCALE } from '/i18n.js';
 
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -42,7 +42,16 @@ function fmtIn(iso) {
   const h = Math.floor(mins / 60), m = mins % 60;
   return m ? t('in {h}h {m}m', { h, m }) : t('in {h}h', { h });
 }
-const clock = iso => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+// Pin every deploy timestamp to Pacific Time, including daylight saving transitions.
+function pacificTime(iso, date = true) {
+  if (!iso || !Number.isFinite(new Date(iso).getTime())) return '—';
+  return new Date(iso).toLocaleString(LOCALE || 'en-US', {
+    timeZone: 'America/Los_Angeles',
+    ...(date ? { month: 'short', day: 'numeric', year: 'numeric' } : {}),
+    hour: 'numeric', minute: '2-digit',
+  }) + ' PT';
+}
+const clock = iso => pacificTime(iso, false);
 function ext(href, text, cls) { const a = el('a', cls, text); a.href = href; a.target = '_blank'; a.rel = 'noopener'; return a; }
 function inner(href, text, cls) {
   const a = el('a', cls, text); a.href = href;
@@ -136,13 +145,13 @@ function stats() {
   const row = el('div', 'dp-stats');
   const live = data.live;
   row.append(stat(t('Live'), live ? live.tag.replace(/^prod\//, '') : short(data.production) || '—',
-    live ? t('deployed {ago}', { ago: ctx.fmtRelAgo(live.at) }) : null, 'is-live'));
+    live ? t('deployed at {time}', { time: pacificTime(live.at) }) : null, 'is-live'));
   row.append(stat(t('Waiting'), data.waiting == null ? '?' : data.waiting ? tp(data.waiting, '{n} merge', '{n} merges') : t('Up to date'),
-    data.waiting ? t('HEAD {sha}, merged {ago}', { sha: short(data.head), ago: ctx.fmtRelAgo(data.commits[0]?.at) }) : t('main is live'),
+    data.waiting ? t('HEAD {sha}, merged at {time}', { sha: short(data.head), time: pacificTime(data.commits[0]?.at) }) : t('main is live'),
     data.waiting ? 'is-waiting' : ''));
   if (data.run) {
     const started = data.run.createdAt;
-    row.append(stat(t('Deploying now'), t('started {ago}', { ago: ctx.fmtRelAgo(started) }),
+    row.append(stat(t('Deploying now'), t('started at {time}', { time: pacificTime(started) }),
       ext(data.run.url, t('Watch the run')), 'is-running'));
   } else if (data.next) {
     row.append(stat(t('Next deploy'), data.next ? clock(data.next) : '—',
@@ -153,7 +162,7 @@ function stats() {
     const ok = lr.conclusion === 'success';
     const word = { success: t('Succeeded'), failure: t('Failed'), cancelled: t('Cancelled') }[lr.conclusion] || lr.conclusion;
     const note = el('span');
-    note.append(ctx.fmtRelAgo(lr.updatedAt), ' · ', ext(lr.url, ok ? t('run') : t('log')));
+    note.append(pacificTime(lr.updatedAt), ' · ', ext(lr.url, ok ? t('run') : t('log')));
     row.append(stat(t('Last run'), word, note, ok ? '' : 'is-failed'));
   }
   return row;
@@ -180,8 +189,8 @@ function commitRow(c, zone, marks) {
   meta.append(ext(`${ghBase()}/commit/${c.sha}`, short(c.sha), 'dp-sha num'));
   if (c.pr) meta.append(ext(`${ghBase()}/pull/${c.pr}`, `#${c.pr}`, 'dp-pr num'));
   for (const tk of c.tickets) meta.append(ticketChip(tk));
-  const when = el('span', 'dp-when', ctx.fmtRelAgo(c.at));
-  when.title = ctx.fmtDateTime(c.at);
+  const when = el('span', 'dp-when', pacificTime(c.at));
+  when.title = pacificTime(c.at);
   meta.append(when);
   body.append(meta);
   li.append(body);
@@ -197,8 +206,8 @@ function releaseKnot(rel, count, isLive) {
   if (isLive) b.append(el('span', 'dp-knot-badge', t('Live on mapcouch.com')));
   const tag = ext(`${ghBase()}/releases/tag/${encodeURIComponent(rel.tag)}`, rel.tag, 'dp-tag num');
   b.append(tag);
-  const when = el('span', 'dp-knot-when', t('shipped {ago}', { ago: ctx.fmtRelAgo(rel.at) }));
-  when.title = ctx.fmtDateTime(rel.at);
+  const when = el('span', 'dp-knot-when', t('shipped at {time}', { time: pacificTime(rel.at) }));
+  when.title = pacificTime(rel.at);
   b.append(when, el('span', 'dp-knot-count', count == null ? '' : tp(count, '{n} merge', '{n} merges')));
   if (rel.redeploys) b.append(el('span', 'dp-knot-count', tp(rel.redeploys, 'redeployed {n} time', 'redeployed {n} times')));
   li.append(b);
@@ -211,14 +220,14 @@ function scheduleLine() {
   const p = el('p', 'dp-backup');
   if (!b.enabled) { p.textContent = t('No schedule: deploys run only when you press Deploy (CHITO_DEPLOY_CRON=off).'); return p; }
   if (b.paused) {
-    p.append(el('span', 'dp-backup-err', b.pausedAt ? t('Schedule paused {ago}.', { ago: ctx.fmtRelAgo(b.pausedAt) }) : t('Schedule paused.')),
+    p.append(el('span', 'dp-backup-err', b.pausedAt ? t('Schedule paused at {time}.', { time: pacificTime(b.pausedAt) }) : t('Schedule paused.')),
       ' ', t('chito skips its checks ({when}) until you press Resume schedule; Deploy main still works.', { when: data.schedule.text }));
     return p;
   }
   p.append(t('Schedule: chito checks {when} ({tz}); if main has something new and nothing is running, it deploys main. A commit whose deploy failed waits for the next merge.', { when: data.schedule.text, tz: data.schedule.tz }));
   if (b.lastAt) {
     const last = el('span', 'dp-backup-last');
-    last.append(' ', b.lastAction === 'started' ? t('Last check {ago}: started one.', { ago: ctx.fmtRelAgo(b.lastAt) }) : t('Last check {ago}: nothing to do ({why}).', { ago: ctx.fmtRelAgo(b.lastAt), why: String(b.lastAction || '').replace(/^skipped: /, '') }));
+    last.append(' ', b.lastAction === 'started' ? t('Last check at {time}: started one.', { time: pacificTime(b.lastAt) }) : t('Last check at {time}: nothing to do ({why}).', { time: pacificTime(b.lastAt), why: String(b.lastAction || '').replace(/^skipped: /, '') }));
     if (b.lastUrl) last.append(' ', ext(b.lastUrl, t('run')));
     p.append(last);
   }
